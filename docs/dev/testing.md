@@ -47,7 +47,7 @@ For local debugging with the app window visible:
 pnpm e2e:desktop:headed
 ```
 
-The smoke test builds `@htmlslide/desktop`, launches the built Electron main process with Playwright, verifies the app loads without a Vite/framework error overlay, skips onboarding into No AI mode, reaches the project library, creates a source-only deck, creates and generates a mock-agent deck from the New Deck wizard, mocks the native folder picker, opens `packages/test-fixtures/decks/valid-full`, and verifies Settings can reinstall/copy/uninstall the CLI shim in an isolated target directory.
+The smoke test builds `@htmlslide/desktop`, launches the built Electron main process with Playwright, verifies the app loads without a Vite/framework error overlay, skips onboarding into No AI mode, reaches the project library, creates a No AI source deck, confirms BYOK generation is visibly blocked until the backend exists, creates and generates a Local Mock deck from the New Deck wizard, mocks the native folder picker, opens `packages/test-fixtures/decks/valid-full`, and verifies Settings can reinstall/copy/uninstall the CLI shim in an isolated target directory.
 
 Artifacts are written under `tmp/playwright/` so they stay out of release artifacts and normal source diffs. This is a foundation smoke, not full coverage for BYOK providers, presenter mode, or native packaging install flows.
 

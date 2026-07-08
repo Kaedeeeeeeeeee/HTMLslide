@@ -1,22 +1,32 @@
 import { Button, PanelHeader, StatusPill } from "@htmlslide/shared-ui";
 import {
   BookOpen,
+  Bot,
   Check,
+  Code2,
   FolderOpen,
   GalleryVerticalEnd,
   Import,
   Layers3,
+  MonitorPlay,
   Plus,
   Settings,
   Sparkles
 } from "lucide-react";
 import { useState, type FormEvent, type ReactNode } from "react";
-import type { AiEngineSettingsDraft, AiEngineSettings, ExternalAgentStatus } from "../settings-model";
+import {
+  formatRedactedKeyStatus,
+  selectedExternalAgentStatus,
+  type AiEngineSettingsDraft,
+  type AiEngineSettings,
+  type ExternalAgentStatus
+} from "../settings-model";
 import type { DesktopCliIntegrationState } from "../desktop-api";
 import {
   createDefaultNewDeckDraft,
   type LibrarySection,
   type NewDeckDraft,
+  type NewDeckGenerationMode,
   type NewDeckOutputFormat,
   type OperationStatus,
   type ProjectSummary
@@ -171,6 +181,8 @@ export function ProjectLibrary({
       <section className="library-main">
         {activeSection === "recent" ? (
           <RecentProjects
+            aiEngineSettings={aiEngineSettings}
+            externalAgentStatuses={externalAgentStatuses}
             onChooseWorkspace={onChooseWorkspace}
             onNewDeck={onNewDeck}
             onOpenFolder={onOpenFolder}
@@ -224,6 +236,8 @@ export function ProjectLibrary({
 }
 
 function RecentProjects({
+  aiEngineSettings,
+  externalAgentStatuses,
   onChooseWorkspace,
   onNewDeck,
   onOpenFolder,
@@ -232,6 +246,8 @@ function RecentProjects({
   projects,
   workspacePath
 }: {
+  aiEngineSettings: AiEngineSettings;
+  externalAgentStatuses: ExternalAgentStatus[];
   projects: ProjectSummary[];
   workspacePath?: string;
   onChooseWorkspace: () => void;
@@ -246,6 +262,13 @@ function RecentProjects({
   const validationMessage = validateNewDeckDraft(draft);
   const busy = operationStatus.kind === "running" && operationStatus.message === "Creating deck";
   const canCreate = !busy && validationMessage === undefined;
+  const selectedExternalStatus = selectedExternalAgentStatus(aiEngineSettings, externalAgentStatuses);
+  const engineOptions = buildNewDeckEngineOptions({
+    apiKeyStatus: formatRedactedKeyStatus(aiEngineSettings),
+    hasApiKey: aiEngineSettings.apiKey.hasKey,
+    selectedExternalStatus
+  });
+  const selectedEngine = engineOptions.find((engine) => engine.id === draft.generationMode) ?? engineOptions[0]!;
 
   const openNewDeckPanel = (): void => {
     setCreatingDeck(true);
@@ -350,17 +373,6 @@ function RecentProjects({
                 value={draft.folderName}
               />
             </label>
-            <label className="settings-field">
-              <span>Generation</span>
-              <select
-                onChange={(event) =>
-                  updateDraft("generationMode", event.currentTarget.value as NewDeckDraft["generationMode"])}
-                value={draft.generationMode}
-              >
-                <option value="source-only">Source only</option>
-                <option value="mock-agent">Generate demo deck</option>
-              </select>
-            </label>
           </div>
           <label className="settings-field new-deck-panel__brief">
             <span>Brief</span>
@@ -370,6 +382,33 @@ function RecentProjects({
               value={draft.brief}
             />
           </label>
+          <section
+            aria-label="AI engine"
+            className="new-deck-engines"
+          >
+            <div className="new-deck-section-label">
+              <span>AI engine</span>
+              <small>{selectedEngine.detail}</small>
+            </div>
+            <div className="new-deck-engine-grid">
+              {engineOptions.map((engine) => (
+                <button
+                  aria-pressed={draft.generationMode === engine.id}
+                  className={draft.generationMode === engine.id ? "new-deck-engine is-selected" : "new-deck-engine"}
+                  key={engine.id}
+                  onClick={() => updateDraft("generationMode", engine.id)}
+                  type="button"
+                >
+                  <span className="new-deck-engine__icon">{engine.icon}</span>
+                  <span>
+                    <strong>{engine.label}</strong>
+                    <small>{engine.description}</small>
+                  </span>
+                  <StatusPill tone={engine.tone}>{engine.status}</StatusPill>
+                </button>
+              ))}
+            </div>
+          </section>
           <div className="new-deck-panel__options">
             <label className="settings-field">
               <span>Language</span>
@@ -634,9 +673,81 @@ function validateNewDeckDraft(draft: NewDeckDraft): string | undefined {
     return "Brief is required before generation.";
   }
 
+  if (draft.generationMode === "htmlslide-agent" || draft.generationMode === "external-agent") {
+    return "This engine is selectable for setup, but generation is not connected in this alpha. Choose No AI or Local Mock.";
+  }
+
   if (draft.outputs.length === 0) {
     return "Choose at least one output.";
   }
 
   return undefined;
+}
+
+function buildNewDeckEngineOptions({
+  apiKeyStatus,
+  hasApiKey,
+  selectedExternalStatus
+}: {
+  apiKeyStatus: string;
+  hasApiKey: boolean;
+  selectedExternalStatus: ExternalAgentStatus;
+}): Array<{
+  id: NewDeckGenerationMode;
+  label: string;
+  description: string;
+  detail: string;
+  status: string;
+  tone: "danger" | "info" | "neutral" | "success" | "warning";
+  icon: ReactNode;
+}> {
+  return [
+    {
+      id: "no-ai",
+      label: "No AI",
+      description: "Create a source project for preview, check, export, and presenter work.",
+      detail: "Deck source will be created without running a generator.",
+      icon: <MonitorPlay />,
+      status: "Source only",
+      tone: "neutral"
+    },
+    {
+      id: "htmlslide-agent",
+      label: "HTMLslide Agent",
+      description: "Use provider metadata saved in AI Engines settings.",
+      detail: hasApiKey
+        ? "API key metadata is present; provider-backed generation is still queued for the next agent milestone."
+        : "Save API key metadata in AI Engines before provider-backed generation is enabled.",
+      icon: <Bot />,
+      status: hasApiKey ? "Key ready" : "Needs key",
+      tone: hasApiKey ? "success" : "warning"
+    },
+    {
+      id: "external-agent",
+      label: "Coding Agent",
+      description: "Use the selected Claude Code, Codex CLI, or compatible command.",
+      detail:
+        selectedExternalStatus.status === "ready"
+          ? `${selectedExternalStatus.label} is ready; headless run wiring is queued for the external-agent milestone.`
+          : `${selectedExternalStatus.label} is ${selectedExternalStatus.status.replace("-", " ")}. Refresh or configure it in AI Engines.`,
+      icon: <Code2 />,
+      status: selectedExternalStatus.status.replace("-", " "),
+      tone: selectedExternalStatus.status === "ready"
+        ? "success"
+        : selectedExternalStatus.status === "not-authenticated"
+          ? "warning"
+          : selectedExternalStatus.status === "unavailable"
+            ? "danger"
+            : "neutral"
+    },
+    {
+      id: "mock-agent",
+      label: "Local Mock",
+      description: "Generate a deterministic local deck for alpha validation.",
+      detail: `Alpha test path. Real BYOK/external runs are not claimed. ${apiKeyStatus}.`,
+      icon: <Sparkles />,
+      status: "Available",
+      tone: "info"
+    }
+  ];
 }

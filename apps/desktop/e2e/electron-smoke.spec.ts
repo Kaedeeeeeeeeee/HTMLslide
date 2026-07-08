@@ -68,6 +68,10 @@ test.describe("HTMLslide desktop smoke", () => {
 
     const newDeckPanel = page.locator(".new-deck-panel");
     await expect(newDeckPanel).toBeVisible();
+    await expect(newDeckPanel.getByRole("button", { name: /No AI/ })).toHaveAttribute("aria-pressed", "true");
+    await newDeckPanel.getByRole("button", { name: /HTMLslide Agent/ }).click();
+    await expect(newDeckPanel.getByText(/generation is not connected in this alpha/i)).toBeVisible();
+    await newDeckPanel.getByRole("button", { name: /No AI/ }).click();
     await newDeckPanel.getByLabel("Deck title").fill("Investor Update");
     await expect(newDeckPanel.getByLabel("Folder")).toHaveValue("investor-update");
     await newDeckPanel.getByRole("button", { name: "Create Deck", exact: true }).click();
@@ -116,7 +120,9 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(newDeckPanel).toBeVisible();
     await newDeckPanel.getByLabel("Deck title").fill("Investor Demo");
     await newDeckPanel.getByLabel("Brief").fill("Create an investor update about Q3 growth, retention, and expansion risks.");
-    await newDeckPanel.getByLabel("Generation").selectOption("mock-agent");
+    await expect(newDeckPanel.getByRole("button", { name: /HTMLslide Agent/ })).toBeVisible();
+    await expect(newDeckPanel.getByRole("button", { name: /Coding Agent/ })).toBeVisible();
+    await newDeckPanel.getByRole("button", { name: /Local Mock/ }).click();
     await newDeckPanel.getByLabel("Language").selectOption("en-US");
     await newDeckPanel.getByLabel("Audience").selectOption("investors");
     await newDeckPanel.getByLabel("Duration").selectOption("20");

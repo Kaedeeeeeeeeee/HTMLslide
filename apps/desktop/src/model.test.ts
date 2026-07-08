@@ -153,13 +153,13 @@ describe("desktop model helpers", () => {
     });
   });
 
-  it("creates a source-only new deck draft by default", () => {
+  it("creates a no-ai new deck draft by default", () => {
     const draft = createDefaultNewDeckDraft();
 
     expect(draft).toMatchObject({
       audience: "general",
       designDirection: "auto",
-      generationMode: "source-only",
+      generationMode: "no-ai",
       language: "auto",
       slideCount: "auto",
       title: "Untitled Deck"
@@ -185,6 +185,7 @@ describe("desktop model helpers", () => {
     expect(buildNewDeckAgentBrief(draft)).toContain("Deck title: Investor Update");
     expect(buildNewDeckAgentBrief(draft)).toContain("Brief: Summarize Q3 growth and expansion risks.");
     expect(buildNewDeckAgentBrief(draft)).toContain("Audience: investors");
+    expect(buildNewDeckAgentBrief(draft)).toContain("AI engine: local deterministic mock agent");
     expect(buildNewDeckAgentBrief(draft)).toContain("Slide count: 8 slides");
     expect(buildNewDeckAgentBrief(draft)).toContain("Speaker notes: full speaker script");
     expect(buildNewDeckAgentBrief(draft)).toContain("fixed 1920x1080 canvas");

@@ -7,7 +7,7 @@ export type QaSeverity = QaSeverityId;
 export type QaFilter = "all" | QaSeverity;
 export type OperationStatusKind = "idle" | "running" | "success" | "failed";
 export type CommandAction = "generate" | "check" | "repair" | "export" | "review";
-export type NewDeckGenerationMode = "source-only" | "mock-agent";
+export type NewDeckGenerationMode = "no-ai" | "htmlslide-agent" | "external-agent" | "mock-agent";
 export type NewDeckOutputFormat = "pdf" | "html" | "deckpkg" | "thumbnails" | "speakerNotes";
 
 export interface OperationStatus {
@@ -146,7 +146,7 @@ export function createDefaultNewDeckDraft(): NewDeckDraft {
     designDirection: "auto",
     durationMinutes: "10",
     folderName: "untitled-deck",
-    generationMode: "source-only",
+    generationMode: "no-ai",
     language: "auto",
     outputs: [...defaultNewDeckOutputs],
     slideCount: "auto",
@@ -190,6 +190,12 @@ const newDeckLabelMaps = {
     executive: "executive",
     "product-launch": "product launch",
     technical: "technical"
+  },
+  engine: {
+    "external-agent": "connected coding agent",
+    "htmlslide-agent": "HTMLslide Agent with API key metadata",
+    "mock-agent": "local deterministic mock agent",
+    "no-ai": "No AI"
   }
 } as const;
 
@@ -214,6 +220,7 @@ export function buildNewDeckAgentBrief(draft: NewDeckDraft): string {
     `Design direction: ${labelFromMap(newDeckLabelMaps.designDirection, draft.designDirection)}`,
     `Speaker notes: ${labelFromMap(newDeckLabelMaps.speakerNotes, draft.speakerNotes)}`,
     `Requested outputs: ${outputs}`,
+    `AI engine: ${labelFromMap(newDeckLabelMaps.engine, draft.generationMode)}`,
     "Constraints: use project-local HTML fragments, deck.json, notes, theme tokens, no remote assets, fixed 1920x1080 canvas, run check and export after generation."
   ].join("\n");
 }

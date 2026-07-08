@@ -3,6 +3,7 @@ import "./app.css";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import type { PresenterDeck } from "@htmlslide/presenter/session";
 import { Onboarding } from "./components/Onboarding";
 import { ProjectLibrary } from "./components/ProjectLibrary";
 import { Workspace, type AgentDiffReview } from "./components/Workspace";
@@ -764,6 +765,30 @@ function App(): React.ReactNode {
     });
   }, [activeProject, desktopApi, updateCommandActionStatus]);
 
+  const loadPresenterDeck = useCallback(async (): Promise<PresenterDeck | null> => {
+    if (!desktopApi || !activeProject || activeProject.path.startsWith("~")) {
+      setOperationStatus({ kind: "failed", message: "Open a local deck project before presenter mode" });
+      updateCommandActionStatus("review", { kind: "failed", message: "Local project required" });
+      return null;
+    }
+
+    setOperationStatus({ kind: "running", message: "Loading deck package" });
+    updateCommandActionStatus("review", { kind: "running", message: "Loading deckpkg" });
+
+    const result = await desktopApi.loadPresenterDeck(activeProject.path);
+    if (result.ok) {
+      setOperationStatus({ kind: "success", message: "Deck package loaded" });
+      updateCommandActionStatus("export", { kind: "success", message: "Deckpkg ready" });
+      updateCommandActionStatus("review", { kind: "success", message: "Deck package ready" });
+      return result.deck;
+    }
+
+    setOperationStatus({ kind: "failed", message: result.error });
+    updateCommandActionStatus("export", { kind: "failed", message: "Deckpkg unavailable" });
+    updateCommandActionStatus("review", { kind: "idle", message: "Using rehearsal fallback" });
+    return null;
+  }, [activeProject, desktopApi, updateCommandActionStatus]);
+
   const handleViewDiff = useCallback((): void => {
     if (!diffReview?.runId && !diffReview?.checkpointId) {
       setOperationStatus({ kind: "failed", message: "No agent checkpoint is available" });
@@ -964,6 +989,7 @@ function App(): React.ReactNode {
         setCommandValue("");
       }}
       onInspectorTabChange={setInspectorTab}
+      loadPresenterDeck={loadPresenterDeck}
       onQaFilterChange={setQaFilter}
       onRevertDiff={handleRevertDiff}
       onRunAction={(action) => {
@@ -991,8 +1017,8 @@ function App(): React.ReactNode {
           runExport();
         }
         if (action === "present") {
-          setOperationStatus({ kind: "success", message: "Rehearsal mode open" });
-          updateCommandActionStatus("review", { kind: "success", message: "Reviewing in rehearsal" });
+          setOperationStatus({ kind: "success", message: "Presenter open" });
+          updateCommandActionStatus("review", { kind: "success", message: "Reviewing in presenter" });
         }
         if (action === "generate") {
           runMockGeneration(commandValue.trim());

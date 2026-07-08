@@ -295,26 +295,34 @@ test.describe("HTMLslide desktop smoke", () => {
 
     await page.locator(".workspace-toolbar").getByRole("button", { name: "Export", exact: true }).click();
     await expect(page.locator(".toolbar-status").getByText("export: Export complete")).toBeVisible({ timeout: 30_000 });
+    const deckpkgPath = path.join(projectPath, "exports", "valid-full-deck.deckpkg");
     await expect(access(path.join(projectPath, "exports", "valid-full-deck.pdf"))).resolves.toBeUndefined();
     await expect(access(path.join(projectPath, "exports", "valid-full-deck.html"))).resolves.toBeUndefined();
-    await expect(access(path.join(projectPath, "exports", "valid-full-deck.deckpkg"))).resolves.toBeUndefined();
+    await expect(access(deckpkgPath)).resolves.toBeUndefined();
     await expect(access(path.join(projectPath, "exports", "notes.json"))).resolves.toBeUndefined();
     await expect(access(path.join(projectPath, "exports", "thumbnails", "001-title.png"))).resolves.toBeUndefined();
+    await rm(deckpkgPath, { force: true });
 
     await page.locator(".workspace-toolbar").getByRole("button", { name: "Present", exact: true }).click();
+    await expect.poll(
+      async () => access(deckpkgPath).then(() => true).catch(() => false),
+      { timeout: 30_000 }
+    ).toBe(true);
 
     const presenter = page.getByLabel("Presenter rehearsal mode");
     const currentSlideHeading = presenter.locator(".presenter-current .hs-panel-header h2");
     const screenCover = presenter.locator(".presenter-screen-cover");
     await expect(presenter).toBeVisible();
-    await expect(presenter.getByText("Windowed Presenter / Rehearsal Mode")).toBeVisible();
+    await expect(presenter.getByText("Deck Package Presenter / Rehearsal Mode")).toBeVisible();
     await expect(presenter.getByText("1 / 2")).toBeVisible();
     await expect(currentSlideHeading).toHaveText("HTML as source");
     await expect(presenter.getByRole("heading", { name: "Speaker Notes" })).toBeVisible();
+    await expect(presenter.getByText("今天我们把 HTML 作为源码")).toBeVisible();
 
     await page.keyboard.press("ArrowRight");
     await expect(presenter.getByText("2 / 2")).toBeVisible();
     await expect(currentSlideHeading).toHaveText("Project structure");
+    await expect(presenter.getByText("Project folders stay readable")).toBeVisible();
 
     await page.keyboard.press("ArrowLeft");
     await expect(presenter.getByText("1 / 2")).toBeVisible();

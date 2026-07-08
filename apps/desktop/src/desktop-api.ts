@@ -1,5 +1,6 @@
 import type { NewDeckDraft, ProjectSummary, SlideSummary } from "./model";
 import type { AiEngineSettings, ExternalAgentStatus } from "./settings-model";
+import type { PresenterDeck } from "@htmlslide/presenter/session";
 import type {
   AgentRunEvent,
   AgentRunLog,
@@ -143,6 +144,29 @@ export type DesktopCheckpointRevertResult = FileCopyCheckpointRevertResult & {
   project?: DesktopProjectPreview;
 };
 
+export type DesktopPresenterDeckResult =
+  | {
+      ok: true;
+      source: "deckpkg";
+      projectPath: string;
+      deckpkgPath: string;
+      deck: PresenterDeck;
+    }
+  | {
+      ok: false;
+      source: "missing" | "invalid";
+      projectPath: string;
+      deckpkgPath?: string;
+      error: string;
+      issues?: Array<{
+        severity: string;
+        type: string;
+        message: string;
+        path?: string;
+        slideId?: string;
+      }>;
+    };
+
 export type HtmlslideDesktopApi = {
   appName: string;
   platform: string;
@@ -162,6 +186,7 @@ export type HtmlslideDesktopApi = {
   createProject(request: NewDeckDraft & { workspacePath?: string }): Promise<DesktopCliResult>;
   checkProject(projectPath: string): Promise<DesktopCliResult>;
   exportProject(projectPath: string): Promise<DesktopCliResult>;
+  loadPresenterDeck(projectPath: string): Promise<DesktopPresenterDeckResult>;
   runMockAgent(request: DesktopMockAgentRunRequest): Promise<DesktopMockAgentRunResult>;
   diffCheckpoint(request: DesktopCheckpointRequest): Promise<FileCopyCheckpointDiff>;
   revertCheckpoint(request: DesktopCheckpointRequest): Promise<DesktopCheckpointRevertResult>;

@@ -7,6 +7,7 @@ import {
   findCliRuntime,
   getDesktopCliIntegration,
   installDesktopCliIntegration,
+  loadDesktopPresenterDeck,
   loadProjectPreview,
   readDesktopLibrary,
   resolveDesktopCliIntegrationTarget,
@@ -555,5 +556,39 @@ describe("desktop services", () => {
       checkStatus: "failed"
     });
     expect(calls).toEqual([["check", projectPath, "--json"]]);
+  });
+
+  it("returns a presenter preparation error when deckpkg export fails", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const calls: string[][] = [];
+    const runner: DesktopCliRunner = async (args) => {
+      calls.push(args);
+      return {
+        ok: false,
+        exitCode: 2,
+        stdout: "",
+        stderr: "Export failed because the deck has blocking QA issues.",
+        error: "Export failed"
+      };
+    };
+
+    const result = await loadDesktopPresenterDeck(projectPath, {
+      cliRuntime: {
+        cliPath: "/fake/htmlslide.js",
+        cwd: "/fake",
+        mode: "development",
+        rootPath: "/fake"
+      },
+      cliRunner: runner
+    });
+
+    expect(result).toMatchObject({
+      error: "Export failed",
+      ok: false,
+      projectPath,
+      source: "invalid"
+    });
+    expect(calls).toEqual([["export", projectPath, "--json"]]);
   });
 });

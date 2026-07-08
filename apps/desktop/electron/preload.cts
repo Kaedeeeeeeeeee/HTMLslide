@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
     ipcRenderer.invoke("htmlslide:create-project", request),
   checkProject: (projectPath: string) => ipcRenderer.invoke("htmlslide:check-project", projectPath),
   exportProject: (projectPath: string) => ipcRenderer.invoke("htmlslide:export-project", projectPath),
+  loadPresenterDeck: (projectPath: string) => ipcRenderer.invoke("htmlslide:load-presenter-deck", projectPath),
   runMockAgent: (request: {
     projectPath: string;
     brief: string;

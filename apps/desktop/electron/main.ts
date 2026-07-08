@@ -11,6 +11,7 @@ import {
   getDesktopCliIntegration,
   installDesktopCliIntegration,
   loadProjectPreview,
+  loadDesktopPresenterDeck,
   readAiEngineSettings,
   readDesktopLibrary,
   resolveCreateProjectRequest,
@@ -249,6 +250,10 @@ function registerIpcHandlers(): void {
     }
     return result;
   });
+
+  ipcMain.handle("htmlslide:load-presenter-deck", async (_event, projectPath: string) =>
+    loadDesktopPresenterDeck(projectPath, { cliRuntime })
+  );
 
   ipcMain.handle(
     "htmlslide:run-mock-agent",

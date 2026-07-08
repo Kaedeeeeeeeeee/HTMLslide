@@ -7,6 +7,7 @@ import {
   PRESENTER_KEYBOARD_CONTROLS,
   type PresenterDeck,
   type PresenterKeyboardAction,
+  type PresenterSlide,
   type PresenterSessionState,
   type PresenterSessionView
 } from "@htmlslide/presenter/session";
@@ -106,6 +107,7 @@ interface WorkspaceProps {
   onSettingsOpen: () => void;
   onToolbarAction: (action: "generate" | "check" | "export" | "present") => void;
   onViewDiff?: () => void;
+  loadPresenterDeck?: () => Promise<PresenterDeck | null>;
 }
 
 export interface AgentDiffReview {
@@ -142,6 +144,14 @@ export interface AgentTextDiffLine {
   oldLine?: number;
   newLine?: number;
 }
+
+type PresenterSource = "deckpkg" | "rehearsal";
+
+type ActivePresenterState = {
+  deck: PresenterDeck;
+  session: PresenterSessionState;
+  source: PresenterSource;
+};
 
 const inspectorTabs: Array<{ id: InspectorTab; label: string }> = [
   { id: "outline", label: inspectorTabLabels.outline },
@@ -194,6 +204,7 @@ export function Workspace({
   onCommandChange,
   onCommandSubmit,
   onInspectorTabChange,
+  loadPresenterDeck,
   onQaFilterChange,
   onRevertDiff,
   onRunAction,
@@ -232,7 +243,7 @@ export function Workspace({
     agentRunEvents.length > 0
       ? buildAgentRunStages(agentRunEvents, agentRunLogs, stages)
       : buildRuntimeStages(stages, activeStageIndex, running);
-  const presenterDeck = useMemo(
+  const rehearsalPresenterDeck = useMemo(
     () =>
       slides.length > 0
         ? createRehearsalPresenterDeck({
@@ -249,38 +260,44 @@ export function Workspace({
         : null,
     [project.title, slides]
   );
-  const [presenterSession, setPresenterSession] = useState<PresenterSessionState | null>(null);
+  const [presenterState, setPresenterState] = useState<ActivePresenterState | null>(null);
 
   useEffect(() => {
-    setPresenterSession(null);
+    setPresenterState(null);
   }, [project.id, slides]);
 
-  const handlePresenterSessionChange = useCallback(
-    (nextSession: PresenterSessionState): void => {
-      setPresenterSession(nextSession);
-      const nextSlide = slides[nextSession.slideIndex];
-      if (nextSlide) {
-        onSelectSlide(nextSlide.id);
-      }
-    },
-    [onSelectSlide, slides]
-  );
+  useEffect(() => {
+    const presenterSlideId = presenterState?.deck.slides[presenterState.session.slideIndex]?.id;
+    if (presenterSlideId) {
+      onSelectSlide(presenterSlideId);
+    }
+  }, [onSelectSlide, presenterState?.deck, presenterState?.session.slideIndex]);
 
-  const handleOpenPresenter = useCallback((): void => {
-    if (!presenterDeck) {
+  const handlePresenterSessionChange = useCallback((nextSession: PresenterSessionState): void => {
+    setPresenterState((current) => current ? { ...current, session: nextSession } : current);
+  }, []);
+
+  const handleOpenPresenter = useCallback(async (): Promise<void> => {
+    const loadedPresenterDeck = loadPresenterDeck ? await loadPresenterDeck().catch(() => null) : null;
+    const nextPresenterDeck = loadedPresenterDeck ?? rehearsalPresenterDeck;
+    const source: PresenterSource = loadedPresenterDeck ? "deckpkg" : "rehearsal";
+
+    if (!nextPresenterDeck) {
       onToolbarAction("present");
       return;
     }
 
-    const selectedIndex = Math.max(0, slides.findIndex((slide) => slide.id === selectedSlideId));
-    setPresenterSession(
-      createPresenterSession(presenterDeck, {
-        initialSlideIndex: selectedIndex,
+    const selectedIndex = nextPresenterDeck.slides.findIndex((slide) => slide.id === selectedSlideId);
+    setPresenterState({
+      deck: nextPresenterDeck,
+      source,
+      session: createPresenterSession(nextPresenterDeck, {
+        initialSlideIndex: Math.max(0, selectedIndex),
         nowMs: Date.now()
       })
-    );
+    });
     onToolbarAction("present");
-  }, [onToolbarAction, presenterDeck, selectedSlideId, slides]);
+  }, [loadPresenterDeck, onToolbarAction, rehearsalPresenterDeck, selectedSlideId]);
 
   const handleWorkspaceToolbarAction = useCallback(
     (action: "generate" | "check" | "export" | "present"): void => {
@@ -347,14 +364,15 @@ export function Workspace({
         stages={runtimeStages}
       />
 
-      {presenterDeck && presenterSession ? (
+      {presenterState ? (
         <PresenterMode
-          deck={presenterDeck}
-          onExit={() => setPresenterSession(null)}
+          deck={presenterState.deck}
+          onExit={() => setPresenterState(null)}
           onSessionChange={handlePresenterSessionChange}
           project={project}
-          session={presenterSession}
+          session={presenterState.session}
           slides={slides}
+          source={presenterState.source}
         />
       ) : null}
     </main>
@@ -366,6 +384,7 @@ interface PresenterModeProps {
   project: ProjectSummary;
   session: PresenterSessionState;
   slides: SlideSummary[];
+  source: PresenterSource;
   onExit: () => void;
   onSessionChange: (session: PresenterSessionState) => void;
 }
@@ -376,7 +395,8 @@ function PresenterMode({
   onSessionChange,
   project,
   session,
-  slides
+  slides,
+  source
 }: PresenterModeProps): ReactNode {
   const shellRef = useRef<HTMLElement | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -390,8 +410,8 @@ function PresenterMode({
     () => getPresenterSessionView(deck, session, nowMs),
     [deck, nowMs, session]
   );
-  const currentSlide = slides[view.slideIndex] ?? slides[0];
-  const nextSlide = slides[view.slideIndex + 1] ?? null;
+  const currentSlidePreview = findSlidePreview(slides, view.currentSlide.id);
+  const nextSlidePreview = view.nextSlide ? findSlidePreview(slides, view.nextSlide.id) : undefined;
 
   const runPresenterAction = useCallback(
     (action: PresenterKeyboardAction, jumpSlideIndex?: number): void => {
@@ -448,10 +468,6 @@ function PresenterMode({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [runPresenterAction]);
 
-  if (!currentSlide) {
-    return null;
-  }
-
   return (
     <section
       aria-label="Presenter rehearsal mode"
@@ -463,7 +479,7 @@ function PresenterMode({
           <span className="brand-mark">Hs</span>
           <div>
             <strong>{project.title}</strong>
-            <span>Windowed Presenter / Rehearsal Mode</span>
+            <span>{source === "deckpkg" ? "Deck Package Presenter / Rehearsal Mode" : "Windowed Presenter / Rehearsal Mode"}</span>
           </div>
         </div>
         <div className="presenter-mode__topbar-actions">
@@ -491,10 +507,11 @@ function PresenterMode({
               />
             }
             eyebrow="Current slide"
-            title={currentSlide.title}
+            title={view.currentSlide.title}
           />
           <PresenterSlidePreview
-            slide={currentSlide}
+            presenterSlide={view.currentSlide}
+            slide={currentSlidePreview}
             variant="current"
           />
           {view.screen !== "normal" ? (
@@ -509,12 +526,13 @@ function PresenterMode({
 
           <section className="presenter-panel">
             <PanelHeader
-              eyebrow={nextSlide ? `Slide ${view.slideNumber + 1}` : "End"}
+              eyebrow={view.nextSlide ? `Slide ${view.slideNumber + 1}` : "End"}
               title="Next"
             />
-            {nextSlide ? (
+            {view.nextSlide ? (
               <PresenterSlidePreview
-                slide={nextSlide}
+                presenterSlide={view.nextSlide}
+                slide={nextSlidePreview}
                 variant="next"
               />
             ) : (
@@ -542,7 +560,7 @@ function PresenterMode({
                   />
                 </div>
               }
-              eyebrow={currentSlide.duration}
+              eyebrow={formatPresenterDuration(view.currentSlide.durationSec)}
               title="Speaker Notes"
             />
             <div
@@ -562,12 +580,12 @@ function PresenterMode({
                 onChange={(event) => runPresenterAction("jump", Number(event.currentTarget.value))}
                 value={view.slideIndex}
               >
-                {slides.map((slide, index) => (
+                {deck.slides.map((slide, index) => (
                   <option
                     key={slide.id}
                     value={index}
                   >
-                    {slide.number} {slide.title}
+                    {String(slide.slideNumber).padStart(2, "0")} {slide.title}
                   </option>
                 ))}
               </select>
@@ -652,39 +670,43 @@ function PresenterTimerPanel({ view }: { view: PresenterSessionView }): ReactNod
 }
 
 function PresenterSlidePreview({
+  presenterSlide,
   slide,
   variant
 }: {
-  slide: SlideSummary;
+  presenterSlide: PresenterSlide;
+  slide?: SlideSummary;
   variant: "current" | "next";
 }): ReactNode {
-  const hasSourcePreview = variant === "current" && Boolean(slide.html && slide.html.trim().length > 0);
+  const sourceHtml = slide?.html?.trim() ? slide.html : undefined;
+  const hasSourcePreview = variant === "current" && sourceHtml !== undefined;
+  const accent = slide?.accent ?? "#7da2ff";
 
   return (
     <article
-      aria-label={`${slide.title} presenter preview`}
+      aria-label={`${presenterSlide.title} presenter preview`}
       className={[
         "presenter-slide-preview",
         hasSourcePreview ? "slide-canvas slide-canvas--source" : "presenter-slide-preview--fallback",
         variant === "next" ? "presenter-slide-preview--next" : ""
       ].filter(Boolean).join(" ")}
-      style={{ "--slide-accent": slide.accent } as CSSProperties}
+      style={{ "--slide-accent": accent } as CSSProperties}
     >
       {hasSourcePreview ? (
         <div
           className="slide-fragment-preview"
-          dangerouslySetInnerHTML={{ __html: slide.html ?? "" }}
+          dangerouslySetInnerHTML={{ __html: sourceHtml ?? "" }}
         />
       ) : (
         <>
           <header>
-            <span>{slide.section}</span>
-            <strong>{slide.duration}</strong>
+            <span>{slide?.section ?? `Slide ${presenterSlide.slideNumber}`}</span>
+            <strong>{formatPresenterDuration(presenterSlide.durationSec)}</strong>
           </header>
           <section>
-            <h1>{slide.title}</h1>
+            <h1>{presenterSlide.title}</h1>
             <ul>
-              {slide.bullets.slice(0, variant === "next" ? 2 : 4).map((bullet) => (
+              {(slide?.bullets ?? [`Review ${presenterSlide.title}`]).slice(0, variant === "next" ? 2 : 4).map((bullet) => (
                 <li key={bullet}>{bullet}</li>
               ))}
             </ul>
@@ -693,6 +715,10 @@ function PresenterSlidePreview({
       )}
     </article>
   );
+}
+
+function findSlidePreview(slides: readonly SlideSummary[], slideId: string): SlideSummary | undefined {
+  return slides.find((slide) => slide.id === slideId);
 }
 
 function PresenterKeyboardHints(): ReactNode {
@@ -709,6 +735,10 @@ function PresenterKeyboardHints(): ReactNode {
       </div>
     </section>
   );
+}
+
+function formatPresenterDuration(seconds: number): string {
+  return formatPresenterClock(seconds * 1000);
 }
 
 function formatPresenterClock(ms: number): string {

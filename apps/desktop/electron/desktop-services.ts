@@ -21,6 +21,12 @@ import {
   type FileCopyCheckpointDiff,
   type FileCopyCheckpointRevertResult
 } from "@htmlslide/agent";
+import {
+  DeckPackageValidationError,
+  readDeckPackage,
+  type PresenterDeckPackage
+} from "@htmlslide/presenter";
+import type { PresenterDeck } from "@htmlslide/presenter/session";
 
 export type DesktopProjectStatus =
   | "Ready"
@@ -196,6 +202,34 @@ export type DesktopCheckpointRequest = {
 export type DesktopCheckpointRevertResult = FileCopyCheckpointRevertResult & {
   project?: DesktopProjectPreview;
 };
+
+export type DesktopPresenterDeckOptions = {
+  cliRuntime?: CliRuntime;
+  cliRunner?: DesktopCliRunner;
+};
+
+export type DesktopPresenterDeckResult =
+  | {
+      ok: true;
+      source: "deckpkg";
+      projectPath: string;
+      deckpkgPath: string;
+      deck: PresenterDeck;
+    }
+  | {
+      ok: false;
+      source: "missing" | "invalid";
+      projectPath: string;
+      deckpkgPath?: string;
+      error: string;
+      issues?: Array<{
+        severity: string;
+        type: string;
+        message: string;
+        path?: string;
+        slideId?: string;
+      }>;
+    };
 
 export type DesktopMockAgentRunnerOptions = {
   cliRuntime?: CliRuntime;
@@ -602,6 +636,78 @@ export async function loadProjectPreview(projectPath: string): Promise<DesktopPr
     project,
     slides
   };
+}
+
+export async function loadDesktopPresenterDeck(
+  projectPath: string,
+  options: DesktopPresenterDeckOptions = {}
+): Promise<DesktopPresenterDeckResult> {
+  const root = path.resolve(projectPath);
+  const cliRunner = options.cliRunner ?? runHtmlslideCli;
+  const exportResult = options.cliRuntime
+    ? await runDesktopAgentCliStep(["export", root, "--json"], options.cliRuntime, cliRunner)
+    : undefined;
+
+  if (exportResult && !exportResult.ok) {
+    return {
+      ok: false,
+      source: "invalid",
+      projectPath: root,
+      error: exportResult.error ?? firstNonEmptyLine(exportResult.stderr) ?? `Export exited with ${exportResult.exitCode}.`
+    };
+  }
+
+  const deckpkgPath = deckpkgPathFromExportResult(exportResult) ?? await findProjectDeckPackage(root);
+  if (!deckpkgPath) {
+    return {
+      ok: false,
+      source: "missing",
+      projectPath: root,
+      error: "Export did not produce a deckpkg for presenter mode."
+    };
+  }
+
+  try {
+    const deckPackage = await readDeckPackage(deckpkgPath);
+    return {
+      ok: true,
+      source: "deckpkg",
+      projectPath: root,
+      deckpkgPath,
+      deck: presenterDeckFromPackage(deckPackage)
+    };
+  } catch (error) {
+    if (error instanceof DeckPackageValidationError) {
+      return {
+        ok: false,
+        source: "invalid",
+        projectPath: root,
+        deckpkgPath,
+        error: "Deck package validation failed.",
+        issues: error.issues.map((issue) => ({
+          severity: issue.severity,
+          type: issue.type,
+          message: issue.message,
+          path: issue.path,
+          slideId: issue.slideId
+        }))
+      };
+    }
+
+    return {
+      ok: false,
+      source: "invalid",
+      projectPath: root,
+      deckpkgPath,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+function deckpkgPathFromExportResult(result: CliRunResult | undefined): string | undefined {
+  const artifacts = asRecord(asRecord(result?.json)?.artifacts);
+  const deckpkg = artifacts?.deckpkg;
+  return typeof deckpkg === "string" && deckpkg.length > 0 ? deckpkg : undefined;
 }
 
 export async function runHtmlslideCli(args: string[], options: CliRunnerOptions): Promise<CliRunResult> {
@@ -1153,6 +1259,53 @@ async function readDeckManifest(projectPath: string): Promise<DeckManifest> {
   return JSON.parse(contents) as DeckManifest;
 }
 
+async function findProjectDeckPackage(projectPath: string): Promise<string | undefined> {
+  const manifest = await readDeckManifest(projectPath);
+  const title = typeof manifest.title === "string" && manifest.title.trim().length > 0
+    ? manifest.title
+    : path.basename(projectPath);
+  const exportsPath = path.join(projectPath, "exports");
+  const expectedPath = path.join(exportsPath, `${slugFileName(title)}.deckpkg`);
+  if (await pathExists(expectedPath)) {
+    return expectedPath;
+  }
+
+  let entries: string[];
+  try {
+    entries = await fs.readdir(exportsPath);
+  } catch {
+    return undefined;
+  }
+
+  const candidates = await Promise.all(
+    entries
+      .filter((entry) => entry.endsWith(".deckpkg"))
+      .map(async (entry) => {
+        const filePath = path.join(exportsPath, entry);
+        const stat = await fs.stat(filePath).catch(() => undefined);
+        return stat?.isFile() ? { filePath, mtimeMs: stat.mtimeMs } : undefined;
+      })
+  );
+
+  return candidates
+    .filter(isPresent)
+    .sort((left, right) => right.mtimeMs - left.mtimeMs || left.filePath.localeCompare(right.filePath))[0]?.filePath;
+}
+
+function presenterDeckFromPackage(deckPackage: PresenterDeckPackage): PresenterDeck {
+  return {
+    title: deckPackage.manifest.title,
+    settings: deckPackage.settings,
+    slides: deckPackage.slides.map((slide) => ({
+      ...slide,
+      thumbnail: {
+        ...slide.thumbnail,
+        bytes: new Uint8Array()
+      }
+    }))
+  };
+}
+
 async function hasMissingSlideFiles(projectPath: string, manifest: DeckManifest): Promise<boolean> {
   for (const slide of manifest.slides ?? []) {
     const source = typeof slide.source === "string" ? slide.source : undefined;
@@ -1232,6 +1385,13 @@ function titleCase(value: string): string {
   return value
     .replace(/[-_]+/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function slugFileName(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "deck";
 }
 
 function parseJsonOutput(stdout: string): unknown {
@@ -1604,6 +1764,10 @@ async function pathExists(filePath: string): Promise<boolean> {
 
 function pathExistsSync(filePath: string): boolean {
   return existsSync(filePath);
+}
+
+function isPresent<T>(value: T | null | undefined): value is T {
+  return value !== null && value !== undefined;
 }
 
 function isProjectRecord(value: unknown): value is DesktopProjectRecord {

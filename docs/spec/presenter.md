@@ -83,6 +83,11 @@ Single-screen rehearsal mode uses one window or surface with:
 
 The runtime package only supplies data and state transitions. Rendering, focus handling, and persistence belong to the desktop/UI layer.
 
+The desktop app now prepares compiler-generated `.deckpkg` input when Present is opened. It runs the shared export path
+from the Electron main process, validates the returned package through `@htmlslide/presenter`, then passes package slide
+order, timing, and notes into the renderer session. If package preparation fails, the app keeps the source-preview
+rehearsal fallback so authors can still rehearse while fixing export issues.
+
 ## Keyboard Controls
 
 Presenter keyboard actions are exposed through `PRESENTER_KEYBOARD_CONTROLS`, `getPresenterKeyboardAction(input)`, and `applyPresenterKeyboardAction(deckPackage, state, action, options)`.

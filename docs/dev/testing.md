@@ -15,7 +15,7 @@ Required root package contract:
 - `packageManager` pinned to a pnpm version.
 - `pnpm-lock.yaml` committed.
 - `lint`, `typecheck`, `test`, and `build` scripts in `package.json`.
-- `package:alpha` script before unsigned alpha packaging is enabled.
+- `package:alpha` and `smoke:package:alpha` scripts before unsigned alpha packaging is enabled.
 
 ## Test Layers
 
@@ -59,7 +59,15 @@ Unsigned macOS alpha packaging is intentionally separate from default CI because
 pnpm verify:package:alpha
 ```
 
-This command delegates to the existing alpha package flow. On macOS it builds the desktop app, creates the unsigned `.app`, DMG, ZIP, and manifest under `dist/alpha`, and performs the package script's built-in existence checks for the Electron main process, preload, and renderer output.
+This command builds the desktop app, creates the unsigned `.app`, DMG, ZIP, and manifest under `dist/alpha`, performs the package script's built-in existence checks for the Electron main process, preload, and renderer output, then runs the package smoke.
+
+After an alpha package already exists, run the smoke directly with:
+
+```bash
+pnpm smoke:package:alpha
+```
+
+The smoke mounts the generated DMG, verifies the packaged app and `Applications` symlink, copies the app to a temporary install directory, launches it with isolated app data, installs a temporary CLI shim against the packaged CLI runtime, verifies `htmlslide doctor --json`, and uninstalls the shim.
 
 The `Alpha Package` GitHub Actions workflow remains the CI packaging verifier for scheduled, tagged, and manual runs. Do not add provider credentials or local machine state to this path.
 

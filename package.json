@@ -20,7 +20,8 @@
     "e2e:desktop": "pnpm --filter @htmlslide/desktop e2e",
     "e2e:desktop:headed": "pnpm --filter @htmlslide/desktop e2e:headed",
     "package:alpha": "node scripts/release/package-alpha.mjs",
-    "verify:package:alpha": "pnpm package:alpha",
+    "smoke:package:alpha": "node scripts/release/smoke-alpha-package.mjs",
+    "verify:package:alpha": "pnpm package:alpha && pnpm smoke:package:alpha",
     "cli": "pnpm --filter @htmlslide/cli htmlslide",
     "doctor": "pnpm --filter @htmlslide/cli htmlslide doctor"
   },

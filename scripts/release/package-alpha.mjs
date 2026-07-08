@@ -161,6 +161,20 @@ async function deployCliRuntime(appResourcesPath) {
   }
 }
 
+async function deployDesktopRuntime(appResourcesPath) {
+  const agentRuntimePath = path.join(appResourcesPath, "node_modules", "@htmlslide", "agent");
+  const agentPackagePath = path.join(root, "packages", "agent");
+
+  await rm(agentRuntimePath, { recursive: true, force: true });
+  await mkdir(agentRuntimePath, { recursive: true });
+  await cp(path.join(agentPackagePath, "package.json"), path.join(agentRuntimePath, "package.json"));
+  await cp(path.join(agentPackagePath, "dist"), path.join(agentRuntimePath, "dist"), {
+    recursive: true,
+    verbatimSymlinks: true
+  });
+  await requirePath(path.join(agentRuntimePath, "dist", "index.js"), "Packaged desktop agent runtime");
+}
+
 async function createDmg({ appPath, artifactBaseName, outputDir, volumeName }) {
   const dmgPath = path.join(outputDir, `${artifactBaseName}.dmg`);
   const dmgRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-alpha-dmg-"));
@@ -231,6 +245,7 @@ await cp(desktopDist, path.join(appResourcesPath, "dist"), {
   verbatimSymlinks: true
 });
 await writeRuntimePackage(appResourcesPath, desktopPackage, version);
+await deployDesktopRuntime(appResourcesPath);
 await deployCliRuntime(appResourcesPath);
 
 const plistPath = path.join(appPath, "Contents", "Info.plist");

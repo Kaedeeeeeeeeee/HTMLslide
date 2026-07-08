@@ -9,7 +9,7 @@ HTMLslide uses SemVer for app releases and a separate schema version for deck fo
 ## CI Workflows
 
 - `CI`: runs `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` on pull requests and pushes to `main`.
-- `Alpha Package`: runs on manual dispatch, nightly schedule, and `v*` tags. It repeats the CI checks, runs `pnpm package:alpha`, and uploads unsigned artifacts.
+- `Alpha Package`: runs on manual dispatch, nightly schedule, and `v*` tags. It repeats the CI checks, runs `pnpm package:alpha`, smokes the generated package, and uploads unsigned artifacts.
 
 Both workflows intentionally fail early if the root package scaffold is missing required scripts. Add those scripts in the app scaffold rather than weakening workflow checks.
 
@@ -32,6 +32,14 @@ Alpha packaging uses the installed Electron macOS runtime and `hdiutil`/`ditto`,
 The alpha bundle may be ad-hoc signed to keep the local app bundle internally valid, but it is not Developer ID signed, notarized, or stapled. Treat it as an internal/tester artifact, not a production release. Testers may see Gatekeeper warnings and may need to right-click Open for the first launch.
 
 The DMG contains `HTMLslide.app` and an `Applications` symlink. The ZIP is provided as a fallback transport artifact for CI downloads and manual inspection.
+
+After packaging, run the package smoke:
+
+```bash
+pnpm smoke:package:alpha
+```
+
+The smoke mounts the DMG, copies `HTMLslide.app` into a temporary install directory, launches the packaged app with isolated user data, installs a temporary HTMLslide-managed CLI shim, verifies `htmlslide doctor --json` through that shim, and uninstalls it. It never writes to real `/Applications` or the user's real `~/.htmlslide`.
 
 ## Alpha Checklist
 

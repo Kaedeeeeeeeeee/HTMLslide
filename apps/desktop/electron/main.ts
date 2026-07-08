@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
-import { mkdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import {
@@ -30,6 +30,23 @@ const cliRuntime = findCliRuntime(currentDir, process.resourcesPath);
 const configuredUserDataPath = process.env.HTMLSLIDE_USER_DATA_DIR
   ? resolve(process.env.HTMLSLIDE_USER_DATA_DIR)
   : undefined;
+const smokeQuitAfterReady = process.env.HTMLSLIDE_SMOKE_QUIT_AFTER_READY === "1";
+const smokeReadyFile = process.env.HTMLSLIDE_SMOKE_READY_FILE
+  ? resolve(process.env.HTMLSLIDE_SMOKE_READY_FILE)
+  : undefined;
+
+const writeSmokeMarker = async (marker: Record<string, unknown>) => {
+  if (!smokeReadyFile) {
+    return;
+  }
+
+  await mkdir(dirname(smokeReadyFile), { recursive: true });
+  await writeFile(smokeReadyFile, `${JSON.stringify(marker)}\n`);
+};
+
+if (smokeQuitAfterReady) {
+  void writeSmokeMarker({ status: "main-started" }).catch(() => undefined);
+}
 
 if (configuredUserDataPath) {
   app.setPath("userData", configuredUserDataPath);
@@ -243,13 +260,31 @@ function createWindow(): void {
     return { action: "deny" };
   });
 
+  const completeSmokeStartup = async (load: Promise<void>) => {
+    if (!smokeQuitAfterReady) {
+      return;
+    }
+
+    try {
+      await load;
+      await writeSmokeMarker({ status: "passed" });
+      setTimeout(() => app.quit(), 100);
+    } catch (error) {
+      await writeSmokeMarker({
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error)
+      });
+      app.exit(1);
+    }
+  };
+
   if (devServerUrl) {
-    void mainWindow.loadURL(devServerUrl);
+    void completeSmokeStartup(mainWindow.loadURL(devServerUrl));
     mainWindow.webContents.openDevTools({ mode: "detach" });
     return;
   }
 
-  void mainWindow.loadFile(join(currentDir, "../renderer/index.html"));
+  void completeSmokeStartup(mainWindow.loadFile(join(currentDir, "../renderer/index.html")));
 }
 
 app.whenReady().then(() => {

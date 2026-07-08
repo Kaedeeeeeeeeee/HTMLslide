@@ -114,24 +114,24 @@ jobs:
             exit 1
           fi
 
-          mkdir -p .alpha-artifacts
+          mkdir -p alpha-artifacts
 
           for artifact in "${artifacts[@]}"; do
-            cp "$artifact" .alpha-artifacts/
+            cp "$artifact" alpha-artifacts/
           done
 
-          count="$(find .alpha-artifacts -type f | wc -l | tr -d ' ')"
+          count="$(find alpha-artifacts -type f | wc -l | tr -d ' ')"
           if [[ "$count" == "0" ]]; then
             echo "::error title=No package artifacts::pnpm package:alpha completed but no alpha artifacts were copied from dist/alpha."
             exit 1
           fi
 
-          find .alpha-artifacts -type f -print | sort
+          find alpha-artifacts -type f -print | sort
 
       - name: Upload unsigned alpha artifact
         uses: actions/upload-artifact@v4
         with:
           name: htmlslide-unsigned-alpha-${{ github.run_number }}
-          path: .alpha-artifacts/*
+          path: alpha-artifacts/*
           if-no-files-found: error
           retention-days: 14

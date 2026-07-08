@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "0.1.0",
+  "id": "deck_linter_safe_area",
+  "title": "Linter Safe Area",
+  "language": "en-US",
+  "aspectRatio": "16:9",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "safeArea": {
+    "top": 72,
+    "right": 96,
+    "bottom": 72,
+    "left": 96
+  },
+  "slides": [
+    {
+      "id": "001-safe-area",
+      "title": "Safe Area Fixture",
+      "source": "slides/001-safe-area.html",
+      "notes": "notes/001-safe-area.md",
+      "durationSec": 60,
+      "kind": "content",
+      "status": "draft"
+    }
+  ]
+}

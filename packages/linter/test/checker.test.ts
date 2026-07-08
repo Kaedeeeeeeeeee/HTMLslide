@@ -68,6 +68,7 @@ describe("HTMLslide linter", () => {
         "remote-asset",
         "remote-font",
         "remote-script",
+        "safe-area-violation",
         "slide-id-mismatch",
         "text-overflow",
         "title-too-long"
@@ -95,6 +96,24 @@ describe("HTMLslide linter", () => {
     });
     expect(overflowIssue?.measurement?.overflowBottomPx).toEqual(expect.any(Number));
     expect(Number(overflowIssue?.measurement?.overflowBottomPx)).toBeGreaterThan(0);
+    expectMachineRepairableIssues(report.issues);
+  });
+
+  it("detects positioned elements that violate the deck safe area", async () => {
+    const report = await checkProject(fixturePath("linter-safe-area"));
+    const safeAreaIssue = report.issues.find((issue) => issue.type === "safe-area-violation");
+
+    expect(report.status).toBe("failed");
+    expect(safeAreaIssue).toMatchObject({
+      severity: "error",
+      slideId: "001-safe-area",
+      path: "slides/001-safe-area.html",
+      selector: "p.caption",
+      measurement: {
+        overflowBottomPx: 32,
+        safeBottom: 1008
+      }
+    });
     expectMachineRepairableIssues(report.issues);
   });
 

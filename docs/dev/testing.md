@@ -25,7 +25,7 @@ Use deterministic fixtures and avoid real provider credentials in automated test
 - Schema tests: valid minimal deck, valid full deck, missing slide source, duplicate slide id, invalid viewport, invalid safe area, unsupported schema version.
 - CLI E2E tests: `htmlslide new`, `htmlslide check --json`, `htmlslide export --pdf --deckpkg`, `htmlslide package`, `htmlslide doctor`.
 - Compiler regression tests: golden decks for minimal, text-heavy, data chart, image-heavy, notes, and multi-theme decks.
-- Linter tests: `linter-text-overflow`, safe area, contrast, remote font, missing notes, and valid clean fixtures.
+- Linter tests: `linter-text-overflow`, `linter-safe-area`, contrast, remote font, missing notes, and valid clean fixtures.
 - Agent tests: use mock model providers and fake external commands. CI must not require real Claude Code, Codex, or provider login.
 - MCP tests: verify server startup, tool listing, path boundary enforcement, schema-valid reports, and artifact creation.
 - Electron and presenter tests: cover onboarding, workspace choice, mock agent deck creation, preview, checks, export, rehearsal mode, settings, notes, next/previous navigation, timer, and keyboard shortcuts.

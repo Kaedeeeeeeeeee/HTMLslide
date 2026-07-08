@@ -86,6 +86,37 @@ type ResourceCheckResult = {
   assetPaths: string[];
 };
 
+type SlideLayoutContext = {
+  viewport: {
+    width: number;
+    height: number;
+  };
+  safeArea: {
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
+  };
+};
+
+type ElementBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  right: number;
+  bottom: number;
+};
+
+type SafeAreaViolationFinding = {
+  selector: string;
+  bounds: ElementBounds;
+  overflowTopPx: number;
+  overflowRightPx: number;
+  overflowBottomPx: number;
+  overflowLeftPx: number;
+};
+
 type TextOverflowFinding = {
   selector: string;
   overflowBottomPx: number;
@@ -189,10 +220,14 @@ const checkLoadedDeckProject = async (
   const missingProjectPaths = new Set(coreFileIssues.map((issue) => issue.path).filter(isPresent));
   const issues: HtmlslideIssue[] = normalizeCoreIssues(coreFileIssues, project.projectRoot);
   const localAssetPaths = new Set<string>();
+  const layout = {
+    viewport: project.deck.viewport,
+    safeArea: project.deck.safeArea
+  };
 
   for (const slide of project.slides) {
     const context = slideContextFromCoreSlide(slide);
-    const slideResult = await checkSlide(project.projectRoot, context, missingProjectPaths);
+    const slideResult = await checkSlide(project.projectRoot, context, missingProjectPaths, layout);
     issues.push(...slideResult.issues);
     slideResult.assetPaths.forEach((assetPath) => localAssetPaths.add(assetPath));
   }
@@ -258,7 +293,8 @@ const collectCoreProjectFileIssues = async (project: LoadedDeckProject): Promise
 const checkSlide = async (
   projectRoot: string,
   slide: SlideCheckContext,
-  missingProjectPaths: ReadonlySet<string>
+  missingProjectPaths: ReadonlySet<string>,
+  layout?: SlideLayoutContext
 ): Promise<ResourceCheckResult> => {
   const issues: HtmlslideIssue[] = [];
   const assetPaths: string[] = [];
@@ -286,6 +322,9 @@ const checkSlide = async (
 
   const html = await readFile(slide.sourcePath, "utf8");
   issues.push(...checkSlideId(slide, html));
+  if (layout) {
+    issues.push(...checkSafeArea(slide, html, layout));
+  }
   issues.push(...checkTextOverflow(slide, html));
   issues.push(...checkBodyDensity(slide, html));
 
@@ -371,6 +410,41 @@ const checkSlideId = (slide: SlideCheckContext, html: string): HtmlslideIssue[] 
     })
   ];
 };
+
+const checkSafeArea = (slide: SlideCheckContext, html: string, layout: SlideLayoutContext): HtmlslideIssue[] =>
+  extractSafeAreaViolations(html, layout).map((violation) => {
+    const maxOverflowPx = Math.max(
+      violation.overflowTopPx,
+      violation.overflowRightPx,
+      violation.overflowBottomPx,
+      violation.overflowLeftPx
+    );
+
+    return makeIssue({
+      slideId: slide.id,
+      severity: "error",
+      type: "safe-area-violation",
+      path: slide.sourceProjectPath,
+      selector: violation.selector,
+      message: `Element exceeds slide safe area by ${maxOverflowPx}px.`,
+      measurement: {
+        overflowTopPx: violation.overflowTopPx,
+        overflowRightPx: violation.overflowRightPx,
+        overflowBottomPx: violation.overflowBottomPx,
+        overflowLeftPx: violation.overflowLeftPx,
+        x: violation.bounds.x,
+        y: violation.bounds.y,
+        width: violation.bounds.width,
+        height: violation.bounds.height,
+        safeTop: layout.safeArea.top,
+        safeRight: layout.viewport.width - layout.safeArea.right,
+        safeBottom: layout.viewport.height - layout.safeArea.bottom,
+        safeLeft: layout.safeArea.left
+      },
+      suggestedFix: "Move or resize the element so it remains inside the slide safe area.",
+      agentInstruction: `Fix ${violation.selector} in ${slide.sourceProjectPath} for slide ${slide.id}. Keep content within the safe area bounds before changing the deck safeArea.`
+    });
+  });
 
 const checkTextOverflow = (slide: SlideCheckContext, html: string): HtmlslideIssue[] =>
   extractTextOverflows(html).map((overflow) =>
@@ -883,6 +957,129 @@ const extractCssResourceReferences = (content: string): ResourceReference[] => {
   return references;
 };
 
+const extractSafeAreaViolations = (html: string, layout: SlideLayoutContext): SafeAreaViolationFinding[] => {
+  const violations: SafeAreaViolationFinding[] = [];
+  const tagPattern = /<([A-Za-z][A-Za-z0-9:-]*)([^>]*)>/g;
+  let tagMatch: RegExpExecArray | null;
+
+  while ((tagMatch = tagPattern.exec(html)) !== null) {
+    const tag = tagMatch[1]?.toLowerCase();
+    if (!tag) {
+      continue;
+    }
+
+    const attributes = tagMatch[2] ?? "";
+    const style = getAttributeValue(attributes, "style");
+    if (!style) {
+      continue;
+    }
+
+    const declarations = parseStyleDeclarations(style);
+    const bounds = extractPositionedElementBounds(declarations, layout.viewport);
+    if (!bounds) {
+      continue;
+    }
+
+    const overflow = calculateSafeAreaOverflow(bounds, layout);
+    if (
+      overflow.overflowTopPx <= 0 &&
+      overflow.overflowRightPx <= 0 &&
+      overflow.overflowBottomPx <= 0 &&
+      overflow.overflowLeftPx <= 0
+    ) {
+      continue;
+    }
+
+    violations.push({
+      selector: selectorForTaggedElement(tag, attributes),
+      bounds,
+      ...overflow
+    });
+  }
+
+  return violations;
+};
+
+const extractPositionedElementBounds = (
+  declarations: ReadonlyMap<string, string>,
+  viewport: SlideLayoutContext["viewport"]
+): ElementBounds | undefined => {
+  const position = declarations.get("position")?.trim().toLowerCase();
+  if (position !== "absolute" && position !== "fixed") {
+    return undefined;
+  }
+
+  const left = parseCssPx(declarations.get("left"));
+  const right = parseCssPx(declarations.get("right"));
+  const top = parseCssPx(declarations.get("top"));
+  const bottom = parseCssPx(declarations.get("bottom"));
+  const width = parseCssPx(declarations.get("width"));
+  const height = parseCssPx(declarations.get("height"));
+  const horizontal = resolveAxisBounds(left, right, width, viewport.width);
+  const vertical = resolveAxisBounds(top, bottom, height, viewport.height);
+
+  if (!horizontal || !vertical) {
+    return undefined;
+  }
+
+  return {
+    x: horizontal.start,
+    y: vertical.start,
+    width: horizontal.end - horizontal.start,
+    height: vertical.end - vertical.start,
+    right: horizontal.end,
+    bottom: vertical.end
+  };
+};
+
+const resolveAxisBounds = (
+  startInset: number | undefined,
+  endInset: number | undefined,
+  size: number | undefined,
+  viewportSize: number
+): { start: number; end: number } | undefined => {
+  if (startInset !== undefined && size !== undefined) {
+    return {
+      start: startInset,
+      end: startInset + size
+    };
+  }
+
+  if (endInset !== undefined && size !== undefined) {
+    const end = viewportSize - endInset;
+    return {
+      start: end - size,
+      end
+    };
+  }
+
+  if (startInset !== undefined && endInset !== undefined) {
+    return {
+      start: startInset,
+      end: viewportSize - endInset
+    };
+  }
+
+  return undefined;
+};
+
+const calculateSafeAreaOverflow = (
+  bounds: ElementBounds,
+  layout: SlideLayoutContext
+): Omit<SafeAreaViolationFinding, "bounds" | "selector"> => {
+  const safeLeft = layout.safeArea.left;
+  const safeTop = layout.safeArea.top;
+  const safeRight = layout.viewport.width - layout.safeArea.right;
+  const safeBottom = layout.viewport.height - layout.safeArea.bottom;
+
+  return {
+    overflowTopPx: Math.ceil(Math.max(0, safeTop - bounds.y)),
+    overflowRightPx: Math.ceil(Math.max(0, bounds.right - safeRight)),
+    overflowBottomPx: Math.ceil(Math.max(0, bounds.bottom - safeBottom)),
+    overflowLeftPx: Math.ceil(Math.max(0, safeLeft - bounds.x))
+  };
+};
+
 const extractTextOverflows = (html: string): TextOverflowFinding[] => {
   const overflows: TextOverflowFinding[] = [];
   const tagPattern = /<([A-Za-z][A-Za-z0-9:-]*)([^>]*)>/g;
@@ -960,7 +1157,7 @@ const estimateTextOverflow = (
   }
 
   const containerHeightPx = parseCssPx(declarations.get("max-height")) ?? parseCssPx(declarations.get("height"));
-  if (!containerHeightPx) {
+  if (containerHeightPx === undefined || containerHeightPx <= 0) {
     return undefined;
   }
 
@@ -1026,7 +1223,7 @@ const parseCssPx = (value: string | undefined): number | undefined => {
   }
 
   const parsed = Number.parseFloat(match[1] ?? "");
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
 };
 
 const parseLineHeightPx = (value: string | undefined, fontSizePx: number): number => {

@@ -40,6 +40,11 @@
       "name": "linter-text-overflow",
       "kind": "linter-invalid",
       "expectedIssueType": "text-overflow"
+    },
+    {
+      "name": "linter-safe-area",
+      "kind": "linter-invalid",
+      "expectedIssueType": "safe-area-violation"
     }
   ]
 }

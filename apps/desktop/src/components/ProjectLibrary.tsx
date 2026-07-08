@@ -259,10 +259,13 @@ function RecentProjects({
   const [creatingDeck, setCreatingDeck] = useState(false);
   const [draft, setDraft] = useState<NewDeckDraft>(() => createDefaultNewDeckDraft());
   const [folderEdited, setFolderEdited] = useState(false);
-  const validationMessage = validateNewDeckDraft(draft);
+  const selectedExternalStatus = selectedExternalAgentStatus(aiEngineSettings, externalAgentStatuses);
+  const validationMessage = validateNewDeckDraft(draft, {
+    hasApiKey: aiEngineSettings.apiKey.hasKey,
+    selectedExternalReady: selectedExternalStatus.status === "ready"
+  });
   const busy = operationStatus.kind === "running" && operationStatus.message === "Creating deck";
   const canCreate = !busy && validationMessage === undefined;
-  const selectedExternalStatus = selectedExternalAgentStatus(aiEngineSettings, externalAgentStatuses);
   const engineOptions = buildNewDeckEngineOptions({
     apiKeyStatus: formatRedactedKeyStatus(aiEngineSettings),
     hasApiKey: aiEngineSettings.apiKey.hasKey,
@@ -555,7 +558,7 @@ function RecentProjects({
               type="submit"
               variant="primary"
             >
-              {busy ? "Creating" : draft.generationMode === "mock-agent" ? "Create & Generate" : "Create Deck"}
+              {busy ? "Creating" : draft.generationMode === "no-ai" ? "Create Deck" : "Create & Generate"}
             </Button>
             <Button
               disabled={busy}
@@ -648,7 +651,13 @@ function slugifyDeckFolder(value: string): string {
     .slice(0, 64) || "untitled-deck";
 }
 
-function validateNewDeckDraft(draft: NewDeckDraft): string | undefined {
+function validateNewDeckDraft(
+  draft: NewDeckDraft,
+  options: {
+    hasApiKey: boolean;
+    selectedExternalReady: boolean;
+  }
+): string | undefined {
   const title = draft.title.trim();
   const folderName = draft.folderName.trim();
   const brief = draft.brief.trim();
@@ -669,12 +678,18 @@ function validateNewDeckDraft(draft: NewDeckDraft): string | undefined {
     return "Folder cannot contain path traversal segments.";
   }
 
-  if (draft.generationMode === "mock-agent" && brief.length === 0) {
+  if (draft.generationMode === "htmlslide-agent" && !options.hasApiKey) {
+    return "Save a provider API key in AI Engines before using HTMLslide Agent.";
+  }
+
+  if (draft.generationMode !== "no-ai" && brief.length === 0) {
     return "Brief is required before generation.";
   }
 
-  if (draft.generationMode === "htmlslide-agent" || draft.generationMode === "external-agent") {
-    return "This engine is selectable for setup, but generation is not connected in this alpha. Choose No AI or Local Mock.";
+  if (draft.generationMode === "external-agent") {
+    return options.selectedExternalReady
+      ? "New Deck external-agent generation is still limited to existing workspaces. Choose HTMLslide Agent, No AI, or Local Mock."
+      : "Configure and refresh a ready coding agent in AI Engines before using this path.";
   }
 
   if (draft.outputs.length === 0) {
@@ -716,7 +731,7 @@ function buildNewDeckEngineOptions({
       label: "HTMLslide Agent",
       description: "Use a provider API key saved from AI Engines settings.",
       detail: hasApiKey
-        ? "A provider key is saved; provider-backed generation is still queued for the next agent milestone."
+        ? "A provider key is saved; Create & Generate will run the desktop HTMLslide Agent path."
         : "Save a provider API key in AI Engines before provider-backed generation is enabled.",
       icon: <Bot />,
       status: hasApiKey ? "Key ready" : "Needs key",
@@ -728,7 +743,7 @@ function buildNewDeckEngineOptions({
       description: "Use the selected Claude Code, Codex CLI, or compatible command.",
       detail:
         selectedExternalStatus.status === "ready"
-          ? `${selectedExternalStatus.label} is ready; headless run wiring is queued for the external-agent milestone.`
+          ? `${selectedExternalStatus.label} is ready for existing workspace runs. New Deck handoff is still queued.`
           : `${selectedExternalStatus.label} is ${selectedExternalStatus.status.replace("-", " ")}. Refresh or configure it in AI Engines.`,
       icon: <Code2 />,
       status: selectedExternalStatus.status.replace("-", " "),
@@ -744,7 +759,7 @@ function buildNewDeckEngineOptions({
       id: "mock-agent",
       label: "Local Mock",
       description: "Generate a deterministic local deck for alpha validation.",
-      detail: `Alpha test path. Real BYOK/external runs are not claimed. ${apiKeyStatus}.`,
+      detail: `Deterministic local path for CI and offline validation. ${apiKeyStatus}.`,
       icon: <Sparkles />,
       status: "Available",
       tone: "info"

@@ -71,7 +71,7 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(newDeckPanel).toBeVisible();
     await expect(newDeckPanel.getByRole("button", { name: /No AI/ })).toHaveAttribute("aria-pressed", "true");
     await newDeckPanel.getByRole("button", { name: /HTMLslide Agent/ }).click();
-    await expect(newDeckPanel.getByText(/generation is not connected in this alpha/i)).toBeVisible();
+    await expect(newDeckPanel.getByText("Save a provider API key in AI Engines before using HTMLslide Agent.")).toBeVisible();
     await newDeckPanel.getByRole("button", { name: /No AI/ }).click();
     await newDeckPanel.getByLabel("Deck title").fill("Investor Update");
     await expect(newDeckPanel.getByLabel("Folder")).toHaveValue("investor-update");

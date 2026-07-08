@@ -134,6 +134,34 @@ export type DesktopMockAgentRunResult = {
   summary: DesktopMockAgentRunSummary;
 };
 
+export type DesktopByokAgentRunRequest = DesktopMockAgentRunRequest;
+
+export type DesktopByokAgentRunSummary = DesktopMockAgentRunSummary & {
+  provider: "openai" | "anthropic" | "compatible";
+  model: string;
+};
+
+export type DesktopByokAgentRunResult = {
+  ok: boolean;
+  providerId: "htmlslide-byok";
+  projectPath: string;
+  settings: {
+    provider: "openai" | "anthropic" | "compatible";
+    model: string;
+  };
+  stages: DesktopMockAgentStageSummary[];
+  events: AgentRunEvent[];
+  logs: AgentRunLog[];
+  agent?: AgentRunResult;
+  applied?: ApplyMockAgentProjectResult;
+  checkpointDiff?: FileCopyCheckpointDiff;
+  check?: DesktopCliResult;
+  export?: DesktopCliResult;
+  project?: DesktopProjectPreview;
+  error?: string;
+  summary: DesktopByokAgentRunSummary;
+};
+
 export type DesktopExternalAgentRunRequest = {
   projectPath: string;
   brief: string;
@@ -232,6 +260,7 @@ export type HtmlslideDesktopApi = {
   exportProject(projectPath: string): Promise<DesktopCliResult>;
   loadPresenterDeck(projectPath: string): Promise<DesktopPresenterDeckResult>;
   runMockAgent(request: DesktopMockAgentRunRequest): Promise<DesktopMockAgentRunResult>;
+  runByokAgent(request: DesktopByokAgentRunRequest): Promise<DesktopByokAgentRunResult>;
   runExternalAgent(request: DesktopExternalAgentRunRequest): Promise<DesktopExternalAgentRunResult>;
   diffCheckpoint(request: DesktopCheckpointRequest): Promise<FileCopyCheckpointDiff>;
   revertCheckpoint(request: DesktopCheckpointRequest): Promise<DesktopCheckpointRevertResult>;

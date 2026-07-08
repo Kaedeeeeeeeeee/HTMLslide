@@ -16,6 +16,7 @@ import {
   readDesktopLibrary,
   resolveCreateProjectRequest,
   revertDesktopCheckpoint,
+  runDesktopByokAgent,
   saveAiEngineSettings,
   runDesktopExternalAgent,
   runDesktopMockAgent,
@@ -268,6 +269,20 @@ function registerIpcHandlers(): void {
         runId?: string;
       }
     ) => runDesktopMockAgent(request, { cliRuntime })
+  );
+
+  ipcMain.handle(
+    "htmlslide:run-byok-agent",
+    async (
+      _event,
+      request: {
+        projectPath: string;
+        brief: string;
+        runExport?: boolean;
+        maxRepairRounds?: number;
+        runId?: string;
+      }
+    ) => runDesktopByokAgent(request, { cliRuntime, settingsPath: aiEngineSettingsPath() })
   );
 
   ipcMain.handle(

@@ -32,6 +32,13 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
     maxRepairRounds?: number;
     runId?: string;
   }) => ipcRenderer.invoke("htmlslide:run-mock-agent", request),
+  runByokAgent: (request: {
+    projectPath: string;
+    brief: string;
+    runExport?: boolean;
+    maxRepairRounds?: number;
+    runId?: string;
+  }) => ipcRenderer.invoke("htmlslide:run-byok-agent", request),
   runExternalAgent: (request: {
     projectPath: string;
     brief: string;

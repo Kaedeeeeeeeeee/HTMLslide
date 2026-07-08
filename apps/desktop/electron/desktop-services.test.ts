@@ -1,6 +1,7 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createMockProvider } from "@htmlslide/agent";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   diffDesktopCheckpoint,
@@ -13,6 +14,7 @@ import {
   resolveDesktopCliIntegrationTarget,
   resolveCreateProjectRequest,
   revertDesktopCheckpoint,
+  runDesktopByokAgent,
   runDesktopExternalAgent,
   runDesktopMockAgent,
   summarizeDeckProject,
@@ -22,6 +24,7 @@ import {
   type CliRunResult,
   type DesktopCliRunner,
   type DesktopAiEngineSettings,
+  type DesktopCredentialStore,
   type DesktopProjectRecord
 } from "./desktop-services.js";
 
@@ -31,6 +34,24 @@ async function tempDir(): Promise<string> {
   const dir = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-test-"));
   tempDirs.push(dir);
   return dir;
+}
+
+function createFakeCredentialStore(entries: Record<string, string> = {}): DesktopCredentialStore & { entries: Map<string, string> } {
+  const storeEntries = new Map(Object.entries(entries));
+  return {
+    available: true,
+    entries: storeEntries,
+    label: "Fake Keychain",
+    async getPassword(service, account) {
+      return storeEntries.get(`${service}:${account}`);
+    },
+    async setPassword(service, account, password) {
+      storeEntries.set(`${service}:${account}`, password);
+    },
+    async deletePassword(service, account) {
+      storeEntries.delete(`${service}:${account}`);
+    }
+  };
 }
 
 afterEach(async () => {
@@ -98,6 +119,26 @@ function externalAgentSettings(commandTemplate: string, selectedId: "claude-code
     mode: "external-agent",
     version: 1
   };
+}
+
+function byokSettings(provider: "openai" | "anthropic" | "compatible" = "openai"): DesktopAiEngineSettings {
+  return {
+    apiKey: {
+      hasKey: true,
+      model: provider === "anthropic" ? "claude-sonnet-4.5" : "gpt-5-mini",
+      provider
+    },
+    externalAgent: {
+      customCommand: "",
+      selectedId: "codex-cli"
+    },
+    mode: "htmlslide-agent",
+    version: 1
+  };
+}
+
+function createMockTestProvider() {
+  return createMockProvider({ id: "test-byok-provider" });
 }
 
 async function writeExternalAgentScript(projectPath: string, name: string, source: string): Promise<string> {
@@ -530,6 +571,219 @@ describe("desktop services", () => {
     const restoredDeck = JSON.parse(await readFile(path.join(projectPath, "deck.json"), "utf8"));
     expect(restoredDeck.title).toBe("Desktop Test Deck");
     expect(restoredDeck.slides).toHaveLength(1);
+  });
+
+  it("runs the BYOK desktop agent only after loading a stored provider key", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const calls: string[][] = [];
+    const runner: DesktopCliRunner = async (args) => {
+      calls.push(args);
+
+      if (args[0] === "check") {
+        return {
+          ok: true,
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+          json: {
+            status: "passed",
+            summary: {
+              errors: 0,
+              warnings: 0,
+              info: 0,
+              suggestions: 0
+            },
+            issues: []
+          }
+        };
+      }
+
+      if (args[0] === "export") {
+        return {
+          ok: true,
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+          json: {
+            status: "passed",
+            artifacts: {
+              deckpkg: path.join(projectPath, "exports", "byok.deckpkg"),
+              pdf: path.join(projectPath, "exports", "byok.pdf")
+            }
+          }
+        };
+      }
+
+      throw new Error(`Unexpected CLI call: ${args.join(" ")}`);
+    };
+    const credentialStore = createFakeCredentialStore({
+      "app.htmlslide.ai-key:provider:openai": "sk-test-secret"
+    });
+    const providerInputs: Array<{ apiKey: string; model: string; provider: string }> = [];
+    let credentialValidationCalls = 0;
+
+    const result = await runDesktopByokAgent(
+      {
+        brief: "Create a deck through the built-in HTMLslide Agent.",
+        projectPath,
+        runId: "run-byok-test"
+      },
+      {
+        cliRuntime: {
+          cliPath: "/fake/htmlslide.js",
+          cwd: "/fake",
+          mode: "development",
+          rootPath: "/fake"
+        },
+        cliRunner: runner,
+        credentialStore,
+        providerFactory: (input) => {
+          providerInputs.push(input);
+          const provider = createMockTestProvider();
+          return {
+            id: "test-byok-provider",
+            label: "Test BYOK Provider",
+            async validateCredentials() {
+              credentialValidationCalls += 1;
+              return { ok: true };
+            },
+            async complete(request) {
+              return provider.complete(request);
+            }
+          };
+        },
+        settings: byokSettings("openai")
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.providerId).toBe("htmlslide-byok");
+    expect(result.settings).toEqual({
+      model: "gpt-5-mini",
+      provider: "openai"
+    });
+    expect(providerInputs).toEqual([
+      {
+        apiKey: "sk-test-secret",
+        model: "gpt-5-mini",
+        provider: "openai"
+      }
+    ]);
+    expect(credentialValidationCalls).toBe(1);
+    expect(result.agent?.ok).toBe(true);
+    expect(result.summary).toMatchObject({
+      checkStatus: "passed",
+      exportStatus: "passed",
+      model: "gpt-5-mini",
+      provider: "openai",
+      runId: "run-byok-test",
+      status: "succeeded"
+    });
+    expect(result.summary.exportArtifacts).toEqual([
+      path.join(projectPath, "exports", "byok.deckpkg"),
+      path.join(projectPath, "exports", "byok.pdf")
+    ]);
+    expect(result.project?.project).toMatchObject({
+      path: projectPath,
+      title: "Mock HTMLslide Deck"
+    });
+    expect(JSON.stringify(result.logs)).not.toContain("sk-test-secret");
+    expect(calls).toEqual([
+      ["check", projectPath, "--json"],
+      ["export", projectPath, "--json"]
+    ]);
+  });
+
+  it("blocks BYOK desktop agent runs when settings metadata has no stored key", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const calls: string[][] = [];
+    const result = await runDesktopByokAgent(
+      {
+        brief: "Create a deck through the built-in HTMLslide Agent.",
+        projectPath,
+        runId: "run-byok-missing-key"
+      },
+      {
+        credentialStore: createFakeCredentialStore(),
+        cliRunner: async (args) => {
+          calls.push(args);
+          throw new Error(`Unexpected CLI call: ${args.join(" ")}`);
+        },
+        settings: byokSettings("openai")
+      }
+    );
+
+    expect(result).toMatchObject({
+      error: "Stored openai API key was not found. Save the key again in AI Engines settings.",
+      ok: false,
+      providerId: "htmlslide-byok",
+      summary: {
+        failedStages: 1,
+        model: "gpt-5-mini",
+        provider: "openai",
+        runId: "run-byok-missing-key",
+        status: "failed"
+      }
+    });
+    expect(result.events.at(-1)).toMatchObject({
+      stage: "brief",
+      status: "failed"
+    });
+    expect(result.agent).toBeUndefined();
+    expect(calls).toEqual([]);
+  });
+
+  it("blocks BYOK desktop agent runs when provider credential validation fails", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const calls: string[][] = [];
+    const result = await runDesktopByokAgent(
+      {
+        brief: "Create a deck through the built-in HTMLslide Agent.",
+        projectPath,
+        runId: "run-byok-invalid-key"
+      },
+      {
+        credentialStore: createFakeCredentialStore({
+          "app.htmlslide.ai-key:provider:openai": "sk-invalid-secret"
+        }),
+        cliRunner: async (args) => {
+          calls.push(args);
+          throw new Error(`Unexpected CLI call: ${args.join(" ")}`);
+        },
+        providerFactory: () => ({
+          id: "test-invalid-byok-provider",
+          label: "Invalid BYOK Provider",
+          async validateCredentials() {
+            return {
+              ok: false,
+              reason: "Provider rejected the stored API key.",
+              recoverable: true
+            };
+          },
+          async complete() {
+            throw new Error("Provider complete should not run after credential validation failure.");
+          }
+        }),
+        settings: byokSettings("openai")
+      }
+    );
+
+    expect(result).toMatchObject({
+      error: "Provider rejected the stored API key.",
+      ok: false,
+      providerId: "htmlslide-byok",
+      summary: {
+        failedStages: 1,
+        runId: "run-byok-invalid-key",
+        status: "failed"
+      }
+    });
+    expect(JSON.stringify(result.logs)).not.toContain("sk-invalid-secret");
+    expect(result.agent).toBeUndefined();
+    expect(calls).toEqual([]);
   });
 
   it("skips export when real project check fails", async () => {

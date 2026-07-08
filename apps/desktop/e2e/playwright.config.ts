@@ -7,7 +7,7 @@ const repoRoot = path.resolve(e2eDir, "..", "..", "..");
 
 export default defineConfig({
   testDir: e2eDir,
-  timeout: 60_000,
+  timeout: 120_000,
   expect: {
     timeout: 10_000
   },

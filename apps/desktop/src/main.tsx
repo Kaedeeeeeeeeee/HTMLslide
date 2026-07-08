@@ -10,6 +10,7 @@ import { Workspace, type AgentDiffReview } from "./components/Workspace";
 import {
   getDesktopApi,
   type DesktopCheckReport,
+  type DesktopByokAgentRunResult,
   type DesktopCliIntegrationState,
   type DesktopExternalAgentRunResult,
   type DesktopMockAgentRunResult,
@@ -60,7 +61,8 @@ const idleStatus: OperationStatus = {
 
 const nowIso = (): string => new Date().toISOString();
 
-type DesktopAgentRunResult = DesktopMockAgentRunResult | DesktopExternalAgentRunResult;
+type DesktopAgentRunResult = DesktopMockAgentRunResult | DesktopByokAgentRunResult | DesktopExternalAgentRunResult;
+type DesktopGenerationEngine = "mock-agent" | "htmlslide-agent" | "external-agent";
 
 function projectRecordToSummary(project: DesktopProjectRecord): ProjectSummary {
   return {
@@ -287,11 +289,16 @@ function App(): React.ReactNode {
   const applyAgentRunResult = useCallback(
     (result: DesktopAgentRunResult): void => {
       const checkReport = result.check?.json as DesktopCheckReport | undefined;
-      const repairs = result.providerId === "htmlslide-mock" ? result.agent.outputs.repairs ?? [] : [];
+      const repairs = result.providerId === "external-generic" ? [] : result.agent?.outputs.repairs ?? [];
       const checkErrors = result.summary.checkErrors ?? 0;
       const checkWarnings = result.summary.checkWarnings ?? 0;
-      const agentLabel = result.providerId === "external-generic" ? "External agent" : "Mock agent";
-      const generationOk = result.providerId === "htmlslide-mock" ? result.agent.ok : result.adapter?.ok === true;
+      const agentLabel =
+        result.providerId === "external-generic"
+          ? "External agent"
+          : result.providerId === "htmlslide-byok"
+            ? "HTMLslide Agent"
+            : "Mock agent";
+      const generationOk = result.providerId === "external-generic" ? result.adapter?.ok === true : result.agent?.ok === true;
 
       if (result.project) {
         const generatedPreview = result.project;
@@ -338,12 +345,16 @@ function App(): React.ReactNode {
       updateCommandActionStatus("generate", {
         kind: generationOk ? "success" : "failed",
         message: generationOk
-          ? result.providerId === "htmlslide-mock"
-            ? "Mock generation complete"
-            : "External agent complete"
-          : result.providerId === "htmlslide-mock"
-            ? "Mock generation failed"
-            : "External agent failed"
+          ? result.providerId === "external-generic"
+            ? "External agent complete"
+            : result.providerId === "htmlslide-byok"
+              ? "HTMLslide Agent complete"
+              : "Mock generation complete"
+          : result.providerId === "external-generic"
+            ? "External agent failed"
+            : result.providerId === "htmlslide-byok"
+              ? "HTMLslide Agent failed"
+              : "Mock generation failed"
       });
       updateCommandActionStatus("check", {
         kind: result.check?.ok ? "success" : result.check ? "failed" : "idle",
@@ -373,16 +384,25 @@ function App(): React.ReactNode {
     [updateCommandActionStatus]
   );
 
-  const startMockGeneration = useCallback(
-    (brief: string, options: { action?: "generate" | "retry"; forceMock?: boolean; projectPath?: string } = {}): void => {
+  const startAgentGeneration = useCallback(
+    (brief: string, options: { action?: "generate" | "retry"; engine?: DesktopGenerationEngine; forceMock?: boolean; projectPath?: string } = {}): void => {
       const trimmedBrief = brief.trim();
       const prompt = trimmedBrief.length > 0 ? trimmedBrief : "Create or revise this HTMLslide deck.";
       const action = options.action ?? "generate";
-      const useExternalAgent = !options.forceMock && aiEngineSettings.mode === "external-agent";
+      const selectedEngine: DesktopGenerationEngine = options.forceMock
+        ? "mock-agent"
+        : options.engine ?? (aiEngineSettings.mode === "no-ai" ? "mock-agent" : aiEngineSettings.mode);
+      const useByokAgent = selectedEngine === "htmlslide-agent";
+      const useExternalAgent = selectedEngine === "external-agent";
+      const agentLabel = useExternalAgent ? "External agent" : useByokAgent ? "HTMLslide Agent" : "Mock generation";
       const generateMessage = useExternalAgent
         ? action === "retry"
           ? "Retrying external agent"
           : "External agent running"
+        : useByokAgent
+          ? action === "retry"
+            ? "Retrying HTMLslide Agent"
+            : "HTMLslide Agent running"
         : action === "retry"
           ? "Retrying mock generation"
           : "Mock generation running";
@@ -405,19 +425,11 @@ function App(): React.ReactNode {
         }
       });
 
-      if (aiEngineSettings.mode === "htmlslide-agent") {
-        const message = "HTMLslide Agent generation is not connected in this milestone.";
-        setOperationStatus({ kind: "failed", message });
-        updateCommandActionStatus("generate", { kind: "failed", message });
-        setRunning(false);
-        return;
-      }
-
       if (!desktopApi || !options.projectPath) {
         seedMockAgentRun(
           !desktopApi
-            ? `${useExternalAgent ? "External agent" : "Mock generation"} running for: ${prompt}`
-            : `Open a local deck project before running the ${useExternalAgent ? "external agent" : "mock agent"}.`
+            ? `${agentLabel} running for: ${prompt}`
+            : `Open a local deck project before running the ${agentLabel}.`
         );
         if (desktopApi && !options.projectPath) {
           updateCommandActionStatus("generate", { kind: "failed", message: "Local project required" });
@@ -427,13 +439,19 @@ function App(): React.ReactNode {
         return;
       }
 
-      setOperationStatus({ kind: "running", message: useExternalAgent ? "Running external agent" : "Running mock agent" });
+      setOperationStatus({ kind: "running", message: `Running ${agentLabel}` });
       const run = useExternalAgent
         ? desktopApi.runExternalAgent({
             brief: prompt,
             projectPath: options.projectPath,
             runExport: true
           })
+        : useByokAgent
+          ? desktopApi.runByokAgent({
+              brief: prompt,
+              projectPath: options.projectPath,
+              runExport: true
+            })
         : desktopApi.runMockAgent({
             brief: prompt,
             projectPath: options.projectPath,
@@ -557,9 +575,10 @@ function App(): React.ReactNode {
           return;
         }
         openPreview(result.project);
-        if (draft.generationMode === "mock-agent") {
-          startMockGeneration(buildNewDeckAgentBrief(draft), {
-            forceMock: true,
+        if (draft.generationMode !== "no-ai") {
+          startAgentGeneration(buildNewDeckAgentBrief(draft), {
+            engine: draft.generationMode,
+            forceMock: draft.generationMode === "mock-agent",
             projectPath: result.project.project.path
           });
         }
@@ -570,7 +589,7 @@ function App(): React.ReactNode {
           message: error instanceof Error ? error.message : String(error)
         });
       });
-  }, [desktopApi, handleOpenProject, openPreview, startMockGeneration, workspacePath]);
+  }, [desktopApi, handleOpenProject, openPreview, startAgentGeneration, workspacePath]);
 
   const handleChooseWorkspace = useCallback((): void => {
     if (!desktopApi) {
@@ -950,14 +969,14 @@ function App(): React.ReactNode {
       });
   }, [activeProject, desktopApi, diffReview, updateCommandActionStatus]);
 
-  const runMockGeneration = useCallback(
+  const runAgentGeneration = useCallback(
     (brief: string, action: "generate" | "retry" = "generate"): void => {
-      startMockGeneration(brief, {
+      startAgentGeneration(brief, {
         action,
         projectPath: activeProject && !activeProject.path.startsWith("~") ? activeProject.path : undefined
       });
     },
-    [activeProject, startMockGeneration]
+    [activeProject, startAgentGeneration]
   );
 
   if (!activeProject) {
@@ -1025,7 +1044,7 @@ function App(): React.ReactNode {
         if (command.length === 0) {
           return;
         }
-        runMockGeneration(command);
+        runAgentGeneration(command);
         setCommandValue("");
       }}
       onInspectorTabChange={setInspectorTab}
@@ -1034,7 +1053,7 @@ function App(): React.ReactNode {
       onRevertDiff={handleRevertDiff}
       onRunAction={(action) => {
         if (action === "start" || action === "retry") {
-          runMockGeneration(commandValue.trim(), action === "retry" ? "retry" : "generate");
+          runAgentGeneration(commandValue.trim(), action === "retry" ? "retry" : "generate");
         }
         if (action === "pause" || action === "cancel") {
           setRunning(false);
@@ -1061,7 +1080,7 @@ function App(): React.ReactNode {
           updateCommandActionStatus("review", { kind: "success", message: "Reviewing in presenter" });
         }
         if (action === "generate") {
-          runMockGeneration(commandValue.trim());
+          runAgentGeneration(commandValue.trim());
         }
       }}
       onViewDiff={handleViewDiff}

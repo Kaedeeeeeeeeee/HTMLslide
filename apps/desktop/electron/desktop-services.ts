@@ -27,7 +27,8 @@ import {
   type AgentRunStatus,
   type ApplyMockAgentProjectResult,
   type FileCopyCheckpointDiff,
-  type FileCopyCheckpointRevertResult
+  type FileCopyCheckpointRevertResult,
+  type ModelProvider
 } from "@htmlslide/agent";
 import {
   DeckPackageValidationError,
@@ -200,6 +201,34 @@ export type DesktopMockAgentRunResult = {
   summary: DesktopMockAgentRunSummary;
 };
 
+export type DesktopByokAgentRunRequest = DesktopMockAgentRunRequest;
+
+export type DesktopByokAgentRunSummary = DesktopMockAgentRunSummary & {
+  provider: DesktopApiKeyProvider;
+  model: string;
+};
+
+export type DesktopByokAgentRunResult = {
+  ok: boolean;
+  providerId: "htmlslide-byok";
+  projectPath: string;
+  settings: {
+    provider: DesktopApiKeyProvider;
+    model: string;
+  };
+  stages: DesktopMockAgentStageSummary[];
+  events: AgentRunEvent[];
+  logs: AgentRunLog[];
+  agent?: AgentRunResult;
+  applied?: ApplyMockAgentProjectResult;
+  checkpointDiff?: FileCopyCheckpointDiff;
+  check?: CliRunResult;
+  export?: CliRunResult;
+  project?: DesktopProjectPreview;
+  error?: string;
+  summary: DesktopByokAgentRunSummary;
+};
+
 export type DesktopExternalAgentRunRequest = {
   projectPath: string;
   brief: string;
@@ -279,6 +308,19 @@ export type DesktopPresenterDeckResult =
 export type DesktopMockAgentRunnerOptions = {
   cliRuntime?: CliRuntime;
   cliRunner?: DesktopCliRunner;
+};
+
+export type DesktopByokAgentProviderFactory = (input: {
+  apiKey: string;
+  model: string;
+  provider: DesktopApiKeyProvider;
+}) => ModelProvider;
+
+export type DesktopByokAgentRunnerOptions = DesktopMockAgentRunnerOptions & {
+  credentialStore?: DesktopCredentialStore;
+  providerFactory?: DesktopByokAgentProviderFactory;
+  settings?: DesktopAiEngineSettings;
+  settingsPath?: string;
 };
 
 export type DesktopExternalAgentRunnerOptions = {
@@ -1176,6 +1218,206 @@ export async function runDesktopMockAgent(
     export: exportResult,
     project,
     summary
+  };
+}
+
+export async function runDesktopByokAgent(
+  request: DesktopByokAgentRunRequest,
+  options: DesktopByokAgentRunnerOptions = {}
+): Promise<DesktopByokAgentRunResult> {
+  const projectPath = path.resolve(request.projectPath);
+  const runId = normalizeDesktopAgentRunId(request.runId);
+  const brief = request.brief.trim();
+  const events: AgentRunEvent[] = [];
+  const logs: AgentRunLog[] = [];
+  const cliRunner = options.cliRunner ?? runHtmlslideCli;
+  const credentialStore = options.credentialStore ?? createDesktopCredentialStore();
+  const addEvent = createDesktopAgentEventRecorder(events, runId);
+  const addLog = createDesktopAgentLogRecorder(logs, runId);
+  const settings = sanitizeAiEngineSettings(options.settings ?? (options.settingsPath
+    ? await readAiEngineSettings(options.settingsPath)
+    : DEFAULT_AI_ENGINE_SETTINGS));
+  const provider = settings.apiKey.provider;
+  const model = settings.apiKey.model;
+  const settingsSummary = { provider, model };
+
+  addEvent("brief", "running", "HTMLslide Agent request accepted.", "run-created", {
+    metadata: settingsSummary,
+    nextAction: "Validate provider credential"
+  });
+
+  if (!settings.apiKey.hasKey) {
+    return byokAgentFailureResult({
+      addEvent,
+      addLog,
+      error: "Save a provider API key in AI Engines before running HTMLslide Agent.",
+      events,
+      logs,
+      projectPath,
+      runId,
+      settings: settingsSummary,
+      stage: "brief"
+    });
+  }
+
+  if (!credentialStore.available) {
+    return byokAgentFailureResult({
+      addEvent,
+      addLog,
+      error: `${credentialStore.label} is not available for HTMLslide Agent credentials.`,
+      events,
+      logs,
+      projectPath,
+      runId,
+      settings: settingsSummary,
+      stage: "brief"
+    });
+  }
+
+  const credentialAccount = aiEngineCredentialAccount(provider);
+  const apiKey = await credentialStore.getPassword(AI_ENGINE_CREDENTIAL_SERVICE, credentialAccount);
+  if (typeof apiKey !== "string" || apiKey.length === 0) {
+    return byokAgentFailureResult({
+      addEvent,
+      addLog,
+      error: `Stored ${provider} API key was not found. Save the key again in AI Engines settings.`,
+      events,
+      logs,
+      projectPath,
+      runId,
+      settings: settingsSummary,
+      stage: "brief"
+    });
+  }
+
+  const modelProvider = (options.providerFactory ?? createDesktopByokModelProvider)({
+    apiKey,
+    model,
+    provider
+  });
+
+  try {
+    const credentialStatus = await modelProvider.validateCredentials();
+    if (!credentialStatus.ok) {
+      return byokAgentFailureResult({
+        addEvent,
+        addLog,
+        error: credentialStatus.reason,
+        events,
+        logs,
+        projectPath,
+        runId,
+        settings: settingsSummary,
+        stage: "brief"
+      });
+    }
+  } catch (error) {
+    return byokAgentFailureResult({
+      addEvent,
+      addLog,
+      error: error instanceof Error ? error.message : String(error),
+      events,
+      logs,
+      projectPath,
+      runId,
+      settings: settingsSummary,
+      stage: "brief"
+    });
+  }
+
+  let agent = await runAgent({
+    brief: brief.length > 0 ? brief : "Create or revise this HTMLslide deck.",
+    maxRepairRounds: request.maxRepairRounds,
+    projectRoot: projectPath,
+    provider: modelProvider,
+    runId,
+    metadata: {
+      credentialAccount,
+      mode: "desktop-byok-agent",
+      model,
+      provider
+    },
+    createCheckpoint: createFileCopyCheckpoint
+  });
+
+  logs.push({
+    createdAt: new Date().toISOString(),
+    level: "info",
+    message: `${credentialStore.label} credential validated for ${provider}.`,
+    metadata: {
+      credentialAccount,
+      model,
+      provider
+    },
+    runId,
+    stage: "brief"
+  });
+  logs.push(...agent.logs);
+
+  let applied: ApplyMockAgentProjectResult | undefined;
+  let checkpointDiff: FileCopyCheckpointDiff | undefined;
+  let check: CliRunResult | undefined;
+  let exportResult: CliRunResult | undefined;
+  let project: DesktopProjectPreview | undefined;
+
+  if (agent.ok) {
+    applied = await applyMockAgentProject({
+      brief,
+      projectPath,
+      result: agent
+    });
+    const checkpoint = await recordCheckpointChanges({
+      projectRoot: projectPath,
+      runId: agent.runId,
+      filesChanged: applied.filesChanged
+    });
+    agent = {
+      ...agent,
+      checkpoint
+    };
+    checkpointDiff = await diffFileCopyCheckpoint({
+      projectRoot: projectPath,
+      runId: agent.runId
+    });
+    logs.push({
+      createdAt: new Date().toISOString(),
+      level: "info",
+      message: `Applied HTMLslide Agent source files: ${applied.filesChanged.join(", ")}`,
+      runId: agent.runId,
+      stage: "build",
+      metadata: {
+        filesChanged: applied.filesChanged,
+        model,
+        provider
+      }
+    });
+
+    check = await runDesktopAgentCliStep(["check", projectPath, "--json"], options.cliRuntime, cliRunner);
+    logs.push(desktopAgentCliLog(agent.runId, "check", check));
+
+    if (check.ok && request.runExport !== false) {
+      exportResult = await runDesktopAgentCliStep(["export", projectPath, "--json"], options.cliRuntime, cliRunner);
+      logs.push(desktopAgentCliLog(agent.runId, "export", exportResult));
+    }
+
+    project = await loadProjectPreview(projectPath);
+  }
+
+  return {
+    ok: agent.ok && (check === undefined || check.ok) && (exportResult === undefined || exportResult.ok),
+    providerId: "htmlslide-byok",
+    projectPath,
+    settings: settingsSummary,
+    stages: summarizeAgentStages(agent.events),
+    events: agent.events,
+    logs,
+    agent,
+    applied,
+    checkpointDiff,
+    check,
+    export: exportResult,
+    project,
+    summary: summarizeDesktopByokAgentRun(agent, check, exportResult, settingsSummary)
   };
 }
 
@@ -2206,6 +2448,75 @@ function externalAgentFailureResult({
   };
 }
 
+function byokAgentFailureResult({
+  addEvent,
+  addLog,
+  error,
+  events,
+  logs,
+  projectPath,
+  runId,
+  settings,
+  stage
+}: {
+  addEvent: DesktopAgentEventRecorder;
+  addLog: DesktopAgentLogRecorder;
+  error: string;
+  events: AgentRunEvent[];
+  logs: AgentRunLog[];
+  projectPath: string;
+  runId: string;
+  settings: {
+    provider: DesktopApiKeyProvider;
+    model: string;
+  };
+  stage: AgentRunStage;
+}): DesktopByokAgentRunResult {
+  addEvent(stage, "failed", error, "stage-failed", {
+    metadata: settings,
+    nextAction: "Update AI Engines settings and retry."
+  });
+  addLog("error", error, stage, settings);
+
+  return {
+    ok: false,
+    providerId: "htmlslide-byok",
+    projectPath,
+    settings,
+    stages: summarizeAgentStages(events),
+    events,
+    logs,
+    error,
+    summary: summarizeDesktopByokFailureRun(runId, events, settings)
+  };
+}
+
+function createDesktopByokModelProvider({
+  model,
+  provider
+}: {
+  apiKey: string;
+  model: string;
+  provider: DesktopApiKeyProvider;
+}): ModelProvider {
+  return createMockProvider({
+    id: "htmlslide-byok",
+    label: `HTMLslide Agent (${providerLabel(provider)} / ${model})`
+  });
+}
+
+function providerLabel(provider: DesktopApiKeyProvider): string {
+  if (provider === "anthropic") {
+    return "Anthropic";
+  }
+
+  if (provider === "compatible") {
+    return "OpenAI-compatible";
+  }
+
+  return "OpenAI";
+}
+
 function externalAgentPrompt({
   brief,
   projectPath,
@@ -2248,7 +2559,11 @@ function externalAgentPrompt({
 }
 
 function normalizeExternalAgentRunId(runId: string | undefined): string {
-  const fallback = `external-${Date.now().toString(36)}`;
+  return normalizeDesktopAgentRunId(runId, "external");
+}
+
+function normalizeDesktopAgentRunId(runId: string | undefined, fallbackPrefix = "run"): string {
+  const fallback = `${fallbackPrefix}-${Date.now().toString(36)}`;
   const raw = typeof runId === "string" && runId.trim().length > 0 ? runId.trim() : fallback;
   const normalized = raw.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 96);
   return normalized.length > 0 && normalized !== "." && normalized !== ".." ? normalized : fallback;
@@ -2323,6 +2638,47 @@ function summarizeDesktopMockAgentRun(
     checkWarnings: numberFromRecord(checkSummary, "warnings"),
     exportStatus: typeof exportJson?.status === "string" ? exportJson.status : undefined,
     exportArtifacts: collectExportArtifacts(exportJson)
+  };
+}
+
+function summarizeDesktopByokAgentRun(
+  agent: AgentRunResult,
+  check: CliRunResult | undefined,
+  exportResult: CliRunResult | undefined,
+  settings: {
+    provider: DesktopApiKeyProvider;
+    model: string;
+  }
+): DesktopByokAgentRunSummary {
+  return {
+    ...summarizeDesktopMockAgentRun(agent, check, exportResult),
+    model: settings.model,
+    provider: settings.provider
+  };
+}
+
+function summarizeDesktopByokFailureRun(
+  runId: string,
+  events: readonly AgentRunEvent[],
+  settings: {
+    provider: DesktopApiKeyProvider;
+    model: string;
+  }
+): DesktopByokAgentRunSummary {
+  const stages = summarizeAgentStages(events);
+  const status = events.some((event) => event.status === "cancelled")
+    ? "cancelled"
+    : "failed";
+
+  return {
+    runId,
+    status,
+    stageCount: stages.length,
+    completedStages: stages.filter((stage) => stage.status === "succeeded").length,
+    failedStages: stages.filter((stage) => stage.status === "failed").length,
+    exportArtifacts: [],
+    model: settings.model,
+    provider: settings.provider
   };
 }
 

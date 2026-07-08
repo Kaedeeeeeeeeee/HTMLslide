@@ -59,6 +59,11 @@ export type DesktopProjectRecord = Omit<ProjectSummary, "lastOpened"> & {
   thumbnail?: string;
 };
 
+export type DesktopProjectReference = {
+  id?: string;
+  path?: string;
+};
+
 export type DesktopProjectPreview = {
   project: DesktopProjectRecord;
   slides: SlideSummary[];
@@ -293,6 +298,8 @@ export type HtmlslideDesktopApi = {
   uninstallCliIntegration(): Promise<DesktopCliIntegrationState>;
   copyCliManualInstallCommand(): Promise<{ copied: boolean; command: string }>;
   listProjects(): Promise<DesktopProjectRecord[]>;
+  removeRecentProject(project: DesktopProjectReference): Promise<DesktopProjectRecord[]>;
+  markRecentProjectMissing(project: DesktopProjectReference): Promise<DesktopProjectRecord[]>;
   getAiEngineSettings(): Promise<AiEngineSettings>;
   saveAiEngineSettings(request: DesktopAiEngineSettingsSaveRequest): Promise<AiEngineSettings>;
   detectExternalAgents(): Promise<ExternalAgentStatus[]>;

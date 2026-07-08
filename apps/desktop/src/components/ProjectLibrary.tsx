@@ -11,7 +11,8 @@ import {
   MonitorPlay,
   Plus,
   Settings,
-  Sparkles
+  Sparkles,
+  Trash2
 } from "lucide-react";
 import { useState, type FormEvent, type ReactNode } from "react";
 import {
@@ -55,6 +56,7 @@ interface ProjectLibraryProps {
   onNewDeck: (draft: NewDeckDraft) => void;
   onOpenFolder: () => void;
   onOpenProject: (projectId: string) => void;
+  onRemoveProject: (projectId: string) => void;
 }
 
 const navItems = [
@@ -150,6 +152,7 @@ export function ProjectLibrary({
   onNewDeck,
   onOpenFolder,
   onOpenProject,
+  onRemoveProject,
   projects,
   workspacePath
 }: ProjectLibraryProps): ReactNode {
@@ -187,6 +190,7 @@ export function ProjectLibrary({
             onNewDeck={onNewDeck}
             onOpenFolder={onOpenFolder}
             onOpenProject={onOpenProject}
+            onRemoveProject={onRemoveProject}
             operationStatus={operationStatus}
             projects={projects}
             workspacePath={workspacePath}
@@ -242,6 +246,7 @@ function RecentProjects({
   onNewDeck,
   onOpenFolder,
   onOpenProject,
+  onRemoveProject,
   operationStatus,
   projects,
   workspacePath
@@ -254,6 +259,7 @@ function RecentProjects({
   onNewDeck: (draft: NewDeckDraft) => void;
   onOpenFolder: () => void;
   onOpenProject: (projectId: string) => void;
+  onRemoveProject: (projectId: string) => void;
   operationStatus: OperationStatus;
 }): ReactNode {
   const [creatingDeck, setCreatingDeck] = useState(false);
@@ -626,13 +632,23 @@ function RecentProjects({
               </div>
               <footer>
                 <span>Last opened {project.lastOpened}</span>
-                <Button
-                  onClick={() => onOpenProject(project.id)}
-                  size="sm"
-                  variant="secondary"
-                >
-                  Open
-                </Button>
+                <div className="project-card__actions">
+                  <Button
+                    icon={<Trash2 />}
+                    onClick={() => onRemoveProject(project.id)}
+                    size="sm"
+                    variant="quiet"
+                  >
+                    Remove
+                  </Button>
+                  <Button
+                    onClick={() => onOpenProject(project.id)}
+                    size="sm"
+                    variant={project.status === "Missing files" ? "secondary" : "primary"}
+                  >
+                    Open
+                  </Button>
+                </div>
               </footer>
             </article>
           ))}

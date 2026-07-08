@@ -800,6 +800,23 @@ svg {
   font-size: 12px;
 }
 
+.project-card p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-card__actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.project-card__actions svg {
+  height: 14px;
+  width: 14px;
+}
+
 .workspace-shell {
   display: grid;
   gap: 10px;

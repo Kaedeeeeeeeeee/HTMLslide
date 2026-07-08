@@ -13,6 +13,10 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
   uninstallCliIntegration: () => ipcRenderer.invoke("htmlslide:uninstall-cli-integration"),
   copyCliManualInstallCommand: () => ipcRenderer.invoke("htmlslide:copy-cli-manual-install-command"),
   listProjects: () => ipcRenderer.invoke("htmlslide:list-projects"),
+  removeRecentProject: (project: { id?: string; path?: string }) =>
+    ipcRenderer.invoke("htmlslide:remove-recent-project", project),
+  markRecentProjectMissing: (project: { id?: string; path?: string }) =>
+    ipcRenderer.invoke("htmlslide:mark-recent-project-missing", project),
   getAiEngineSettings: () => ipcRenderer.invoke("htmlslide:get-ai-engine-settings"),
   saveAiEngineSettings: (request: { settings: unknown; apiKeyInput?: string; clearKey?: boolean }) =>
     ipcRenderer.invoke("htmlslide:save-ai-engine-settings", request),

@@ -14,8 +14,10 @@ import {
   loadProjectPreview,
   loadDesktopPresenterDeck,
   loadDesktopPresenterDeckPackage,
+  markRecentProjectMissing,
   readAiEngineSettings,
   readDesktopLibrary,
+  removeRecentProject,
   resolveCreateProjectRequest,
   revertDesktopCheckpoint,
   runDesktopByokAgent,
@@ -197,6 +199,16 @@ function registerIpcHandlers(): void {
     return library.recentProjects;
   });
 
+  ipcMain.handle("htmlslide:remove-recent-project", async (_event, project: { id?: string; path?: string }) => {
+    const library = await removeRecentProject(libraryPath(), project, configuredWorkspacePath());
+    return library.recentProjects;
+  });
+
+  ipcMain.handle("htmlslide:mark-recent-project-missing", async (_event, project: { id?: string; path?: string }) => {
+    const library = await markRecentProjectMissing(libraryPath(), project, configuredWorkspacePath());
+    return library.recentProjects;
+  });
+
   ipcMain.handle("htmlslide:get-ai-engine-settings", async () => readAiEngineSettings(aiEngineSettingsPath()));
 
   ipcMain.handle("htmlslide:save-ai-engine-settings", async (_event, request: DesktopAiEngineSettingsSaveRequest) =>
@@ -245,7 +257,11 @@ function registerIpcHandlers(): void {
     return loadProjectPreview(project.path);
   });
 
-  ipcMain.handle("htmlslide:load-project", async (_event, projectPath: string) => loadProjectPreview(projectPath));
+  ipcMain.handle("htmlslide:load-project", async (_event, projectPath: string) => {
+    const project = await summarizeDeckProject(projectPath);
+    await upsertRecentProject(libraryPath(), project, configuredWorkspacePath());
+    return loadProjectPreview(project.path);
+  });
 
   ipcMain.handle("htmlslide:create-project", async (_event, request: DesktopCreateProjectRequest) => {
     const library = await readDesktopLibrary(libraryPath(), configuredWorkspacePath());

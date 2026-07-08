@@ -2,7 +2,7 @@ import { _electron as electron, expect, test } from "@playwright/test";
 import type { ElectronApplication, Page } from "@playwright/test";
 import { execFile as execFileCallback } from "node:child_process";
 import { createRequire } from "node:module";
-import { access, cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -99,6 +99,76 @@ test.describe("HTMLslide desktop smoke", () => {
       title?: string;
     };
     expect(manifest.title).toBe("Investor Update");
+    await expectNoFrameworkOverlay(page);
+  });
+
+  test("manages recent project entries from the project library", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
+    const homeDir = path.join(tempRoot, "home");
+    const userDataDir = path.join(tempRoot, "user-data");
+    const workspaceDir = path.join(tempRoot, "workspace");
+    const validProjectPath = path.join(workspaceDir, "recent-valid");
+    const missingProjectPath = path.join(workspaceDir, "recent-missing");
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(userDataDir, { recursive: true });
+    await mkdir(workspaceDir, { recursive: true });
+    await cp(sampleProjectPath, validProjectPath, { recursive: true });
+    await cp(sampleProjectPath, missingProjectPath, { recursive: true });
+    await rm(path.join(missingProjectPath, "slides", "002-structure.html"), { force: true });
+    await writeFile(
+      path.join(userDataDir, "library.json"),
+      `${JSON.stringify({
+        defaultWorkspace: workspaceDir,
+        recentProjects: [
+          {
+            id: "proj_recent_valid",
+            lastOpenedAt: "2026-07-08T00:00:00.000Z",
+            path: validProjectPath,
+            slideCount: 2,
+            status: "Ready",
+            title: "Recent Valid Deck"
+          },
+          {
+            id: "proj_recent_missing",
+            lastOpenedAt: "2026-07-08T00:00:00.000Z",
+            path: missingProjectPath,
+            slideCount: 2,
+            status: "Needs check",
+            title: "Recent Missing Deck"
+          }
+        ],
+        version: 1
+      }, null, 2)}\n`
+    );
+
+    electronApp = await electron.launch({
+      executablePath: electronExecutable,
+      args: [electronMain],
+      env: {
+        ...process.env,
+        ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+        HOME: homeDir,
+        HTMLSLIDE_USER_DATA_DIR: userDataDir,
+        HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir
+      }
+    });
+
+    const page = await electronApp.firstWindow();
+    await page.waitForLoadState("domcontentloaded");
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+
+    const validCard = page.locator("article.project-card").filter({ hasText: "Recent Valid Deck" });
+    await expect(validCard).toBeVisible();
+    await validCard.getByRole("button", { name: "Remove", exact: true }).click();
+    await expect(validCard).toHaveCount(0);
+    expect(await readFile(path.join(validProjectPath, "deck.json"), "utf8")).toContain("Valid Full Deck");
+
+    const missingCard = page.locator("article.project-card").filter({ hasText: "Recent Missing Deck" });
+    await expect(missingCard).toBeVisible();
+    await missingCard.getByRole("button", { name: "Open", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+    await expect(page.locator("article.project-card").filter({ hasText: "Missing files" })).toBeVisible();
     await expectNoFrameworkOverlay(page);
   });
 

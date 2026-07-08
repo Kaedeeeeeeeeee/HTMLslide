@@ -13,7 +13,9 @@ import {
   loadDesktopPresenterDeck,
   loadDesktopPresenterDeckPackage,
   loadProjectPreview,
+  markRecentProjectMissing,
   readDesktopLibrary,
+  removeRecentProject,
   resolveDesktopCliIntegrationTarget,
   resolveCreateProjectRequest,
   revertDesktopCheckpoint,
@@ -450,6 +452,28 @@ describe("desktop services", () => {
     const raw = JSON.parse(await readFile(libraryPath, "utf8")) as { recentProjects: DesktopProjectRecord[] };
     expect(raw.recentProjects.map((project) => project.title)).toEqual(["One", "Two"]);
     expect(raw.recentProjects[0]?.status).toBe("Ready");
+  });
+
+  it("removes and marks recent projects without touching project files", async () => {
+    const root = await tempDir();
+    const libraryPath = path.join(root, "library.json");
+    const firstProject = projectRecord(path.join(root, "one"), "One");
+    const secondProject = projectRecord(path.join(root, "two"), "Two");
+    await mkdir(firstProject.path, { recursive: true });
+    await writeFile(path.join(firstProject.path, "sentinel.txt"), "project source");
+
+    await writeDesktopLibrary(libraryPath, {
+      defaultWorkspace: "/workspace",
+      recentProjects: [firstProject, secondProject],
+      version: 1
+    });
+
+    const missingLibrary = await markRecentProjectMissing(libraryPath, { id: firstProject.id }, "/workspace");
+    expect(missingLibrary.recentProjects.map((project) => project.status)).toEqual(["Missing files", "Needs check"]);
+
+    const removedLibrary = await removeRecentProject(libraryPath, { path: firstProject.path }, "/workspace");
+    expect(removedLibrary.recentProjects.map((project) => project.title)).toEqual(["Two"]);
+    await expect(readFile(path.join(firstProject.path, "sentinel.txt"), "utf8")).resolves.toBe("project source");
   });
 
   it("loads a project preview from deck source files", async () => {

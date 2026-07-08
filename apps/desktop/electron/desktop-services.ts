@@ -60,6 +60,11 @@ export type DesktopProjectRecord = {
   thumbnail?: string;
 };
 
+export type DesktopProjectReference = {
+  id?: string;
+  path?: string;
+};
+
 export type DesktopLibrary = {
   version: 1;
   defaultWorkspace: string;
@@ -871,6 +876,48 @@ export async function upsertRecentProject(
   };
   await writeDesktopLibrary(libraryPath, nextLibrary);
   return nextLibrary;
+}
+
+export async function removeRecentProject(
+  libraryPath: string,
+  projectReference: DesktopProjectReference,
+  defaultWorkspace = defaultWorkspacePath()
+): Promise<DesktopLibrary> {
+  const library = await readDesktopLibrary(libraryPath, defaultWorkspace);
+  const nextLibrary = {
+    ...library,
+    recentProjects: library.recentProjects.filter((project) => !matchesProjectReference(project, projectReference))
+  };
+  await writeDesktopLibrary(libraryPath, nextLibrary);
+  return nextLibrary;
+}
+
+export async function markRecentProjectMissing(
+  libraryPath: string,
+  projectReference: DesktopProjectReference,
+  defaultWorkspace = defaultWorkspacePath()
+): Promise<DesktopLibrary> {
+  const library = await readDesktopLibrary(libraryPath, defaultWorkspace);
+  const nextLibrary = {
+    ...library,
+    recentProjects: library.recentProjects.map((project) =>
+      matchesProjectReference(project, projectReference)
+        ? {
+            ...project,
+            status: "Missing files" as const
+          }
+        : project
+    )
+  };
+  await writeDesktopLibrary(libraryPath, nextLibrary);
+  return nextLibrary;
+}
+
+function matchesProjectReference(project: DesktopProjectRecord, reference: DesktopProjectReference): boolean {
+  const idMatches = typeof reference.id === "string" && reference.id.length > 0 && project.id === reference.id;
+  const pathMatches = typeof reference.path === "string" && reference.path.length > 0
+    && path.resolve(project.path) === path.resolve(reference.path);
+  return idMatches || pathMatches;
 }
 
 export async function summarizeDeckProject(projectPath: string): Promise<DesktopProjectRecord> {

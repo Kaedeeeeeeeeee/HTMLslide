@@ -43,3 +43,9 @@ Agents should edit source areas. The compiler owns artifact areas.
 The core loader accepts a project directory, a `deck.json` file path, or a path inside a project. It walks upward until it finds `deck.json`, validates schema version `0.1.0`, resolves manifest paths against the project root, and verifies referenced slide, notes, and theme files by default.
 
 Missing source files produce `missing-file` issues. Invalid manifests produce `schema-validation` issues.
+
+## App Project Library
+
+The desktop app keeps a local recent-project index at its Electron user-data `library.json` path. The index stores project metadata such as title, path, last-opened time, status, slide count, and optional thumbnail path. It does not store deck source content.
+
+Opening a recent project refreshes the index from the project manifest. If referenced source files are missing, the app records the project as `Missing files` and keeps the user in the Project Library. Removing a recent project deletes only the index entry; it never deletes the project folder or artifacts.

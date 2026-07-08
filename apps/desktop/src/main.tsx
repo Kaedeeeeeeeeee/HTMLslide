@@ -151,6 +151,10 @@ function projectRecordToSummary(project: DesktopProjectRecord): ProjectSummary {
   };
 }
 
+function projectRecordsToSummaries(projects: DesktopProjectRecord[]): ProjectSummary[] {
+  return projects.map(projectRecordToSummary);
+}
+
 function reportToIssues(report: DesktopCheckReport | undefined): QaIssue[] {
   return (report?.issues ?? []).map((issue, index) => ({
     id: `${issue.slideId ?? "deck"}-${issue.type ?? "issue"}-${index}`,
@@ -306,7 +310,7 @@ function App(): React.ReactNode {
         if (cancelled) {
           return;
         }
-        const projectSummaries = records.map(projectRecordToSummary);
+        const projectSummaries = projectRecordsToSummaries(records);
         setWorkspacePath(setup.workspacePath);
         setProjects(projectSummaries);
         setAiEngineSettings(normalizeAiEngineSettings(settings));
@@ -664,17 +668,11 @@ function App(): React.ReactNode {
       setDirectPresenterOpen(undefined);
       setSelectedProjectId(projectId);
       const cachedPreview = projectPreviews[projectId];
-      if (cachedPreview) {
-        const next = projectPreviewToState(cachedPreview);
-        setActiveSlides(next.slides);
-        setSelectedSlideId(next.slides[0]?.id ?? "");
-        setView("workspace");
-        return;
-      }
-
       if (!desktopApi || project.path.startsWith("~")) {
-        setActiveSlides(sampleSlides);
-        setSelectedSlideId(sampleSlides[0]?.id ?? "");
+        const next = cachedPreview ? projectPreviewToState(cachedPreview) : undefined;
+        const fallbackSlides = next?.slides ?? sampleSlides;
+        setActiveSlides(fallbackSlides);
+        setSelectedSlideId(fallbackSlides[0]?.id ?? "");
         setView("workspace");
         return;
       }
@@ -682,15 +680,63 @@ function App(): React.ReactNode {
       setOperationStatus({ kind: "running", message: "Loading project" });
       desktopApi.loadProject(project.path)
         .then(openPreview)
-        .catch((error: unknown) => {
+        .catch(async (error: unknown) => {
+          await desktopApi.markRecentProjectMissing({
+            id: project.id,
+            path: project.path
+          })
+            .then((records) => setProjects(projectRecordsToSummaries(records)))
+            .catch(() => {
+              setProjects((current) => current.map((item) =>
+                item.id === project.id
+                  ? {
+                      ...item,
+                      status: "Missing files"
+                    }
+                  : item
+              ));
+            });
           setOperationStatus({
             kind: "failed",
             message: error instanceof Error ? error.message : String(error)
           });
+          setView("library");
         });
     },
     [desktopApi, openPreview, projectPreviews, projects]
   );
+
+  const handleRemoveProject = useCallback((projectId: string): void => {
+    const removedProject = projects.find((project) => project.id === projectId);
+    setProjectPreviews((current) => {
+      const next = { ...current };
+      delete next[projectId];
+      return next;
+    });
+
+    if (!desktopApi) {
+      setProjects((current) => current.filter((project) => project.id !== projectId));
+      return;
+    }
+
+    desktopApi.removeRecentProject({
+      id: removedProject?.id ?? projectId,
+      path: removedProject?.path
+    })
+      .then((records) => {
+        setProjects(projectRecordsToSummaries(records));
+        setOperationStatus({
+          kind: "success",
+          message: removedProject ? `Removed ${removedProject.title} from recent projects` : "Recent project removed"
+        });
+      })
+      .catch((error: unknown) => {
+        setOperationStatus({
+          kind: "failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
+  }, [desktopApi, projects]);
 
   const handleOpenFolder = useCallback((): void => {
     if (!desktopApi) {
@@ -1191,6 +1237,7 @@ function App(): React.ReactNode {
         onNewDeck={handleNewDeck}
         onOpenFolder={handleOpenFolder}
         onOpenProject={handleOpenProject}
+        onRemoveProject={handleRemoveProject}
         onRefreshExternalAgents={handleRefreshExternalAgents}
         onSaveAiEngineSettings={handleSaveAiEngineSettings}
         operationStatus={operationStatus}

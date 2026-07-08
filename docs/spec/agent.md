@@ -110,6 +110,21 @@ The mock provider is deterministic and performs no network calls. By default it:
 
 Tests can override mock check results, provider failures, and delay to exercise max repair rounds, provider errors, and cancellation.
 
+## Source Writes
+
+Agent-generated project edits must pass through the shared source-writes boundary before files are written. A source write is:
+
+```json
+{
+  "path": "slides/001-title.html",
+  "content": "<section class=\"slide\" data-slide-id=\"001-title\"></section>\n"
+}
+```
+
+Writers may only target `deck.json`, `slides/`, `notes/`, `theme/`, and `assets/`. Runtime files and artifacts such as `.htmlslide/` and `exports/` are rejected, as are absolute paths, path traversal, Windows separators, colon paths, unknown roots, empty write lists, and duplicate write paths. The deterministic mock project writer uses this same boundary so future BYOK provider output inherits the same file-safety contract.
+
+Provider `build` and `repair` outputs may include `sourceWrites` so desktop and CLI callers can apply model-generated source edits through the same boundary before running real `htmlslide check --json`.
+
 ## Desktop New Deck v1
 
 The desktop New Deck wizard can create a No AI source project, run the deterministic Local Mock agent, or run the current deterministic HTMLslide Agent path after `htmlslide new` succeeds. The wizard collects title, folder, brief, AI engine, language, audience, duration, slide count, tone, design direction, speaker notes, and requested outputs.

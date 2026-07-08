@@ -1,11 +1,12 @@
-import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { applyAgentSourceWrites } from "./source-writes.js";
 import type {
   AgentBuildResult,
   AgentCheckResult,
   AgentOutline,
   AgentOutlineSlide,
   AgentRunSucceededResult,
+  AgentSourceWrite,
   ApplyMockAgentProjectInput,
   ApplyMockAgentProjectResult,
   AppliedMockAgentProjectSlide,
@@ -86,7 +87,7 @@ export const applyMockAgentProject = async (
     };
   });
 
-  const writes: Array<{ path: string; content: string }> = [
+  const writes: AgentSourceWrite[] = [
     {
       path: deckPath,
       content: `${stableJson(buildDeckJson({ title, language, runId: input.result.runId, slides }))}\n`
@@ -125,11 +126,7 @@ export const applyMockAgentProject = async (
     }
   ];
 
-  for (const write of writes) {
-    const absolutePath = resolveProjectPath(projectPath, write.path);
-    await mkdir(path.dirname(absolutePath), { recursive: true });
-    await writeFile(absolutePath, write.content, "utf8");
-  }
+  await applyAgentSourceWrites({ projectPath, writes });
 
   const appliedSlides: AppliedMockAgentProjectSlide[] = slides.map((slide) => ({
     id: slide.id,
@@ -529,38 +526,6 @@ const buildThemeTokens = (direction: VisualDirection): JsonObject => ({
     cardRadiusPx: 8
   }
 });
-
-const resolveProjectPath = (projectPath: string, projectRelativePath: string): string => {
-  assertSafeProjectRelativePath(projectRelativePath);
-  const absolutePath = path.resolve(projectPath, ...projectRelativePath.split("/"));
-  const relative = path.relative(projectPath, absolutePath);
-
-  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new Error(`Refusing to write outside the project: ${projectRelativePath}`);
-  }
-
-  return absolutePath;
-};
-
-const assertSafeProjectRelativePath = (projectRelativePath: string): void => {
-  if (
-    projectRelativePath.length === 0 ||
-    projectRelativePath.includes("\\") ||
-    projectRelativePath.includes(":") ||
-    path.posix.isAbsolute(projectRelativePath)
-  ) {
-    throw new Error(`Invalid project-relative path: ${projectRelativePath}`);
-  }
-
-  const segments = projectRelativePath.split("/");
-  if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) {
-    throw new Error(`Invalid project-relative path: ${projectRelativePath}`);
-  }
-
-  if (segments[0] === "exports") {
-    throw new Error(`Refusing to write generated exports: ${projectRelativePath}`);
-  }
-};
 
 const tokenString = (tokens: JsonObject, key: string, fallback: string): string => {
   const value = tokens[key];

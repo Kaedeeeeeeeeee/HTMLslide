@@ -289,11 +289,17 @@ export type VisualDirectionSet = {
   selectedDirectionId?: string;
 };
 
+export type AgentSourceWrite = {
+  path: string;
+  content: string;
+};
+
 export type AgentBuildResult = {
   filesChanged: string[];
   slidesChanged: string[];
   notesChanged: string[];
   themeChanged: string[];
+  sourceWrites?: AgentSourceWrite[];
 };
 
 export type AgentCheckIssue = {
@@ -321,6 +327,7 @@ export type AgentRepairResult = {
   attempt: number;
   filesChanged: string[];
   issuesAddressed: string[];
+  sourceWrites?: AgentSourceWrite[];
 };
 
 export type AgentExportArtifact = {

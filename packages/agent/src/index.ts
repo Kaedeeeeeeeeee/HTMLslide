@@ -3,6 +3,7 @@ export * from "./checkpoint.js";
 export * from "./mock-provider.js";
 export * from "./mock-project.js";
 export * from "./orchestrator.js";
+export * from "./source-writes.js";
 export * from "./types.js";
 
 import { defaultAgentStages } from "./orchestrator.js";

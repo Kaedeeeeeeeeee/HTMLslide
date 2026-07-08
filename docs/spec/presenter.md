@@ -88,6 +88,11 @@ from the Electron main process, validates the returned package through `@htmlsli
 order, timing, and notes into the renderer session. If package preparation fails, the app keeps the source-preview
 rehearsal fallback so authors can still rehearse while fixing export issues.
 
+The desktop shell also has a read-only direct package path for startup-opened `.deckpkg` files. In that flow the main
+process validates the file without running project export or reading `deck.json`, the renderer builds a package-backed
+workspace summary, and Presenter opens immediately from the package contents. Full OS document association remains
+separate packaging work.
+
 The desktop Presenter console also reads Electron display metadata and exposes a target-display selector with primary,
 internal/external, scale, and resolution details. This is display discovery for the presenter workflow; separate audience
 window placement and dual-screen synchronization remain future integration work.

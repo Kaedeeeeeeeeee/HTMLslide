@@ -13,6 +13,7 @@ import {
   listDesktopPresenterDisplays,
   loadProjectPreview,
   loadDesktopPresenterDeck,
+  loadDesktopPresenterDeckPackage,
   readAiEngineSettings,
   readDesktopLibrary,
   resolveCreateProjectRequest,
@@ -41,6 +42,9 @@ const configuredUserDataPath = process.env.HTMLSLIDE_USER_DATA_DIR
 const smokeQuitAfterReady = process.env.HTMLSLIDE_SMOKE_QUIT_AFTER_READY === "1";
 const smokeReadyFile = process.env.HTMLSLIDE_SMOKE_READY_FILE
   ? resolve(process.env.HTMLSLIDE_SMOKE_READY_FILE)
+  : undefined;
+const initialDeckPackagePath = process.env.HTMLSLIDE_E2E_OPEN_DECKPKG_PATH
+  ? resolve(process.env.HTMLSLIDE_E2E_OPEN_DECKPKG_PATH)
   : undefined;
 
 const writeSmokeMarker = async (marker: Record<string, unknown>) => {
@@ -122,7 +126,13 @@ function registerIpcHandlers(): void {
         rootPath: cliRuntime?.rootPath,
         cliPath: cliRuntime?.cliPath
       },
-      cliIntegration
+      cliIntegration,
+      initialOpen: initialDeckPackagePath
+        ? {
+            kind: "deckpkg",
+            path: initialDeckPackagePath
+          }
+        : undefined
     };
   });
 
@@ -256,6 +266,10 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle("htmlslide:load-presenter-deck", async (_event, projectPath: string) =>
     loadDesktopPresenterDeck(projectPath, { cliRuntime })
+  );
+
+  ipcMain.handle("htmlslide:load-presenter-deckpkg", async (_event, deckpkgPath: string) =>
+    loadDesktopPresenterDeckPackage(deckpkgPath)
   );
 
   ipcMain.handle("htmlslide:list-presenter-displays", async () => listDesktopPresenterDisplays(screen));

@@ -14,6 +14,7 @@ import {
   type DesktopCliIntegrationState,
   type DesktopExternalAgentRunResult,
   type DesktopMockAgentRunResult,
+  type DesktopPresenterDeckResult,
   type DesktopProjectPreview,
   type DesktopProjectRecord
 } from "./desktop-api";
@@ -63,6 +64,81 @@ const nowIso = (): string => new Date().toISOString();
 
 type DesktopAgentRunResult = DesktopMockAgentRunResult | DesktopByokAgentRunResult | DesktopExternalAgentRunResult;
 type DesktopGenerationEngine = "mock-agent" | "htmlslide-agent" | "external-agent";
+
+type DirectPresenterOpen = {
+  id: string;
+  source: "deckpkg-file";
+  deckpkgPath: string;
+  deck: PresenterDeck;
+};
+
+const presenterDeckAccents = ["#315fcb", "#267a4f", "#9a6410", "#286a8d", "#7b4ab8", "#bc3a3a"];
+
+function formatPresenterDurationLabel(seconds: number): string {
+  const safeSeconds = Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds) : 60;
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainder = safeSeconds % 60;
+  return `${minutes}:${String(remainder).padStart(2, "0")}`;
+}
+
+function titleCaseLabel(value: string): string {
+  return value
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function bulletsFromSpeakerNotes(notes: string, fallbackTitle: string): string[] {
+  const bullets = notes
+    .split(/\n+/)
+    .map((line) => line.replace(/^[-*]\s+/, "").replace(/^#+\s+/, "").trim())
+    .filter(Boolean)
+    .slice(0, 4);
+
+  return bullets.length > 0 ? bullets : [`Review ${fallbackTitle}`];
+}
+
+function presenterDeckToWorkspaceState(
+  deck: PresenterDeck,
+  deckpkgPath: string
+): {
+  project: ProjectSummary;
+  slides: SlideSummary[];
+} {
+  const project: ProjectSummary = {
+    id: `deckpkg:${deckpkgPath}`,
+    title: deck.title,
+    path: deckpkgPath,
+    lastOpened: "Opened deck package",
+    status: "Ready",
+    slideCount: deck.slides.length
+  };
+
+  return {
+    project,
+    slides: deck.slides.map((slide, index) => {
+      const durationSec = typeof slide.durationSec === "number" && Number.isFinite(slide.durationSec)
+        ? slide.durationSec
+        : 60;
+      const section = typeof slide.source === "string" && slide.source.trim().length > 0
+        ? titleCaseLabel(slide.source.split("/").at(-1)?.replace(/\.[^.]+$/u, "") ?? "Deck package")
+        : "Deck Package";
+
+      return {
+        id: slide.id,
+        number: String(slide.slideNumber ?? index + 1).padStart(2, "0"),
+        title: slide.title,
+        section,
+        status: "ready",
+        duration: formatPresenterDurationLabel(durationSec),
+        accent: presenterDeckAccents[index % presenterDeckAccents.length] ?? "#315fcb",
+        speakerNotes: slide.notesMarkdown,
+        bullets: bulletsFromSpeakerNotes(slide.notesMarkdown, slide.title),
+        sourcePath: slide.source,
+        notesPath: slide.notesPath ?? undefined
+      };
+    })
+  };
+}
 
 function projectRecordToSummary(project: DesktopProjectRecord): ProjectSummary {
   return {
@@ -163,6 +239,7 @@ function App(): React.ReactNode {
     kind: "idle",
     message: "No AI mode"
   });
+  const [directPresenterOpen, setDirectPresenterOpen] = useState<DirectPresenterOpen | undefined>();
   const desktopApi = getDesktopApi();
 
   useEffect(() => {
@@ -172,12 +249,13 @@ function App(): React.ReactNode {
 
     let cancelled = false;
     Promise.all([desktopApi.getSetup(), desktopApi.listProjects(), desktopApi.getAiEngineSettings()])
-      .then(([setup, records, settings]) => {
+      .then(async ([setup, records, settings]) => {
         if (cancelled) {
           return;
         }
+        const projectSummaries = records.map(projectRecordToSummary);
         setWorkspacePath(setup.workspacePath);
-        setProjects(records.map(projectRecordToSummary));
+        setProjects(projectSummaries);
         setAiEngineSettings(normalizeAiEngineSettings(settings));
         setCliIntegration(setup.cliIntegration);
         setCliIntegrationStatus({
@@ -192,6 +270,48 @@ function App(): React.ReactNode {
           kind: "success",
           message: "AI engine settings loaded"
         });
+
+        if (setup.initialOpen?.kind === "deckpkg") {
+          setOperationStatus({ kind: "running", message: "Opening deck package" });
+          const result: DesktopPresenterDeckResult = await desktopApi.loadPresenterDeckPackage(setup.initialOpen.path);
+          if (cancelled) {
+            return;
+          }
+
+          if (result.ok) {
+            const next = presenterDeckToWorkspaceState(result.deck, result.deckpkgPath);
+            setProjects([
+              next.project,
+              ...projectSummaries.filter((project) => project.id !== next.project.id)
+            ]);
+            setSelectedProjectId(next.project.id);
+            setActiveSlides(next.slides);
+            setSelectedSlideId(next.slides[0]?.id ?? "");
+            setQaIssues([]);
+            setDiffReview(undefined);
+            setDirectPresenterOpen({
+              id: `${result.deckpkgPath}:${result.deck.slides.length}`,
+              source: "deckpkg-file",
+              deckpkgPath: result.deckpkgPath,
+              deck: result.deck
+            });
+            setView("workspace");
+            setOperationStatus({ kind: "success", message: "Deck package opened" });
+            setCommandActionStatuses((current) => ({
+              ...current,
+              export: { kind: "success", message: "Deck package file" },
+              review: { kind: "success", message: "Deck package ready" }
+            }));
+          } else {
+            setOperationStatus({ kind: "failed", message: result.error });
+            setView("library");
+            setCommandActionStatuses((current) => ({
+              ...current,
+              review: { kind: "failed", message: result.source === "missing" ? "Deck package missing" : "Deck package invalid" }
+            }));
+          }
+        }
+
         return desktopApi.detectExternalAgents();
       })
       .then((statuses) => {
@@ -476,9 +596,13 @@ function App(): React.ReactNode {
       ? projectRecordToSummary(selectedPreview.project)
       : projects.find((project) => project.id === selectedProjectId) ?? projects[0] ?? sampleProjects[0];
   }, [projectPreviews, projects, selectedProjectId]);
+  const activeProjectIsDeckPackage = Boolean(
+    directPresenterOpen && activeProject?.path === directPresenterOpen.deckpkgPath
+  );
 
   const openPreview = useCallback((preview: DesktopProjectPreview): void => {
     const next = projectPreviewToState(preview);
+    setDirectPresenterOpen(undefined);
     setProjectPreviews((current) => ({
       ...current,
       [next.project.id]: preview
@@ -506,6 +630,7 @@ function App(): React.ReactNode {
         return;
       }
 
+      setDirectPresenterOpen(undefined);
       setSelectedProjectId(projectId);
       const cachedPreview = projectPreviews[projectId];
       if (cachedPreview) {
@@ -749,7 +874,7 @@ function App(): React.ReactNode {
   }, [desktopApi]);
 
   const runCheck = useCallback((): void => {
-    if (!desktopApi || !activeProject || activeProject.path.startsWith("~")) {
+    if (!desktopApi || !activeProject || activeProject.path.startsWith("~") || activeProjectIsDeckPackage) {
       setInspectorTab("qa");
       setOperationStatus({ kind: "failed", message: "Open a local deck project before running check" });
       updateCommandActionStatus("check", { kind: "failed", message: "Local project required" });
@@ -785,10 +910,10 @@ function App(): React.ReactNode {
         });
         updateCommandActionStatus("check", { kind: "failed", message });
       });
-  }, [activeProject, desktopApi, updateCommandActionStatus]);
+  }, [activeProject, activeProjectIsDeckPackage, desktopApi, updateCommandActionStatus]);
 
   const runExport = useCallback((): void => {
-    if (!desktopApi || !activeProject || activeProject.path.startsWith("~")) {
+    if (!desktopApi || !activeProject || activeProject.path.startsWith("~") || activeProjectIsDeckPackage) {
       setInspectorTab("export");
       setOperationStatus({ kind: "failed", message: "Open a local deck project before export" });
       updateCommandActionStatus("export", { kind: "failed", message: "Local project required" });
@@ -822,9 +947,16 @@ function App(): React.ReactNode {
         });
         updateCommandActionStatus("export", { kind: "failed", message });
     });
-  }, [activeProject, desktopApi, updateCommandActionStatus]);
+  }, [activeProject, activeProjectIsDeckPackage, desktopApi, updateCommandActionStatus]);
 
   const loadPresenterDeck = useCallback(async (): Promise<PresenterDeck | null> => {
+    if (directPresenterOpen && activeProject?.path === directPresenterOpen.deckpkgPath) {
+      setOperationStatus({ kind: "success", message: "Deck package loaded" });
+      updateCommandActionStatus("export", { kind: "success", message: "Deck package file" });
+      updateCommandActionStatus("review", { kind: "success", message: "Deck package ready" });
+      return directPresenterOpen.deck;
+    }
+
     if (!desktopApi || !activeProject || activeProject.path.startsWith("~")) {
       setOperationStatus({ kind: "failed", message: "Open a local deck project before presenter mode" });
       updateCommandActionStatus("review", { kind: "failed", message: "Local project required" });
@@ -846,7 +978,7 @@ function App(): React.ReactNode {
     updateCommandActionStatus("export", { kind: "failed", message: "Deckpkg unavailable" });
     updateCommandActionStatus("review", { kind: "idle", message: "Using rehearsal fallback" });
     return null;
-  }, [activeProject, desktopApi, updateCommandActionStatus]);
+  }, [activeProject, desktopApi, directPresenterOpen, updateCommandActionStatus]);
 
   const listPresenterDisplays = useCallback(
     () => desktopApi?.listPresenterDisplays() ?? Promise.resolve([]),
@@ -859,7 +991,7 @@ function App(): React.ReactNode {
       return;
     }
 
-    if (!desktopApi || !activeProject || activeProject.path.startsWith("~")) {
+    if (!desktopApi || !activeProject || activeProject.path.startsWith("~") || activeProjectIsDeckPackage) {
       setDiffReview((current) => current ? { ...current, open: true } : current);
       return;
     }
@@ -890,7 +1022,7 @@ function App(): React.ReactNode {
         );
         setOperationStatus({ kind: "failed", message });
       });
-  }, [activeProject, desktopApi, diffReview]);
+  }, [activeProject, activeProjectIsDeckPackage, desktopApi, diffReview]);
 
   const handleCloseDiff = useCallback((): void => {
     setDiffReview((current) => current ? { ...current, open: false } : current);
@@ -916,7 +1048,7 @@ function App(): React.ReactNode {
       return;
     }
 
-    if (!desktopApi || !activeProject || activeProject.path.startsWith("~")) {
+    if (!desktopApi || !activeProject || activeProject.path.startsWith("~") || activeProjectIsDeckPackage) {
       setOperationStatus({ kind: "failed", message: "Open a local deck project before reverting" });
       return;
     }
@@ -972,16 +1104,18 @@ function App(): React.ReactNode {
         setDiffReview((current) => current ? { ...current, reverting: false, statusMessage: message } : current);
         setOperationStatus({ kind: "failed", message });
       });
-  }, [activeProject, desktopApi, diffReview, updateCommandActionStatus]);
+  }, [activeProject, activeProjectIsDeckPackage, desktopApi, diffReview, updateCommandActionStatus]);
 
   const runAgentGeneration = useCallback(
     (brief: string, action: "generate" | "retry" = "generate"): void => {
       startAgentGeneration(brief, {
         action,
-        projectPath: activeProject && !activeProject.path.startsWith("~") ? activeProject.path : undefined
+        projectPath: activeProject && !activeProject.path.startsWith("~") && !activeProjectIsDeckPackage
+          ? activeProject.path
+          : undefined
       });
     },
-    [activeProject, startAgentGeneration]
+    [activeProject, activeProjectIsDeckPackage, startAgentGeneration]
   );
 
   if (!activeProject) {
@@ -1041,6 +1175,7 @@ function App(): React.ReactNode {
       commandValue={commandValue}
       diffReview={diffReview}
       inspectorTab={inspectorTab}
+      initialPresenterOpen={directPresenterOpen}
       onAcceptDiff={handleAcceptDiff}
       onCloseDiff={handleCloseDiff}
       onCommandChange={setCommandValue}

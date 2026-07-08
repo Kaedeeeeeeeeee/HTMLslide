@@ -95,6 +95,7 @@ interface WorkspaceProps {
   agentRunLogs: AgentRunLogLike[];
   commandActionStatuses: CommandActionStatuses;
   diffReview?: AgentDiffReview;
+  initialPresenterOpen?: InitialPresenterOpen;
   operationStatus: OperationStatus;
   onAcceptDiff?: () => void;
   onCloseDiff?: () => void;
@@ -147,12 +148,20 @@ export interface AgentTextDiffLine {
   newLine?: number;
 }
 
-type PresenterSource = "deckpkg" | "rehearsal";
+type PresenterSource = "deckpkg" | "deckpkg-file" | "rehearsal";
 
 type ActivePresenterState = {
   deck: PresenterDeck;
+  deckpkgPath?: string;
   session: PresenterSessionState;
   source: PresenterSource;
+};
+
+type InitialPresenterOpen = {
+  id: string;
+  source: "deckpkg-file";
+  deckpkgPath: string;
+  deck: PresenterDeck;
 };
 
 const inspectorTabs: Array<{ id: InspectorTab; label: string }> = [
@@ -200,6 +209,7 @@ export function Workspace({
   commandValue,
   commandActionStatuses,
   diffReview,
+  initialPresenterOpen,
   inspectorTab,
   onAcceptDiff,
   onCloseDiff,
@@ -264,10 +274,30 @@ export function Workspace({
     [project.title, slides]
   );
   const [presenterState, setPresenterState] = useState<ActivePresenterState | null>(null);
+  const openedInitialPresenterIdRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     setPresenterState(null);
   }, [project.id, slides]);
+
+  useEffect(() => {
+    if (!initialPresenterOpen || openedInitialPresenterIdRef.current === initialPresenterOpen.id) {
+      return;
+    }
+
+    openedInitialPresenterIdRef.current = initialPresenterOpen.id;
+    const selectedIndex = initialPresenterOpen.deck.slides.findIndex((slide) => slide.id === selectedSlideId);
+    setPresenterState({
+      deck: initialPresenterOpen.deck,
+      deckpkgPath: initialPresenterOpen.deckpkgPath,
+      source: initialPresenterOpen.source,
+      session: createPresenterSession(initialPresenterOpen.deck, {
+        initialSlideIndex: Math.max(0, selectedIndex),
+        nowMs: Date.now()
+      })
+    });
+    onToolbarAction("present");
+  }, [initialPresenterOpen, onToolbarAction, selectedSlideId]);
 
   useEffect(() => {
     const presenterSlideId = presenterState?.deck.slides[presenterState.session.slideIndex]?.id;
@@ -526,7 +556,7 @@ function PresenterMode({
           <span className="brand-mark">Hs</span>
           <div>
             <strong>{project.title}</strong>
-            <span>{source === "deckpkg" ? "Deck Package Presenter / Rehearsal Mode" : "Windowed Presenter / Rehearsal Mode"}</span>
+            <span>{source === "rehearsal" ? "Windowed Presenter / Rehearsal Mode" : "Deck Package Presenter / Rehearsal Mode"}</span>
           </div>
         </div>
         <div className="presenter-mode__topbar-actions">

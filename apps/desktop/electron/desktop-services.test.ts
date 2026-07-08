@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createMockPassedCheck, createMockProvider, type FetchLike, type ModelProvider } from "@htmlslide/agent";
+import { exportDeck } from "../../../packages/compiler/src/index";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   diffDesktopCheckpoint,
@@ -10,6 +11,7 @@ import {
   installDesktopCliIntegration,
   listDesktopPresenterDisplays,
   loadDesktopPresenterDeck,
+  loadDesktopPresenterDeckPackage,
   loadProjectPreview,
   readDesktopLibrary,
   resolveDesktopCliIntegrationTarget,
@@ -93,6 +95,30 @@ async function writeDeck(projectPath: string): Promise<void> {
     `<section class="slide" data-slide-id="001-title"><h1>Title</h1><ul><li>First point</li><li>Second point</li></ul></section>\n`
   );
   await writeFile(path.join(projectPath, "notes", "001-title.md"), "# Notes\n\nSpeaker note body.\n");
+}
+
+async function writeExportedDeckPackage(projectPath: string): Promise<string> {
+  await writeDeck(projectPath);
+  const exported = await exportDeck({
+    projectPath,
+    title: "Desktop Test Deck",
+    language: "en",
+    viewport: { width: 1920, height: 1080 },
+    safeArea: { top: 72, right: 96, bottom: 72, left: 96 },
+    slides: [
+      {
+        id: "001-title",
+        title: "Title",
+        sourcePath: "slides/001-title.html",
+        notesPath: "notes/001-title.md",
+        durationSec: 75
+      }
+    ]
+  });
+  if (!exported.artifacts.deckpkg) {
+    throw new Error("Expected compiler export to create a deckpkg artifact.");
+  }
+  return exported.artifacts.deckpkg;
 }
 
 function projectRecord(projectPath: string, title: string): DesktopProjectRecord {
@@ -1763,10 +1789,64 @@ function requireArg(args, name) {
     expect(result).toMatchObject({
       error: "Export failed",
       ok: false,
+      origin: "project-export",
       projectPath,
       source: "invalid"
     });
     expect(calls).toEqual([["export", projectPath, "--json"]]);
+  });
+
+  it("reads a standalone deck package without running a project export", async () => {
+    const projectPath = await tempDir();
+    const deckpkgPath = await writeExportedDeckPackage(projectPath);
+
+    const result = await loadDesktopPresenterDeckPackage(deckpkgPath);
+
+    expect(result).toMatchObject({
+      ok: true,
+      origin: "deckpkg-file",
+      projectPath: undefined,
+      deckpkgPath
+    });
+    expect(result.ok && result.deck.title).toBe("Desktop Test Deck");
+    expect(result.ok && result.deck.slides).toHaveLength(1);
+    expect(result.ok && result.deck.slides[0]?.notesMarkdown).toContain("Speaker note body.");
+    expect(result.ok && result.deck.slides[0]?.thumbnail.bytes.byteLength).toBe(0);
+  });
+
+  it("returns a missing result for a standalone deck package path that does not exist", async () => {
+    const projectPath = await tempDir();
+    const deckpkgPath = path.join(projectPath, "missing.deckpkg");
+
+    const result = await loadDesktopPresenterDeckPackage(deckpkgPath);
+
+    expect(result).toMatchObject({
+      ok: false,
+      origin: "deckpkg-file",
+      source: "missing",
+      deckpkgPath,
+      error: "Deck package file was not found."
+    });
+  });
+
+  it("returns validation issues for a malformed standalone deck package", async () => {
+    const projectPath = await tempDir();
+    const deckpkgPath = path.join(projectPath, "broken.deckpkg");
+    await writeFile(deckpkgPath, "not a zip");
+
+    const result = await loadDesktopPresenterDeckPackage(deckpkgPath);
+
+    expect(result).toMatchObject({
+      ok: false,
+      origin: "deckpkg-file",
+      source: "invalid",
+      deckpkgPath,
+      error: "Deck package validation failed."
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues?.some((issue) => issue.type === "invalid-deckpkg-archive")).toBe(true);
+    }
   });
 
   it("normalizes presenter display targets with the primary display first", () => {

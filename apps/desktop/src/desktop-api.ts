@@ -19,6 +19,7 @@ export type DesktopSetupState = {
   platform: string;
   libraryPath: string;
   workspacePath: string;
+  initialOpen?: DesktopInitialOpenRequest;
   cli: {
     available: boolean;
     mode: "development" | "packaged" | "missing";
@@ -26,6 +27,11 @@ export type DesktopSetupState = {
     cliPath?: string;
   };
   cliIntegration: DesktopCliIntegrationState;
+};
+
+export type DesktopInitialOpenRequest = {
+  kind: "deckpkg";
+  path: string;
 };
 
 export type DesktopCliIntegrationState = {
@@ -225,27 +231,33 @@ export type DesktopCheckpointRevertResult = FileCopyCheckpointRevertResult & {
   project?: DesktopProjectPreview;
 };
 
+export type DesktopPresenterDeckIssue = {
+  severity: string;
+  type: string;
+  message: string;
+  path?: string;
+  slideId?: string;
+};
+
+export type DesktopPresenterDeckOrigin = "project-export" | "deckpkg-file";
+
 export type DesktopPresenterDeckResult =
   | {
       ok: true;
       source: "deckpkg";
-      projectPath: string;
+      origin: DesktopPresenterDeckOrigin;
+      projectPath?: string;
       deckpkgPath: string;
       deck: PresenterDeck;
     }
   | {
       ok: false;
       source: "missing" | "invalid";
-      projectPath: string;
+      origin: DesktopPresenterDeckOrigin;
+      projectPath?: string;
       deckpkgPath?: string;
       error: string;
-      issues?: Array<{
-        severity: string;
-        type: string;
-        message: string;
-        path?: string;
-        slideId?: string;
-      }>;
+      issues?: DesktopPresenterDeckIssue[];
     };
 
 export type DesktopDisplayBounds = {
@@ -291,6 +303,7 @@ export type HtmlslideDesktopApi = {
   checkProject(projectPath: string): Promise<DesktopCliResult>;
   exportProject(projectPath: string): Promise<DesktopCliResult>;
   loadPresenterDeck(projectPath: string): Promise<DesktopPresenterDeckResult>;
+  loadPresenterDeckPackage(deckpkgPath: string): Promise<DesktopPresenterDeckResult>;
   listPresenterDisplays(): Promise<DesktopPresenterDisplay[]>;
   runMockAgent(request: DesktopMockAgentRunRequest): Promise<DesktopMockAgentRunResult>;
   runByokAgent(request: DesktopByokAgentRunRequest): Promise<DesktopByokAgentRunResult>;

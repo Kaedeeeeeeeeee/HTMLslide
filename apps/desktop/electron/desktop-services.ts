@@ -303,6 +303,16 @@ export type DesktopPresenterDeckOptions = {
   cliRunner?: DesktopCliRunner;
 };
 
+export type DesktopPresenterDeckIssue = {
+  severity: string;
+  type: string;
+  message: string;
+  path?: string;
+  slideId?: string;
+};
+
+export type DesktopPresenterDeckOrigin = "project-export" | "deckpkg-file";
+
 export type DesktopDisplayBounds = {
   x: number;
   y: number;
@@ -338,23 +348,19 @@ export type DesktopPresenterDeckResult =
   | {
       ok: true;
       source: "deckpkg";
-      projectPath: string;
+      origin: DesktopPresenterDeckOrigin;
+      projectPath?: string;
       deckpkgPath: string;
       deck: PresenterDeck;
     }
   | {
       ok: false;
       source: "missing" | "invalid";
-      projectPath: string;
+      origin: DesktopPresenterDeckOrigin;
+      projectPath?: string;
       deckpkgPath?: string;
       error: string;
-      issues?: Array<{
-        severity: string;
-        type: string;
-        message: string;
-        path?: string;
-        slideId?: string;
-      }>;
+      issues?: DesktopPresenterDeckIssue[];
     };
 
 export type DesktopMockAgentRunnerOptions = {
@@ -938,6 +944,7 @@ export async function loadDesktopPresenterDeck(
     return {
       ok: false,
       source: "invalid",
+      origin: "project-export",
       projectPath: root,
       error: exportResult.error ?? firstNonEmptyLine(exportResult.stderr) ?? `Export exited with ${exportResult.exitCode}.`
     };
@@ -948,46 +955,22 @@ export async function loadDesktopPresenterDeck(
     return {
       ok: false,
       source: "missing",
+      origin: "project-export",
       projectPath: root,
       error: "Export did not produce a deckpkg for presenter mode."
     };
   }
 
-  try {
-    const deckPackage = await readDeckPackage(deckpkgPath);
-    return {
-      ok: true,
-      source: "deckpkg",
-      projectPath: root,
-      deckpkgPath,
-      deck: presenterDeckFromPackage(deckPackage)
-    };
-  } catch (error) {
-    if (error instanceof DeckPackageValidationError) {
-      return {
-        ok: false,
-        source: "invalid",
-        projectPath: root,
-        deckpkgPath,
-        error: "Deck package validation failed.",
-        issues: error.issues.map((issue) => ({
-          severity: issue.severity,
-          type: issue.type,
-          message: issue.message,
-          path: issue.path,
-          slideId: issue.slideId
-        }))
-      };
-    }
+  return readDesktopPresenterDeckPackage(deckpkgPath, {
+    origin: "project-export",
+    projectPath: root
+  });
+}
 
-    return {
-      ok: false,
-      source: "invalid",
-      projectPath: root,
-      deckpkgPath,
-      error: error instanceof Error ? error.message : String(error)
-    };
-  }
+export async function loadDesktopPresenterDeckPackage(deckpkgPath: string): Promise<DesktopPresenterDeckResult> {
+  return readDesktopPresenterDeckPackage(path.resolve(deckpkgPath), {
+    origin: "deckpkg-file"
+  });
 }
 
 export function listDesktopPresenterDisplays(displaySource: DesktopDisplaySource): DesktopPresenterDisplay[] {
@@ -2088,6 +2071,66 @@ async function findProjectDeckPackage(projectPath: string): Promise<string | und
   return candidates
     .filter(isPresent)
     .sort((left, right) => right.mtimeMs - left.mtimeMs || left.filePath.localeCompare(right.filePath))[0]?.filePath;
+}
+
+async function readDesktopPresenterDeckPackage(
+  deckpkgPath: string,
+  context: { origin: DesktopPresenterDeckOrigin; projectPath?: string }
+): Promise<DesktopPresenterDeckResult> {
+  const resolvedDeckpkgPath = path.resolve(deckpkgPath);
+  if (!(await pathExists(resolvedDeckpkgPath))) {
+    return {
+      ok: false,
+      source: "missing",
+      origin: context.origin,
+      projectPath: context.projectPath,
+      deckpkgPath: resolvedDeckpkgPath,
+      error: "Deck package file was not found."
+    };
+  }
+
+  try {
+    const deckPackage = await readDeckPackage(resolvedDeckpkgPath);
+    return {
+      ok: true,
+      source: "deckpkg",
+      origin: context.origin,
+      projectPath: context.projectPath,
+      deckpkgPath: resolvedDeckpkgPath,
+      deck: presenterDeckFromPackage(deckPackage)
+    };
+  } catch (error) {
+    if (error instanceof DeckPackageValidationError) {
+      return {
+        ok: false,
+        source: "invalid",
+        origin: context.origin,
+        projectPath: context.projectPath,
+        deckpkgPath: resolvedDeckpkgPath,
+        error: "Deck package validation failed.",
+        issues: desktopPresenterDeckIssues(error)
+      };
+    }
+
+    return {
+      ok: false,
+      source: "invalid",
+      origin: context.origin,
+      projectPath: context.projectPath,
+      deckpkgPath: resolvedDeckpkgPath,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+function desktopPresenterDeckIssues(error: DeckPackageValidationError): DesktopPresenterDeckIssue[] {
+  return error.issues.map((issue) => ({
+    severity: issue.severity,
+    type: issue.type,
+    message: issue.message,
+    path: issue.path,
+    slideId: issue.slideId
+  }));
 }
 
 function presenterDeckFromPackage(deckPackage: PresenterDeckPackage): PresenterDeck {

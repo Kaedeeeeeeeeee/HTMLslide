@@ -1,9 +1,11 @@
 import { _electron as electron, expect, test } from "@playwright/test";
 import type { ElectronApplication, Page } from "@playwright/test";
+import { execFile as execFileCallback } from "node:child_process";
 import { createRequire } from "node:module";
 import { access, cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 const e2eDir = path.dirname(fileURLToPath(import.meta.url));
@@ -14,6 +16,16 @@ const sampleProjectPath = path.join(repoRoot, "packages", "test-fixtures", "deck
 const textOverflowProjectPath = path.join(repoRoot, "packages", "test-fixtures", "decks", "linter-text-overflow");
 const requireFromDesktop = createRequire(path.join(desktopRoot, "package.json"));
 const electronExecutable = requireFromDesktop("electron") as string;
+const execFile = promisify(execFileCallback);
+
+async function exportDeckPackage(projectPath: string): Promise<string> {
+  const cliBin = path.join(repoRoot, "packages", "cli", "dist", "bin", "htmlslide.js");
+  await execFile(process.execPath, [cliBin, "export", projectPath, "--json"], {
+    cwd: repoRoot,
+    env: process.env
+  });
+  return path.join(projectPath, "exports", "valid-full-deck.deckpkg");
+}
 
 async function expectNoFrameworkOverlay(page: Page): Promise<void> {
   await expect(page.locator("vite-error-overlay")).toHaveCount(0);
@@ -318,7 +330,7 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(currentSlideHeading).toHaveText("HTML as source");
     await expect(presenter.getByRole("heading", { name: "Speaker Notes" })).toBeVisible();
     await expect(presenter.getByLabel("Presenter target display")).toBeVisible();
-    await expect(presenter.getByText("今天我们把 HTML 作为源码")).toBeVisible();
+    await expect(presenter.locator(".presenter-notes").getByText("今天我们把 HTML 作为源码")).toBeVisible();
 
     await page.keyboard.press("ArrowRight");
     await expect(presenter.getByText("2 / 2")).toBeVisible();
@@ -343,6 +355,68 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(screenCover).toBeHidden();
 
     await expect(presenter.getByLabel("Jump to slide")).toBeVisible();
+
+    await presenter.locator(".presenter-current").click();
+    await page.keyboard.press("Escape");
+    await expect(presenter).toBeHidden();
+    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible();
+
+    await expectNoFrameworkOverlay(page);
+    expect(browserErrors).toEqual([]);
+  });
+
+  test("opens a standalone deck package into presenter mode on launch", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
+    const homeDir = path.join(tempRoot, "home");
+    const userDataDir = path.join(tempRoot, "user-data");
+    const workspaceDir = path.join(tempRoot, "workspace");
+    const projectPath = path.join(tempRoot, "valid-full");
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(userDataDir, { recursive: true });
+    await mkdir(workspaceDir, { recursive: true });
+    await cp(sampleProjectPath, projectPath, { recursive: true });
+    const deckpkgPath = await exportDeckPackage(projectPath);
+    await expect(access(deckpkgPath)).resolves.toBeUndefined();
+
+    electronApp = await electron.launch({
+      executablePath: electronExecutable,
+      args: [electronMain],
+      env: {
+        ...process.env,
+        ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+        HOME: homeDir,
+        HTMLSLIDE_USER_DATA_DIR: userDataDir,
+        HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir,
+        HTMLSLIDE_E2E_OPEN_DECKPKG_PATH: deckpkgPath
+      }
+    });
+
+    const page = await electronApp.firstWindow();
+    const browserErrors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") {
+        browserErrors.push(message.text());
+      }
+    });
+    page.on("pageerror", (error) => {
+      browserErrors.push(error.message);
+    });
+
+    await page.waitForLoadState("domcontentloaded");
+    const presenter = page.getByLabel("Presenter rehearsal mode");
+    const currentSlideHeading = presenter.locator(".presenter-current .hs-panel-header h2");
+    await expect(presenter).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible();
+    await expect(presenter.getByText("Deck Package Presenter / Rehearsal Mode")).toBeVisible();
+    await expect(presenter.getByText("1 / 2")).toBeVisible();
+    await expect(currentSlideHeading).toHaveText("HTML as source");
+    await expect(presenter.getByRole("heading", { name: "Speaker Notes" })).toBeVisible();
+    await expect(presenter.getByLabel("Presenter target display")).toBeVisible();
+    await expect(presenter.locator(".presenter-notes").getByText("今天我们把 HTML 作为源码")).toBeVisible();
+
+    await page.keyboard.press("ArrowRight");
+    await expect(presenter.getByText("2 / 2")).toBeVisible();
+    await expect(currentSlideHeading).toHaveText("Project structure");
 
     await presenter.locator(".presenter-current").click();
     await page.keyboard.press("Escape");

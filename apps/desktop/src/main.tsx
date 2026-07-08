@@ -15,6 +15,7 @@ import {
   type DesktopProjectRecord
 } from "./desktop-api";
 import {
+  buildNewDeckAgentBrief,
   defaultCommandActionStatuses,
   formatProjectOpenedAt,
   getNextStageIndex,
@@ -360,6 +361,61 @@ function App(): React.ReactNode {
     [updateCommandActionStatus]
   );
 
+  const startMockGeneration = useCallback(
+    (brief: string, options: { action?: "generate" | "retry"; projectPath?: string } = {}): void => {
+      const trimmedBrief = brief.trim();
+      const prompt = trimmedBrief.length > 0 ? trimmedBrief : "Create or revise this HTMLslide deck.";
+      const action = options.action ?? "generate";
+
+      setRunning(true);
+      setActiveStageIndex(0);
+      setInspectorTab("qa");
+      setAgentRunEvents([]);
+      setAgentRunLogs([]);
+      setDiffReview(undefined);
+      setCommandActionStatuses({
+        ...defaultCommandActionStatuses(),
+        generate: {
+          kind: "running",
+          message: action === "retry" ? "Retrying mock generation" : "Mock generation running"
+        },
+        review: {
+          kind: "idle",
+          message: "Waiting for generated result"
+        }
+      });
+
+      if (!desktopApi || !options.projectPath) {
+        seedMockAgentRun(
+          !desktopApi
+            ? `Mock generation running for: ${prompt}`
+            : "Open a local deck project before running the mock agent."
+        );
+        if (desktopApi && !options.projectPath) {
+          updateCommandActionStatus("generate", { kind: "failed", message: "Local project required" });
+          setOperationStatus({ kind: "failed", message: "Open a local deck project before Generate" });
+          setRunning(false);
+        }
+        return;
+      }
+
+      setOperationStatus({ kind: "running", message: "Running mock agent" });
+      desktopApi.runMockAgent({
+        brief: prompt,
+        projectPath: options.projectPath,
+        runExport: true
+      })
+        .then(applyMockAgentResult)
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          setRunning(false);
+          setOperationStatus({ kind: "failed", message });
+          updateCommandActionStatus("generate", { kind: "failed", message });
+        });
+    },
+    [applyMockAgentResult, desktopApi, seedMockAgentRun, updateCommandActionStatus]
+  );
+
   const activeProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? projects[0] ?? sampleProjects[0],
     [projects, selectedProjectId]
@@ -463,6 +519,11 @@ function App(): React.ReactNode {
           return;
         }
         openPreview(result.project);
+        if (draft.generationMode === "mock-agent") {
+          startMockGeneration(buildNewDeckAgentBrief(draft), {
+            projectPath: result.project.project.path
+          });
+        }
       })
       .catch((error: unknown) => {
         setOperationStatus({
@@ -470,7 +531,7 @@ function App(): React.ReactNode {
           message: error instanceof Error ? error.message : String(error)
         });
       });
-  }, [desktopApi, handleOpenProject, openPreview, workspacePath]);
+  }, [desktopApi, handleOpenProject, openPreview, startMockGeneration, workspacePath]);
 
   const handleChooseWorkspace = useCallback((): void => {
     if (!desktopApi) {
@@ -824,56 +885,12 @@ function App(): React.ReactNode {
 
   const runMockGeneration = useCallback(
     (brief: string, action: "generate" | "retry" = "generate"): void => {
-      const trimmedBrief = brief.trim();
-      const prompt = trimmedBrief.length > 0 ? trimmedBrief : "Create or revise this HTMLslide deck.";
-
-      setRunning(true);
-      setActiveStageIndex(0);
-      setInspectorTab("qa");
-      setAgentRunEvents([]);
-      setAgentRunLogs([]);
-      setDiffReview(undefined);
-      setCommandActionStatuses({
-        ...defaultCommandActionStatuses(),
-        generate: {
-          kind: "running",
-          message: action === "retry" ? "Retrying mock generation" : "Mock generation running"
-        },
-        review: {
-          kind: "idle",
-          message: "Waiting for generated result"
-        }
+      startMockGeneration(brief, {
+        action,
+        projectPath: activeProject && !activeProject.path.startsWith("~") ? activeProject.path : undefined
       });
-
-      if (!desktopApi || !activeProject || activeProject.path.startsWith("~")) {
-        seedMockAgentRun(
-          !desktopApi
-            ? `Mock generation running for: ${prompt}`
-            : "Open a local deck project before running the mock agent."
-        );
-        if (desktopApi && activeProject?.path.startsWith("~")) {
-          updateCommandActionStatus("generate", { kind: "failed", message: "Local project required" });
-          setOperationStatus({ kind: "failed", message: "Open a local deck project before Generate" });
-          setRunning(false);
-        }
-        return;
-      }
-
-      setOperationStatus({ kind: "running", message: "Running mock agent" });
-      desktopApi.runMockAgent({
-        brief: prompt,
-        projectPath: activeProject.path,
-        runExport: true
-      })
-        .then(applyMockAgentResult)
-        .catch((error: unknown) => {
-          const message = error instanceof Error ? error.message : String(error);
-          setRunning(false);
-          setOperationStatus({ kind: "failed", message });
-          updateCommandActionStatus("generate", { kind: "failed", message });
-        });
     },
-    [activeProject, applyMockAgentResult, desktopApi, seedMockAgentRun, updateCommandActionStatus]
+    [activeProject, startMockGeneration]
   );
 
   if (!activeProject) {

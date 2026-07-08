@@ -109,3 +109,11 @@ The mock provider is deterministic and performs no network calls. By default it:
 9. returns a review summary.
 
 Tests can override mock check results, provider failures, and delay to exercise max repair rounds, provider errors, and cancellation.
+
+## Desktop New Deck v1
+
+The desktop New Deck wizard can create a source-only project or run the deterministic mock agent immediately after `htmlslide new` succeeds. The wizard collects title, folder, brief, language, audience, duration, slide count, tone, design direction, speaker notes, and requested outputs.
+
+For v1, the richer wizard fields are encoded into the agent brief and sent through the existing `runMockAgent` IPC path. The desktop app must pass the project path returned by `createProject` directly into the mock-agent call so generation does not depend on React state settling after the project preview opens.
+
+Visual-direction selection remains auto-selected by the orchestrator until the product ships a dedicated visual-direction choice screen.

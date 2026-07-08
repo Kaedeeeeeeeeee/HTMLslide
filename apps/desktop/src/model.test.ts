@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildNewDeckAgentBrief,
   buildAgentRunStages,
   buildRuntimeStages,
   countIssuesBySeverity,
+  createDefaultNewDeckDraft,
   defaultCommandActionStatuses,
   filterQaIssues,
   formatProjectOpenedAt,
@@ -149,6 +151,43 @@ describe("desktop model helpers", () => {
       repair: { kind: "idle", message: "No repair queued" },
       review: { kind: "idle", message: "No review yet" }
     });
+  });
+
+  it("creates a source-only new deck draft by default", () => {
+    const draft = createDefaultNewDeckDraft();
+
+    expect(draft).toMatchObject({
+      audience: "general",
+      designDirection: "auto",
+      generationMode: "source-only",
+      language: "auto",
+      slideCount: "auto",
+      title: "Untitled Deck"
+    });
+    expect(draft.outputs).toEqual(["pdf", "html", "deckpkg", "thumbnails", "speakerNotes"]);
+  });
+
+  it("builds a structured agent brief from a new deck draft", () => {
+    const draft = {
+      ...createDefaultNewDeckDraft(),
+      audience: "investors",
+      brief: "Summarize Q3 growth and expansion risks.",
+      designDirection: "consulting-clean",
+      durationMinutes: "20",
+      generationMode: "mock-agent" as const,
+      language: "en-US",
+      slideCount: "8",
+      speakerNotes: "full-script",
+      title: "Investor Update",
+      tone: "executive"
+    };
+
+    expect(buildNewDeckAgentBrief(draft)).toContain("Deck title: Investor Update");
+    expect(buildNewDeckAgentBrief(draft)).toContain("Brief: Summarize Q3 growth and expansion risks.");
+    expect(buildNewDeckAgentBrief(draft)).toContain("Audience: investors");
+    expect(buildNewDeckAgentBrief(draft)).toContain("Slide count: 8 slides");
+    expect(buildNewDeckAgentBrief(draft)).toContain("Speaker notes: full speaker script");
+    expect(buildNewDeckAgentBrief(draft)).toContain("fixed 1920x1080 canvas");
   });
 
   it("caps stage advancement at the last known stage", () => {

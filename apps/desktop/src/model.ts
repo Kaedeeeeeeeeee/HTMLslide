@@ -7,6 +7,8 @@ export type QaSeverity = QaSeverityId;
 export type QaFilter = "all" | QaSeverity;
 export type OperationStatusKind = "idle" | "running" | "success" | "failed";
 export type CommandAction = "generate" | "check" | "repair" | "export" | "review";
+export type NewDeckGenerationMode = "source-only" | "mock-agent";
+export type NewDeckOutputFormat = "pdf" | "html" | "deckpkg" | "thumbnails" | "speakerNotes";
 
 export interface OperationStatus {
   kind: OperationStatusKind;
@@ -18,6 +20,16 @@ export type CommandActionStatuses = Record<CommandAction, OperationStatus>;
 export interface NewDeckDraft {
   title: string;
   folderName: string;
+  brief: string;
+  language: string;
+  audience: string;
+  durationMinutes: string;
+  slideCount: string;
+  tone: string;
+  designDirection: string;
+  speakerNotes: string;
+  outputs: NewDeckOutputFormat[];
+  generationMode: NewDeckGenerationMode;
 }
 
 export interface OnboardingStep {
@@ -124,6 +136,87 @@ export const defaultCommandActionStatuses = (): CommandActionStatuses => ({
   repair: { kind: "idle", message: "No repair queued" },
   review: { kind: "idle", message: "No review yet" }
 });
+
+export const defaultNewDeckOutputs: NewDeckOutputFormat[] = ["pdf", "html", "deckpkg", "thumbnails", "speakerNotes"];
+
+export function createDefaultNewDeckDraft(): NewDeckDraft {
+  return {
+    audience: "general",
+    brief: "",
+    designDirection: "auto",
+    durationMinutes: "10",
+    folderName: "untitled-deck",
+    generationMode: "source-only",
+    language: "auto",
+    outputs: [...defaultNewDeckOutputs],
+    slideCount: "auto",
+    speakerNotes: "bullet-notes",
+    title: "Untitled Deck",
+    tone: "concise"
+  };
+}
+
+const newDeckLabelMaps = {
+  audience: {
+    executives: "executives",
+    general: "general audience",
+    investors: "investors",
+    engineers: "engineers",
+    students: "students"
+  },
+  designDirection: {
+    auto: "auto-select the best design direction",
+    "consulting-clean": "consulting-clean",
+    "data-report": "data-report",
+    "product-launch": "product-launch",
+    "swiss-editorial": "swiss-editorial",
+    "technical-dark": "technical-dark"
+  },
+  language: {
+    auto: "auto-detect",
+    "en-US": "English",
+    "ja-JP": "Japanese",
+    "zh-CN": "Chinese"
+  },
+  speakerNotes: {
+    "bullet-notes": "bullet speaker notes",
+    "full-script": "full speaker script",
+    none: "no speaker notes",
+    "rehearsal-cues": "rehearsal cues"
+  },
+  tone: {
+    academic: "academic",
+    concise: "concise",
+    executive: "executive",
+    "product-launch": "product launch",
+    technical: "technical"
+  }
+} as const;
+
+function labelFromMap<TMap extends Record<string, string>>(map: TMap, value: string): string {
+  return map[value as keyof TMap] ?? value;
+}
+
+export function buildNewDeckAgentBrief(draft: NewDeckDraft): string {
+  const title = draft.title.trim() || "Untitled Deck";
+  const brief = draft.brief.trim() || `Create a presentation titled "${title}".`;
+  const outputs = draft.outputs.length > 0 ? draft.outputs.join(", ") : "pdf, html, deckpkg";
+  const slideCount = draft.slideCount === "auto" ? "auto slide count" : `${draft.slideCount} slides`;
+
+  return [
+    `Deck title: ${title}`,
+    `Brief: ${brief}`,
+    `Language: ${labelFromMap(newDeckLabelMaps.language, draft.language)}`,
+    `Audience: ${labelFromMap(newDeckLabelMaps.audience, draft.audience)}`,
+    `Duration: ${draft.durationMinutes} minutes`,
+    `Slide count: ${slideCount}`,
+    `Tone: ${labelFromMap(newDeckLabelMaps.tone, draft.tone)}`,
+    `Design direction: ${labelFromMap(newDeckLabelMaps.designDirection, draft.designDirection)}`,
+    `Speaker notes: ${labelFromMap(newDeckLabelMaps.speakerNotes, draft.speakerNotes)}`,
+    `Requested outputs: ${outputs}`,
+    "Constraints: use project-local HTML fragments, deck.json, notes, theme tokens, no remote assets, fixed 1920x1080 canvas, run check and export after generation."
+  ].join("\n");
+}
 
 const agentStageLabels: Record<AgentRunStageId, string> = {
   brief: "Brief",

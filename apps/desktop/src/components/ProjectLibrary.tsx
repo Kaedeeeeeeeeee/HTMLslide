@@ -1,6 +1,7 @@
 import { Button, PanelHeader, StatusPill } from "@htmlslide/shared-ui";
 import {
   BookOpen,
+  Check,
   FolderOpen,
   GalleryVerticalEnd,
   Import,
@@ -12,7 +13,14 @@ import {
 import { useState, type FormEvent, type ReactNode } from "react";
 import type { AiEngineSettingsDraft, AiEngineSettings, ExternalAgentStatus } from "../settings-model";
 import type { DesktopCliIntegrationState } from "../desktop-api";
-import type { LibrarySection, NewDeckDraft, OperationStatus, ProjectSummary } from "../model";
+import {
+  createDefaultNewDeckDraft,
+  type LibrarySection,
+  type NewDeckDraft,
+  type NewDeckOutputFormat,
+  type OperationStatus,
+  type ProjectSummary
+} from "../model";
 import { AiEngineSettingsPanel } from "./AiEngineSettings";
 import { CliIntegrationSettingsPanel } from "./CliIntegrationSettings";
 
@@ -46,6 +54,56 @@ const navItems = [
   { icon: BookOpen, id: "ai-engines", label: "AI Engines" },
   { icon: Settings, id: "settings", label: "Settings" }
 ] as const;
+
+const languageOptions = [
+  { id: "auto", label: "Auto" },
+  { id: "zh-CN", label: "Chinese" },
+  { id: "en-US", label: "English" },
+  { id: "ja-JP", label: "Japanese" }
+] as const;
+
+const audienceOptions = [
+  { id: "general", label: "General" },
+  { id: "executives", label: "Executives" },
+  { id: "engineers", label: "Engineers" },
+  { id: "investors", label: "Investors" },
+  { id: "students", label: "Students" }
+] as const;
+
+const durationOptions = ["5", "10", "20", "30"] as const;
+const slideCountOptions = ["auto", "3", "5", "8", "10"] as const;
+
+const toneOptions = [
+  { id: "concise", label: "Concise" },
+  { id: "executive", label: "Executive" },
+  { id: "technical", label: "Technical" },
+  { id: "academic", label: "Academic" },
+  { id: "product-launch", label: "Product launch" }
+] as const;
+
+const designDirectionOptions = [
+  { id: "auto", label: "Auto" },
+  { id: "consulting-clean", label: "Consulting clean" },
+  { id: "technical-dark", label: "Technical dark" },
+  { id: "swiss-editorial", label: "Swiss editorial" },
+  { id: "product-launch", label: "Product launch" },
+  { id: "data-report", label: "Data report" }
+] as const;
+
+const speakerNotesOptions = [
+  { id: "bullet-notes", label: "Bullet notes" },
+  { id: "full-script", label: "Full script" },
+  { id: "rehearsal-cues", label: "Rehearsal cues" },
+  { id: "none", label: "None" }
+] as const;
+
+const outputOptions: Array<{ id: NewDeckOutputFormat; label: string }> = [
+  { id: "pdf", label: "PDF" },
+  { id: "html", label: "HTML" },
+  { id: "deckpkg", label: "deckpkg" },
+  { id: "thumbnails", label: "Thumbnails" },
+  { id: "speakerNotes", label: "Notes JSON" }
+];
 
 function projectTone(status: ProjectSummary["status"]): "success" | "warning" | "danger" | "info" {
   if (status === "Ready") {
@@ -183,10 +241,9 @@ function RecentProjects({
   operationStatus: OperationStatus;
 }): ReactNode {
   const [creatingDeck, setCreatingDeck] = useState(false);
-  const [title, setTitle] = useState("Untitled Deck");
-  const [folderName, setFolderName] = useState("untitled-deck");
+  const [draft, setDraft] = useState<NewDeckDraft>(() => createDefaultNewDeckDraft());
   const [folderEdited, setFolderEdited] = useState(false);
-  const validationMessage = validateNewDeckDraft({ folderName, title });
+  const validationMessage = validateNewDeckDraft(draft);
   const busy = operationStatus.kind === "running" && operationStatus.message === "Creating deck";
   const canCreate = !busy && validationMessage === undefined;
 
@@ -199,10 +256,27 @@ function RecentProjects({
   };
 
   const updateTitle = (nextTitle: string): void => {
-    setTitle(nextTitle);
-    if (!folderEdited) {
-      setFolderName(slugifyDeckFolder(nextTitle));
-    }
+    setDraft((current) => ({
+      ...current,
+      folderName: folderEdited ? current.folderName : slugifyDeckFolder(nextTitle),
+      title: nextTitle
+    }));
+  };
+
+  const updateDraft = <TKey extends keyof NewDeckDraft>(key: TKey, value: NewDeckDraft[TKey]): void => {
+    setDraft((current) => ({
+      ...current,
+      [key]: value
+    }));
+  };
+
+  const toggleOutput = (output: NewDeckOutputFormat): void => {
+    setDraft((current) => ({
+      ...current,
+      outputs: current.outputs.includes(output)
+        ? current.outputs.filter((item) => item !== output)
+        : [...current.outputs, output]
+    }));
   };
 
   const submitNewDeck = (event: FormEvent<HTMLFormElement>): void => {
@@ -212,8 +286,10 @@ function RecentProjects({
     }
 
     onNewDeck({
-      folderName: folderName.trim(),
-      title: title.trim()
+      ...draft,
+      brief: draft.brief.trim(),
+      folderName: draft.folderName.trim(),
+      title: draft.title.trim()
     });
   };
 
@@ -254,28 +330,184 @@ function RecentProjects({
               <span>{workspacePath ?? "Default workspace"}</span>
             </div>
           </div>
-          <label className="settings-field">
-            <span>Deck title</span>
-            <input
-              autoFocus
-              onChange={(event) => updateTitle(event.currentTarget.value)}
-              value={title}
+          <div className="new-deck-panel__basic">
+            <label className="settings-field">
+              <span>Deck title</span>
+              <input
+                autoFocus
+                onChange={(event) => updateTitle(event.currentTarget.value)}
+                value={draft.title}
+              />
+            </label>
+            <label className="settings-field">
+              <span>Folder</span>
+              <input
+                onChange={(event) => {
+                  setFolderEdited(true);
+                  updateDraft("folderName", event.currentTarget.value);
+                }}
+                spellCheck={false}
+                value={draft.folderName}
+              />
+            </label>
+            <label className="settings-field">
+              <span>Generation</span>
+              <select
+                onChange={(event) =>
+                  updateDraft("generationMode", event.currentTarget.value as NewDeckDraft["generationMode"])}
+                value={draft.generationMode}
+              >
+                <option value="source-only">Source only</option>
+                <option value="mock-agent">Generate demo deck</option>
+              </select>
+            </label>
+          </div>
+          <label className="settings-field new-deck-panel__brief">
+            <span>Brief</span>
+            <textarea
+              onChange={(event) => updateDraft("brief", event.currentTarget.value)}
+              placeholder="Summarize the audience, story, source material, and desired outcome."
+              value={draft.brief}
             />
           </label>
-          <label className="settings-field">
-            <span>Folder</span>
-            <input
-              onChange={(event) => {
-                setFolderEdited(true);
-                setFolderName(event.currentTarget.value);
-              }}
-              spellCheck={false}
-              value={folderName}
-            />
-          </label>
+          <div className="new-deck-panel__options">
+            <label className="settings-field">
+              <span>Language</span>
+              <select
+                onChange={(event) => updateDraft("language", event.currentTarget.value)}
+                value={draft.language}
+              >
+                {languageOptions.map((option) => (
+                  <option
+                    key={option.id}
+                    value={option.id}
+                  >
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-field">
+              <span>Audience</span>
+              <select
+                onChange={(event) => updateDraft("audience", event.currentTarget.value)}
+                value={draft.audience}
+              >
+                {audienceOptions.map((option) => (
+                  <option
+                    key={option.id}
+                    value={option.id}
+                  >
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-field">
+              <span>Duration</span>
+              <select
+                onChange={(event) => updateDraft("durationMinutes", event.currentTarget.value)}
+                value={draft.durationMinutes}
+              >
+                {durationOptions.map((option) => (
+                  <option
+                    key={option}
+                    value={option}
+                  >
+                    {option} min
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-field">
+              <span>Slides</span>
+              <select
+                onChange={(event) => updateDraft("slideCount", event.currentTarget.value)}
+                value={draft.slideCount}
+              >
+                {slideCountOptions.map((option) => (
+                  <option
+                    key={option}
+                    value={option}
+                  >
+                    {option === "auto" ? "Auto" : option}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-field">
+              <span>Tone</span>
+              <select
+                onChange={(event) => updateDraft("tone", event.currentTarget.value)}
+                value={draft.tone}
+              >
+                {toneOptions.map((option) => (
+                  <option
+                    key={option.id}
+                    value={option.id}
+                  >
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-field">
+              <span>Design</span>
+              <select
+                onChange={(event) => updateDraft("designDirection", event.currentTarget.value)}
+                value={draft.designDirection}
+              >
+                {designDirectionOptions.map((option) => (
+                  <option
+                    key={option.id}
+                    value={option.id}
+                  >
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-field">
+              <span>Speaker notes</span>
+              <select
+                onChange={(event) => updateDraft("speakerNotes", event.currentTarget.value)}
+                value={draft.speakerNotes}
+              >
+                {speakerNotesOptions.map((option) => (
+                  <option
+                    key={option.id}
+                    value={option.id}
+                  >
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <fieldset className="new-deck-panel__outputs">
+            <legend>Output</legend>
+            {outputOptions.map((option) => (
+              <label
+                className={draft.outputs.includes(option.id) ? "new-deck-output is-selected" : "new-deck-output"}
+                key={option.id}
+              >
+                <input
+                  checked={draft.outputs.includes(option.id)}
+                  onChange={() => toggleOutput(option.id)}
+                  type="checkbox"
+                />
+                <Check />
+                <span>{option.label}</span>
+              </label>
+            ))}
+          </fieldset>
           <div className="new-deck-panel__path">
             <span>Target</span>
-            <code>{workspacePath ? `${workspacePath}/${folderName || "deck-folder"}` : folderName || "deck-folder"}</code>
+            <code>
+              {workspacePath
+                ? `${workspacePath}/${draft.folderName || "deck-folder"}`
+                : draft.folderName || "deck-folder"}
+            </code>
           </div>
           <div className="new-deck-panel__actions">
             <Button
@@ -284,7 +516,7 @@ function RecentProjects({
               type="submit"
               variant="primary"
             >
-              {busy ? "Creating" : "Create Deck"}
+              {busy ? "Creating" : draft.generationMode === "mock-agent" ? "Create & Generate" : "Create Deck"}
             </Button>
             <Button
               disabled={busy}
@@ -380,6 +612,7 @@ function slugifyDeckFolder(value: string): string {
 function validateNewDeckDraft(draft: NewDeckDraft): string | undefined {
   const title = draft.title.trim();
   const folderName = draft.folderName.trim();
+  const brief = draft.brief.trim();
 
   if (title.length === 0) {
     return "Deck title is required.";
@@ -395,6 +628,14 @@ function validateNewDeckDraft(draft: NewDeckDraft): string | undefined {
 
   if (folderName === "." || folderName === ".." || folderName.includes("..")) {
     return "Folder cannot contain path traversal segments.";
+  }
+
+  if (draft.generationMode === "mock-agent" && brief.length === 0) {
+    return "Brief is required before generation.";
+  }
+
+  if (draft.outputs.length === 0) {
+    return "Choose at least one output.";
   }
 
   return undefined;

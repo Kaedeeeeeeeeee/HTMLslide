@@ -85,6 +85,70 @@ test.describe("HTMLslide desktop smoke", () => {
     await expectNoFrameworkOverlay(page);
   });
 
+  test("creates and generates a deck from the new deck wizard", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
+    const homeDir = path.join(tempRoot, "home");
+    const userDataDir = path.join(tempRoot, "user-data");
+    const workspaceDir = path.join(tempRoot, "workspace");
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(userDataDir, { recursive: true });
+    await mkdir(workspaceDir, { recursive: true });
+
+    electronApp = await electron.launch({
+      executablePath: electronExecutable,
+      args: [electronMain],
+      env: {
+        ...process.env,
+        ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+        HOME: homeDir,
+        HTMLSLIDE_USER_DATA_DIR: userDataDir,
+        HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir
+      }
+    });
+
+    const page = await electronApp.firstWindow();
+    await page.waitForLoadState("domcontentloaded");
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+    await page.locator(".library-main").getByRole("button", { name: "New Deck", exact: true }).first().click();
+
+    const newDeckPanel = page.locator(".new-deck-panel");
+    await expect(newDeckPanel).toBeVisible();
+    await newDeckPanel.getByLabel("Deck title").fill("Investor Demo");
+    await newDeckPanel.getByLabel("Brief").fill("Create an investor update about Q3 growth, retention, and expansion risks.");
+    await newDeckPanel.getByLabel("Generation").selectOption("mock-agent");
+    await newDeckPanel.getByLabel("Language").selectOption("en-US");
+    await newDeckPanel.getByLabel("Audience").selectOption("investors");
+    await newDeckPanel.getByLabel("Duration").selectOption("20");
+    await newDeckPanel.getByLabel("Slides").selectOption("8");
+    await newDeckPanel.getByLabel("Tone").selectOption("executive");
+    await newDeckPanel.getByLabel("Design").selectOption("consulting-clean");
+    await newDeckPanel.getByLabel("Speaker notes").selectOption("full-script");
+    await newDeckPanel.getByRole("button", { name: "Create & Generate", exact: true }).click();
+
+    await expect(page.getByText("Mock agent completed check and export")).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Mock HTMLslide Deck" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Reviewable outputs/ })).toBeVisible();
+    await expect(page.getByText("generate: Mock generation complete")).toBeVisible();
+    await expect(page.getByText(/check: Check passed/)).toBeVisible();
+    await expect(page.getByText(/export: [1-9][0-9]* artifacts/)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Review changes" })).toBeVisible();
+
+    const projectDir = path.join(workspaceDir, "investor-demo");
+    const manifest = JSON.parse(await readFile(path.join(projectDir, "deck.json"), "utf8")) as {
+      agent?: { lastRunId?: string };
+      slides?: unknown[];
+      title?: string;
+    };
+    expect(manifest.title).toBe("Mock HTMLslide Deck");
+    expect(manifest.agent?.lastRunId).toMatch(/^run-/);
+    expect(manifest.slides).toHaveLength(3);
+    await expect(readFile(path.join(projectDir, "notes", "001-title.md"), "utf8")).resolves.toContain(
+      "Deck title: Investor Demo"
+    );
+    await expectNoFrameworkOverlay(page);
+  });
+
   test("loads the Electron shell, reaches the library, and opens a sample deck", async () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
     const homeDir = path.join(tempRoot, "home");

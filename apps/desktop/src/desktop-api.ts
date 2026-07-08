@@ -1,6 +1,13 @@
 import type { ProjectSummary, SlideSummary } from "./model";
 import type { AiEngineSettings, ExternalAgentStatus } from "./settings-model";
-import type { AgentRunEvent, AgentRunLog, AgentRunResult, AgentRunStage, AgentRunStatus } from "@htmlslide/agent";
+import type {
+  AgentRunEvent,
+  AgentRunLog,
+  AgentRunResult,
+  AgentRunStage,
+  AgentRunStatus,
+  ApplyMockAgentProjectResult
+} from "@htmlslide/agent";
 
 export type DesktopSetupState = {
   appName: string;
@@ -94,8 +101,10 @@ export type DesktopMockAgentRunResult = {
   events: AgentRunEvent[];
   logs: AgentRunLog[];
   agent: AgentRunResult;
+  applied?: ApplyMockAgentProjectResult;
   check?: DesktopCliResult;
   export?: DesktopCliResult;
+  project?: DesktopProjectPreview;
   summary: DesktopMockAgentRunSummary;
 };
 

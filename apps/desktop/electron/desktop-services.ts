@@ -4,6 +4,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  applyMockAgentProject,
   createMockProvider,
   defaultAgentStages,
   runAgent,
@@ -11,7 +12,8 @@ import {
   type AgentRunLog,
   type AgentRunResult,
   type AgentRunStage,
-  type AgentRunStatus
+  type AgentRunStatus,
+  type ApplyMockAgentProjectResult
 } from "@htmlslide/agent";
 
 export type DesktopProjectStatus =
@@ -119,8 +121,10 @@ export type DesktopMockAgentRunResult = {
   events: AgentRunEvent[];
   logs: AgentRunLog[];
   agent: AgentRunResult;
+  applied?: ApplyMockAgentProjectResult;
   check?: CliRunResult;
   export?: CliRunResult;
+  project?: DesktopProjectPreview;
   summary: DesktopMockAgentRunSummary;
 };
 
@@ -602,10 +606,28 @@ export async function runDesktopMockAgent(
 
   logs.push(...agent.logs);
 
+  let applied: ApplyMockAgentProjectResult | undefined;
   let check: CliRunResult | undefined;
   let exportResult: CliRunResult | undefined;
+  let project: DesktopProjectPreview | undefined;
 
   if (agent.ok) {
+    applied = await applyMockAgentProject({
+      brief,
+      projectPath,
+      result: agent
+    });
+    logs.push({
+      createdAt: new Date().toISOString(),
+      level: "info",
+      message: `Applied mock source files: ${applied.filesChanged.join(", ")}`,
+      runId: agent.runId,
+      stage: "build",
+      metadata: {
+        filesChanged: applied.filesChanged
+      }
+    });
+
     check = await runDesktopAgentCliStep(["check", projectPath, "--json"], options.cliRuntime, cliRunner);
     logs.push(desktopAgentCliLog(agent.runId, "check", check));
 
@@ -613,6 +635,8 @@ export async function runDesktopMockAgent(
       exportResult = await runDesktopAgentCliStep(["export", projectPath, "--json"], options.cliRuntime, cliRunner);
       logs.push(desktopAgentCliLog(agent.runId, "export", exportResult));
     }
+
+    project = await loadProjectPreview(projectPath);
   }
 
   const summary = summarizeDesktopMockAgentRun(agent, check, exportResult);
@@ -625,8 +649,10 @@ export async function runDesktopMockAgent(
     events: agent.events,
     logs,
     agent,
+    applied,
     check,
     export: exportResult,
+    project,
     summary
   };
 }

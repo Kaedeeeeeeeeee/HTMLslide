@@ -3,7 +3,14 @@ import { access, chmod, lstat, mkdir, readFile, rename, rm, writeFile } from "no
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createMockProvider, mockEngines, runAgent, type AgentRunResult } from "@htmlslide/agent";
+import {
+  applyMockAgentProject,
+  createMockProvider,
+  mockEngines,
+  runAgent,
+  type AgentRunResult,
+  type ApplyMockAgentProjectResult
+} from "@htmlslide/agent";
 import { exportDeck, type CompilerProjectInput, type ExportOptions } from "@htmlslide/compiler";
 import { loadDeckProject, parseDeck, ProjectLoadError, type Deck, type LoadedDeckProject } from "@htmlslide/core";
 import { checkProject, type CheckReport } from "@htmlslide/linter";
@@ -40,6 +47,10 @@ export type AgentRunCliOptions = {
   engine: string;
   task: string;
   projectPath?: string;
+};
+
+export type AgentRunCliResult = AgentRunResult & {
+  applied?: ApplyMockAgentProjectResult;
 };
 
 export type CliShimTargetOptions = {
@@ -758,7 +769,7 @@ const agentError = (
 
 const deterministicAgentClock = () => new Date("2026-01-01T00:00:00.000Z");
 
-export const runAgentTask = async (options: AgentRunCliOptions): Promise<AgentRunResult> => {
+export const runAgentTask = async (options: AgentRunCliOptions): Promise<AgentRunCliResult> => {
   const engine = mockEngines.find((candidate) => candidate.id === options.engine);
   if (engine === undefined) {
     throw agentError(
@@ -778,9 +789,10 @@ export const runAgentTask = async (options: AgentRunCliOptions): Promise<AgentRu
     );
   }
 
-  return runAgent(
+  const projectPath = path.resolve(options.projectPath ?? process.cwd());
+  const result = await runAgent(
     {
-      projectRoot: path.resolve(options.projectPath ?? process.cwd()),
+      projectRoot: projectPath,
       brief: options.task,
       provider: createMockProvider()
     },
@@ -788,4 +800,19 @@ export const runAgentTask = async (options: AgentRunCliOptions): Promise<AgentRu
       clock: deterministicAgentClock
     }
   );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  const applied = await applyMockAgentProject({
+    brief: options.task,
+    projectPath,
+    result
+  });
+
+  return {
+    ...result,
+    applied
+  };
 };

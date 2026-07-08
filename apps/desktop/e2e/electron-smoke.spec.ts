@@ -91,6 +91,8 @@ test.describe("HTMLslide desktop smoke", () => {
     await page.getByRole("button", { name: "Generate", exact: true }).click();
 
     await expect(page.getByText("Mock agent completed check and export")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("heading", { name: "Mock HTMLslide Deck" })).toBeVisible();
+    await expect(page.getByText("Reviewable outputs")).toBeVisible();
     await expect(page.getByText("generate: Mock generation complete")).toBeVisible();
     await expect(page.getByText(/check: Check passed/)).toBeVisible();
     await expect(page.getByText(/export: [1-9][0-9]* artifacts/)).toBeVisible();

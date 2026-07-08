@@ -6,13 +6,14 @@
   "description": "Electron desktop shell for the HTMLslide presentation workbench.",
   "main": "dist/electron/main.js",
   "scripts": {
+    "build:deps": "pnpm --filter @htmlslide/agent --filter @htmlslide/agent-adapters --filter @htmlslide/presenter --filter @htmlslide/shared-ui build",
     "dev": "tsx scripts/dev.ts",
     "dev:web": "vite --host 127.0.0.1",
-    "build": "rm -rf dist/electron && vite build && tsc -p electron/tsconfig.json",
+    "build": "pnpm build:deps && rm -rf dist/electron && vite build && tsc -p electron/tsconfig.json",
     "e2e": "pnpm build && playwright test -c e2e/playwright.config.ts",
     "e2e:headed": "pnpm build && playwright test -c e2e/playwright.config.ts --headed",
     "package:alpha": "node ../../scripts/release/package-alpha.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p electron/tsconfig.json --noEmit",
+    "typecheck": "pnpm build:deps && tsc -p tsconfig.json --noEmit && tsc -p electron/tsconfig.json --noEmit",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {

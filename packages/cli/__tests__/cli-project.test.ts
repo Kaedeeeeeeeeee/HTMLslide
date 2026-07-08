@@ -312,6 +312,32 @@ describe("CLI project helpers", () => {
           })
         ])
       );
+      expect(payload.applied).toMatchObject({
+        projectPath: root,
+        title: "Mock HTMLslide Deck",
+        slideIds: ["001-title", "002-workflow", "003-review"],
+        filesChanged: expect.arrayContaining([
+          "deck.json",
+          "slides/003-review.html",
+          "notes/003-review.md",
+          "theme/tokens.json"
+        ])
+      });
+
+      const deck = JSON.parse(await readFile(path.join(root, "deck.json"), "utf8"));
+      expect(deck.slides.map((slide: { id: string }) => slide.id)).toEqual([
+        "001-title",
+        "002-workflow",
+        "003-review"
+      ]);
+      await expect(readFile(path.join(root, "slides", "003-review.html"), "utf8")).resolves.toContain(
+        'data-slide-id="003-review"'
+      );
+
+      const checked = await runCli(["check", root, "--json"]);
+      const checkPayload = JSON.parse(checked.stdout);
+      expect(checkPayload.status).toBe("passed");
+      expect(checkPayload.summary.errors).toBe(0);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

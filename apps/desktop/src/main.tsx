@@ -244,6 +244,24 @@ function App(): React.ReactNode {
       const checkErrors = result.summary.checkErrors ?? 0;
       const checkWarnings = result.summary.checkWarnings ?? 0;
 
+      if (result.project) {
+        const generatedPreview = result.project;
+        const next = projectPreviewToState(generatedPreview);
+        setProjectPreviews((current) => ({
+          ...current,
+          [next.project.id]: generatedPreview
+        }));
+        setProjects((current) => {
+          const existing = current.filter((project) => project.id !== next.project.id);
+          return [next.project, ...existing];
+        });
+        setSelectedProjectId(next.project.id);
+        setActiveSlides(next.slides);
+        setSelectedSlideId((current) =>
+          next.slides.some((slide) => slide.id === current) ? current : next.slides[0]?.id ?? ""
+        );
+      }
+
       setAgentRunEvents(result.events);
       setAgentRunLogs(result.logs);
       setQaIssues(reportToIssues(checkReport));

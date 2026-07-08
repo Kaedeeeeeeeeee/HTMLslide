@@ -228,8 +228,20 @@ describe("desktop services", () => {
     expect(result.ok).toBe(true);
     expect(result.providerId).toBe("htmlslide-mock");
     expect(result.agent.ok).toBe(true);
+    expect(result.applied).toMatchObject({
+      projectPath,
+      title: "Mock HTMLslide Deck",
+      slideIds: ["001-title", "002-workflow", "003-review"]
+    });
     expect(result.check?.ok).toBe(true);
     expect(result.export?.ok).toBe(true);
+    expect(result.project?.project).toMatchObject({
+      path: projectPath,
+      title: "Mock HTMLslide Deck",
+      slideCount: 3
+    });
+    expect(result.project?.slides.map((slide) => slide.id)).toEqual(["001-title", "002-workflow", "003-review"]);
+    expect(result.project?.slides[2]?.html).toContain('data-slide-id="003-review"');
     expect(result.summary).toMatchObject({
       checkErrors: 0,
       checkStatus: "passed",
@@ -258,6 +270,10 @@ describe("desktop services", () => {
       ["check", projectPath, "--json"],
       ["export", projectPath, "--json"]
     ]);
+
+    const deck = JSON.parse(await readFile(path.join(projectPath, "deck.json"), "utf8"));
+    expect(deck.agent.lastRunId).toBe("run-desktop-test");
+    expect(deck.slides).toHaveLength(3);
   });
 
   it("skips export when real project check fails", async () => {

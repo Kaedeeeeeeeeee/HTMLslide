@@ -250,6 +250,7 @@ export class MockModelProvider implements ModelProvider {
       filesChanged: [
         "deck.json",
         "theme/theme.css",
+        "theme/tokens.json",
         "slides/001-title.html",
         "slides/002-workflow.html",
         "slides/003-review.html",
@@ -259,7 +260,7 @@ export class MockModelProvider implements ModelProvider {
       ],
       slidesChanged: ["001-title", "002-workflow", "003-review"],
       notesChanged: ["001-title", "002-workflow", "003-review"],
-      themeChanged: ["theme/theme.css"]
+      themeChanged: ["theme/theme.css", "theme/tokens.json"]
     };
   }
 
@@ -311,6 +312,7 @@ export class MockModelProvider implements ModelProvider {
       filesChanged: [
         "deck.json",
         "theme/theme.css",
+        "theme/tokens.json",
         "slides/001-title.html",
         "slides/002-workflow.html",
         "slides/003-review.html",

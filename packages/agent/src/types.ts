@@ -340,6 +340,35 @@ export type AgentRunFailedResult = {
 
 export type AgentRunResult = AgentRunSucceededResult | AgentRunFailedResult;
 
+export type AppliedMockAgentProjectSlide = {
+  id: string;
+  title: string;
+  source: string;
+  notes: string;
+};
+
+export type ApplyMockAgentProjectInput = {
+  projectPath: string;
+  result: AgentRunResult;
+  brief?: string;
+};
+
+export type ApplyMockAgentProjectResult = {
+  projectPath: string;
+  title: string;
+  language: string;
+  selectedVisualDirectionId?: string;
+  filesChanged: string[];
+  slideIds: string[];
+  slides: AppliedMockAgentProjectSlide[];
+  paths: {
+    deck: "deck.json";
+    slides: string[];
+    notes: string[];
+    theme: string[];
+  };
+};
+
 export type AgentRunInput = {
   projectRoot: string;
   brief: string;

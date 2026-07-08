@@ -25,7 +25,7 @@ Use deterministic fixtures and avoid real provider credentials in automated test
 - Unit tests: path resolver, project loader, manifest parser, schema validator, slide id validator, safe area calculation, issue severity aggregation, export manifest building, skill metadata parsing.
 - Schema tests: valid minimal deck, valid full deck, missing slide source, duplicate slide id, invalid viewport, invalid safe area, unsupported schema version.
 - CLI E2E tests: `htmlslide new`, `htmlslide check --json`, `htmlslide export --pdf --deckpkg`, `htmlslide package`, `htmlslide doctor`.
-- Compiler regression tests: golden decks for minimal, text-heavy, data chart, image-heavy, notes, and multi-theme decks.
+- Compiler regression tests: golden decks for minimal, text-heavy, data chart, image-heavy, notes, and multi-theme decks, including byte-exact fallback thumbnail PNG baselines for deterministic compiler output.
 - Linter tests: `linter-text-overflow`, `linter-safe-area`, contrast, remote font, missing notes, and valid clean fixtures.
 - Agent tests: use mock model providers and fake external commands. Generic command runs must verify project-local prompt/manifest handling, source-write boundaries, checkpoint diffs, and check/export gating. CI must not require real Claude Code, Codex, or provider login.
 - MCP tests: verify server startup, tool listing, path boundary enforcement, schema-valid reports, and artifact creation.
@@ -80,6 +80,8 @@ Golden deck output should include PNG comparisons and PDF metadata checks. Start
 
 - Small thumbnails: at most 0.5 percent diff.
 - Full slide screenshots: at most 0.2 percent diff.
+
+The compiler fallback thumbnail path currently uses byte-exact PNG goldens under `packages/compiler/test/goldens/` because those PNGs are deterministic and generated without browser screenshots. Browser-rendered slide screenshots should use the percentage thresholds above.
 
 When a diff fails in CI, upload `before.png`, `after.png`, and `diff.png` as workflow artifacts.
 

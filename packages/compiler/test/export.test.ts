@@ -32,6 +32,7 @@ type DeckJson = {
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const goldenFixturePath = path.resolve(testDir, "../../test-fixtures/decks/golden-export-basic");
+const goldenOutputPath = path.resolve(testDir, "goldens/golden-export-basic");
 
 const copyGoldenFixture = async (): Promise<{ root: string; projectPath: string; project: CompilerProjectInput }> => {
   const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-export-"));
@@ -76,6 +77,18 @@ const zipBytes = async (zip: JSZip, filePath: string): Promise<Uint8Array> => {
 };
 
 const sha256 = (bytes: Uint8Array | string): string => createHash("sha256").update(bytes).digest("hex");
+
+const expectBytesToMatchGolden = async (actualPath: string, goldenPath: string): Promise<void> => {
+  const actual = await readFile(actualPath);
+  const golden = await readFile(goldenPath);
+  expect({
+    bytes: actual.byteLength,
+    hash: sha256(actual)
+  }).toEqual({
+    bytes: golden.byteLength,
+    hash: sha256(golden)
+  });
+};
 
 const artifactHashes = async (project: CompilerProjectInput) => {
   const exported = await exportDeck(project);
@@ -219,6 +232,23 @@ describe("exportDeck", () => {
         { id: "b", index: 1, pdfPage: 2, thumbnail: "thumbnails/b.png", notes: null, durationSec: 60 }
       ]
     });
+  });
+
+  it("matches golden fallback thumbnail PNGs", async () => {
+    const { root, project } = await copyGoldenFixture();
+    try {
+      const exported = await exportDeck(project);
+      expect(exported.artifacts.thumbnails).toHaveLength(2);
+
+      for (const thumbnailPath of exported.artifacts.thumbnails ?? []) {
+        await expectBytesToMatchGolden(
+          thumbnailPath,
+          path.join(goldenOutputPath, "thumbnails", path.basename(thumbnailPath))
+        );
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("is deterministic across repeated exports of the same project", async () => {

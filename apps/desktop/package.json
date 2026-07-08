@@ -6,7 +6,7 @@
   "description": "Electron desktop shell for the HTMLslide presentation workbench.",
   "main": "dist/electron/main.js",
   "scripts": {
-    "build:deps": "pnpm --filter @htmlslide/agent --filter @htmlslide/agent-adapters --filter @htmlslide/presenter --filter @htmlslide/shared-ui build",
+    "build:deps": "pnpm --filter @htmlslide/agent --filter @htmlslide/agent-adapters --filter @htmlslide/cli --filter @htmlslide/presenter --filter @htmlslide/shared-ui build",
     "dev": "tsx scripts/dev.ts",
     "dev:web": "vite --host 127.0.0.1",
     "build": "pnpm build:deps && rm -rf dist/electron && vite build && tsc -p electron/tsconfig.json",

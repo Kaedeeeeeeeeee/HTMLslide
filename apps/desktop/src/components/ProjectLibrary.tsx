@@ -9,9 +9,9 @@ import {
   Settings,
   Sparkles
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import type { AiEngineSettingsDraft, AiEngineSettings, ExternalAgentStatus } from "../settings-model";
-import type { LibrarySection, OperationStatus, ProjectSummary } from "../model";
+import type { LibrarySection, NewDeckDraft, OperationStatus, ProjectSummary } from "../model";
 import { AiEngineSettingsPanel } from "./AiEngineSettings";
 
 interface ProjectLibraryProps {
@@ -19,13 +19,14 @@ interface ProjectLibraryProps {
   aiEngineSettings: AiEngineSettings;
   aiEngineStatus: OperationStatus;
   externalAgentStatuses: ExternalAgentStatus[];
+  operationStatus: OperationStatus;
   projects: ProjectSummary[];
   workspacePath?: string;
   onLibrarySectionChange: (section: LibrarySection) => void;
   onRefreshExternalAgents: () => void;
   onSaveAiEngineSettings: (draft: AiEngineSettingsDraft) => void;
   onChooseWorkspace: () => void;
-  onNewDeck: () => void;
+  onNewDeck: (draft: NewDeckDraft) => void;
   onOpenFolder: () => void;
   onOpenProject: (projectId: string) => void;
 }
@@ -59,6 +60,7 @@ export function ProjectLibrary({
   aiEngineSettings,
   aiEngineStatus,
   externalAgentStatuses,
+  operationStatus,
   onLibrarySectionChange,
   onRefreshExternalAgents,
   onSaveAiEngineSettings,
@@ -101,6 +103,7 @@ export function ProjectLibrary({
             onNewDeck={onNewDeck}
             onOpenFolder={onOpenFolder}
             onOpenProject={onOpenProject}
+            operationStatus={operationStatus}
             projects={projects}
             workspacePath={workspacePath}
           />
@@ -133,16 +136,53 @@ function RecentProjects({
   onNewDeck,
   onOpenFolder,
   onOpenProject,
+  operationStatus,
   projects,
   workspacePath
 }: {
   projects: ProjectSummary[];
   workspacePath?: string;
   onChooseWorkspace: () => void;
-  onNewDeck: () => void;
+  onNewDeck: (draft: NewDeckDraft) => void;
   onOpenFolder: () => void;
   onOpenProject: (projectId: string) => void;
+  operationStatus: OperationStatus;
 }): ReactNode {
+  const [creatingDeck, setCreatingDeck] = useState(false);
+  const [title, setTitle] = useState("Untitled Deck");
+  const [folderName, setFolderName] = useState("untitled-deck");
+  const [folderEdited, setFolderEdited] = useState(false);
+  const validationMessage = validateNewDeckDraft({ folderName, title });
+  const busy = operationStatus.kind === "running" && operationStatus.message === "Creating deck";
+  const canCreate = !busy && validationMessage === undefined;
+
+  const openNewDeckPanel = (): void => {
+    setCreatingDeck(true);
+  };
+
+  const closeNewDeckPanel = (): void => {
+    setCreatingDeck(false);
+  };
+
+  const updateTitle = (nextTitle: string): void => {
+    setTitle(nextTitle);
+    if (!folderEdited) {
+      setFolderName(slugifyDeckFolder(nextTitle));
+    }
+  };
+
+  const submitNewDeck = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault();
+    if (!canCreate) {
+      return;
+    }
+
+    onNewDeck({
+      folderName: folderName.trim(),
+      title: title.trim()
+    });
+  };
+
   return (
     <>
       <PanelHeader
@@ -150,7 +190,7 @@ function RecentProjects({
           <>
             <Button
               icon={<Plus />}
-              onClick={onNewDeck}
+              onClick={openNewDeckPanel}
               variant="primary"
             >
               New Deck
@@ -168,6 +208,64 @@ function RecentProjects({
         title="Projects"
       />
 
+      {creatingDeck ? (
+        <form
+          className="new-deck-panel"
+          onSubmit={submitNewDeck}
+        >
+          <div className="new-deck-panel__title">
+            <Plus />
+            <div>
+              <strong>New Deck</strong>
+              <span>{workspacePath ?? "Default workspace"}</span>
+            </div>
+          </div>
+          <label className="settings-field">
+            <span>Deck title</span>
+            <input
+              autoFocus
+              onChange={(event) => updateTitle(event.currentTarget.value)}
+              value={title}
+            />
+          </label>
+          <label className="settings-field">
+            <span>Folder</span>
+            <input
+              onChange={(event) => {
+                setFolderEdited(true);
+                setFolderName(event.currentTarget.value);
+              }}
+              spellCheck={false}
+              value={folderName}
+            />
+          </label>
+          <div className="new-deck-panel__path">
+            <span>Target</span>
+            <code>{workspacePath ? `${workspacePath}/${folderName || "deck-folder"}` : folderName || "deck-folder"}</code>
+          </div>
+          <div className="new-deck-panel__actions">
+            <Button
+              disabled={!canCreate}
+              icon={<Plus />}
+              type="submit"
+              variant="primary"
+            >
+              {busy ? "Creating" : "Create Deck"}
+            </Button>
+            <Button
+              disabled={busy}
+              onClick={closeNewDeckPanel}
+              type="button"
+              variant="secondary"
+            >
+              Cancel
+            </Button>
+            {validationMessage ? <span>{validationMessage}</span> : null}
+            {!validationMessage && operationStatus.kind === "failed" ? <span>{operationStatus.message}</span> : null}
+          </div>
+        </form>
+      ) : null}
+
       {projects.length === 0 ? (
         <section className="library-empty">
           <FolderOpen />
@@ -176,7 +274,7 @@ function RecentProjects({
           <div>
             <Button
               icon={<Plus />}
-              onClick={onNewDeck}
+              onClick={openNewDeckPanel}
               variant="primary"
             >
               New Deck
@@ -234,4 +332,36 @@ function RecentProjects({
       )}
     </>
   );
+}
+
+function slugifyDeckFolder(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64) || "untitled-deck";
+}
+
+function validateNewDeckDraft(draft: NewDeckDraft): string | undefined {
+  const title = draft.title.trim();
+  const folderName = draft.folderName.trim();
+
+  if (title.length === 0) {
+    return "Deck title is required.";
+  }
+
+  if (title.length > 120) {
+    return "Deck title must be 120 characters or fewer.";
+  }
+
+  if (!/^[a-z0-9][a-z0-9._-]{0,63}$/u.test(folderName)) {
+    return "Folder must use lowercase letters, numbers, dashes, underscores, or dots.";
+  }
+
+  if (folderName === "." || folderName === ".." || folderName.includes("..")) {
+    return "Folder cannot contain path traversal segments.";
+  }
+
+  return undefined;
 }

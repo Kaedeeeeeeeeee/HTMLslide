@@ -69,6 +69,25 @@ describe("CLI project helpers", () => {
     }
   });
 
+  it("creates a deck project with an explicit title from the CLI", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
+    try {
+      const projectPath = path.join(root, "quarterly-launch");
+      const { stdout } = await runCli(["new", projectPath, "--title", "Quarterly Launch Review", "--json"]);
+      const result = JSON.parse(stdout) as { status: string; projectPath: string; title: string };
+      const deckJson = JSON.parse(await readFile(path.join(projectPath, "deck.json"), "utf8")) as { title?: string };
+
+      expect(result).toMatchObject({
+        projectPath,
+        status: "passed",
+        title: "Quarterly Launch Review"
+      });
+      expect(deckJson.title).toBe("Quarterly Launch Review");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("discovers the deck project from nested project paths", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
     try {

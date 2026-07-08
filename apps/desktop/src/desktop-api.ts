@@ -1,4 +1,4 @@
-import type { ProjectSummary, SlideSummary } from "./model";
+import type { NewDeckDraft, ProjectSummary, SlideSummary } from "./model";
 import type { AiEngineSettings, ExternalAgentStatus } from "./settings-model";
 import type {
   AgentRunEvent,
@@ -134,7 +134,7 @@ export type HtmlslideDesktopApi = {
   chooseWorkspace(): Promise<string | undefined>;
   openProjectDialog(): Promise<DesktopProjectPreview | undefined>;
   loadProject(projectPath: string): Promise<DesktopProjectPreview>;
-  createProject(request: { name: string; workspacePath?: string }): Promise<DesktopCliResult>;
+  createProject(request: NewDeckDraft & { workspacePath?: string }): Promise<DesktopCliResult>;
   checkProject(projectPath: string): Promise<DesktopCliResult>;
   exportProject(projectPath: string): Promise<DesktopCliResult>;
   runMockAgent(request: DesktopMockAgentRunRequest): Promise<DesktopMockAgentRunResult>;

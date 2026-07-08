@@ -15,6 +15,11 @@ export interface OperationStatus {
 
 export type CommandActionStatuses = Record<CommandAction, OperationStatus>;
 
+export interface NewDeckDraft {
+  title: string;
+  folderName: string;
+}
+
 export interface OnboardingStep {
   id: string;
   title: string;

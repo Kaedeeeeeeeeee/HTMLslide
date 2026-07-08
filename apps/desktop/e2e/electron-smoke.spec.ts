@@ -1,7 +1,7 @@
 import { _electron as electron, expect, test } from "@playwright/test";
 import type { ElectronApplication, Page } from "@playwright/test";
 import { createRequire } from "node:module";
-import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,12 +38,61 @@ test.describe("HTMLslide desktop smoke", () => {
     }
   });
 
+  test("creates a new deck from the project library", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
+    const homeDir = path.join(tempRoot, "home");
+    const userDataDir = path.join(tempRoot, "user-data");
+    const workspaceDir = path.join(tempRoot, "workspace");
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(userDataDir, { recursive: true });
+    await mkdir(workspaceDir, { recursive: true });
+
+    electronApp = await electron.launch({
+      executablePath: electronExecutable,
+      args: [electronMain],
+      env: {
+        ...process.env,
+        ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+        HOME: homeDir,
+        HTMLSLIDE_USER_DATA_DIR: userDataDir,
+        HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir
+      }
+    });
+
+    const page = await electronApp.firstWindow();
+    await page.waitForLoadState("domcontentloaded");
+    await expect(page.getByRole("heading", { name: "Welcome to HTMLslide" })).toBeVisible();
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+    await page.locator(".library-main").getByRole("button", { name: "New Deck", exact: true }).first().click();
+
+    const newDeckPanel = page.locator(".new-deck-panel");
+    await expect(newDeckPanel).toBeVisible();
+    await newDeckPanel.getByLabel("Deck title").fill("Investor Update");
+    await expect(newDeckPanel.getByLabel("Folder")).toHaveValue("investor-update");
+    await newDeckPanel.getByRole("button", { name: "Create Deck", exact: true }).click();
+
+    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Investor Update" })).toBeVisible({
+      timeout: 30_000
+    });
+    await expect(page.getByRole("heading", { name: "Slides" })).toBeVisible();
+    await expect(page.getByLabel(/slide preview/).first()).toBeVisible();
+
+    const manifest = JSON.parse(await readFile(path.join(workspaceDir, "investor-update", "deck.json"), "utf8")) as {
+      title?: string;
+    };
+    expect(manifest.title).toBe("Investor Update");
+    await expectNoFrameworkOverlay(page);
+  });
+
   test("loads the Electron shell, reaches the library, and opens a sample deck", async () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
     const homeDir = path.join(tempRoot, "home");
+    const userDataDir = path.join(tempRoot, "user-data");
     const workspaceDir = path.join(tempRoot, "workspace");
     const projectPath = path.join(tempRoot, "valid-full");
     await mkdir(homeDir, { recursive: true });
+    await mkdir(userDataDir, { recursive: true });
     await mkdir(workspaceDir, { recursive: true });
     await cp(sampleProjectPath, projectPath, { recursive: true });
 
@@ -54,6 +103,7 @@ test.describe("HTMLslide desktop smoke", () => {
         ...process.env,
         ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
         HOME: homeDir,
+        HTMLSLIDE_USER_DATA_DIR: userDataDir,
         HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir,
         HTMLSLIDE_E2E_OPEN_PROJECT_PATH: projectPath
       }
@@ -75,11 +125,12 @@ test.describe("HTMLslide desktop smoke", () => {
     await expectNoFrameworkOverlay(page);
 
     await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
-    await expect(page.locator(".library-main").getByRole("button", { name: "Open Folder", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+    const openFolderButton = page.locator(".library-main").getByRole("button", { name: "Open Folder", exact: true }).first();
+    await expect(openFolderButton).toBeVisible();
     await expectNoFrameworkOverlay(page);
 
-    await page.locator(".library-main").getByRole("button", { name: "Open Folder", exact: true }).click();
+    await openFolderButton.click();
 
     await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible({
       timeout: 30_000

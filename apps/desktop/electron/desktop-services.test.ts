@@ -7,6 +7,7 @@ import {
   findCliRuntime,
   loadProjectPreview,
   readDesktopLibrary,
+  resolveCreateProjectRequest,
   revertDesktopCheckpoint,
   runDesktopMockAgent,
   summarizeDeckProject,
@@ -76,6 +77,37 @@ function projectRecord(projectPath: string, title: string): DesktopProjectRecord
 }
 
 describe("desktop services", () => {
+  it("resolves new deck requests inside the selected workspace", async () => {
+    const workspacePath = await tempDir();
+
+    expect(
+      resolveCreateProjectRequest({
+        folderName: "quarterly-launch-review",
+        title: "  Quarterly Launch Review  ",
+        workspacePath
+      })
+    ).toEqual({
+      folderName: "quarterly-launch-review",
+      projectPath: path.join(workspacePath, "quarterly-launch-review"),
+      title: "Quarterly Launch Review",
+      workspacePath
+    });
+  });
+
+  it("rejects unsafe new deck folder names", async () => {
+    const workspacePath = await tempDir();
+
+    for (const folderName of ["../escape", "Escape", ".hidden", "deck/child", "deck child", "deck..child"]) {
+      expect(() =>
+        resolveCreateProjectRequest({
+          folderName,
+          title: "Deck",
+          workspacePath
+        })
+      ).toThrow();
+    }
+  });
+
   it("creates and updates the desktop library deterministically", async () => {
     const root = await tempDir();
     const libraryPath = path.join(root, "library.json");

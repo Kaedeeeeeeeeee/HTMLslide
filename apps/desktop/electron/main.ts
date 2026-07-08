@@ -11,6 +11,7 @@ import {
   loadProjectPreview,
   readAiEngineSettings,
   readDesktopLibrary,
+  resolveCreateProjectRequest,
   revertDesktopCheckpoint,
   runDesktopMockAgent,
   runHtmlslideCli,
@@ -19,12 +20,20 @@ import {
   writeAiEngineSettings,
   writeDesktopLibrary,
   type DesktopAiEngineSettings,
+  type DesktopCreateProjectRequest,
   type DesktopProjectRecord
 } from "./desktop-services.js";
 
 const currentDir = fileURLToPath(new URL(".", import.meta.url));
 const devServerUrl = process.env.HTMLSLIDE_DESKTOP_DEV_SERVER_URL;
 const cliRuntime = findCliRuntime(currentDir, process.resourcesPath);
+const configuredUserDataPath = process.env.HTMLSLIDE_USER_DATA_DIR
+  ? resolve(process.env.HTMLSLIDE_USER_DATA_DIR)
+  : undefined;
+
+if (configuredUserDataPath) {
+  app.setPath("userData", configuredUserDataPath);
+}
 
 const libraryPath = (): string => join(app.getPath("userData"), "library.json");
 const aiEngineSettingsPath = (): string => join(app.getPath("userData"), "ai-engine-settings.json");
@@ -124,19 +133,18 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle("htmlslide:load-project", async (_event, projectPath: string) => loadProjectPreview(projectPath));
 
-  ipcMain.handle("htmlslide:create-project", async (_event, request: { name: string; workspacePath?: string }) => {
+  ipcMain.handle("htmlslide:create-project", async (_event, request: DesktopCreateProjectRequest) => {
     const library = await readDesktopLibrary(libraryPath(), configuredWorkspacePath());
-    const workspacePath = resolve(request.workspacePath ?? library.defaultWorkspace);
-    await mkdir(workspacePath, { recursive: true });
-    const projectPath = join(workspacePath, request.name);
-    const result = await invokeCli(["new", projectPath, "--json"]);
+    const resolved = resolveCreateProjectRequest(request, library.defaultWorkspace);
+    await mkdir(resolved.workspacePath, { recursive: true });
+    const result = await invokeCli(["new", resolved.projectPath, "--title", resolved.title, "--json"]);
 
     if (!result.ok) {
       return result;
     }
 
-    const project = await summarizeDeckProject(projectPath);
-    await upsertRecentProject(libraryPath(), project, workspacePath);
+    const project = await summarizeDeckProject(resolved.projectPath);
+    await upsertRecentProject(libraryPath(), project, resolved.workspacePath);
     return {
       ...result,
       project: await loadProjectPreview(project.path)

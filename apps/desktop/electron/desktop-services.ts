@@ -65,6 +65,19 @@ export type DesktopProjectPreview = {
   slides: DesktopSlidePreview[];
 };
 
+export type DesktopCreateProjectRequest = {
+  title: string;
+  folderName: string;
+  workspacePath?: string;
+};
+
+export type DesktopResolvedCreateProjectRequest = {
+  title: string;
+  folderName: string;
+  workspacePath: string;
+  projectPath: string;
+};
+
 export type CliRunResult = {
   ok: boolean;
   exitCode: number;
@@ -273,6 +286,51 @@ const DEFAULT_ACCENT = "#315fcb";
 const DEFAULT_ACCENTS = [DEFAULT_ACCENT, "#267a4f", "#9a6410", "#286a8d", "#7b4ab8", "#bc3a3a"];
 
 export const defaultWorkspacePath = (): string => path.join(os.homedir(), "Documents", "HTMLslide");
+
+export function resolveCreateProjectRequest(
+  request: DesktopCreateProjectRequest,
+  defaultWorkspace = defaultWorkspacePath()
+): DesktopResolvedCreateProjectRequest {
+  if (typeof request.title !== "string" || typeof request.folderName !== "string") {
+    throw new Error("New deck title and folder name are required.");
+  }
+
+  if (request.workspacePath !== undefined && typeof request.workspacePath !== "string") {
+    throw new Error("Workspace path must be a string.");
+  }
+
+  const title = request.title.trim().replace(/\s+/g, " ");
+  if (title.length === 0) {
+    throw new Error("Deck title is required.");
+  }
+
+  if (title.length > 120) {
+    throw new Error("Deck title must be 120 characters or fewer.");
+  }
+
+  const folderName = request.folderName.trim();
+  if (!/^[a-z0-9][a-z0-9._-]{0,63}$/u.test(folderName)) {
+    throw new Error("Folder name must start with a lowercase letter or number and use only lowercase letters, numbers, dashes, underscores, or dots.");
+  }
+
+  if (folderName === "." || folderName === ".." || folderName.includes("..")) {
+    throw new Error("Folder name cannot contain path traversal segments.");
+  }
+
+  const workspacePath = path.resolve(request.workspacePath ?? defaultWorkspace);
+  const projectPath = path.resolve(workspacePath, folderName);
+  const relativePath = path.relative(workspacePath, projectPath);
+  if (relativePath === "" || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    throw new Error("New deck folder must stay inside the selected workspace.");
+  }
+
+  return {
+    folderName,
+    projectPath,
+    title,
+    workspacePath
+  };
+}
 
 export async function readDesktopLibrary(
   libraryPath: string,

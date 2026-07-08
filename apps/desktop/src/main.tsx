@@ -24,6 +24,7 @@ import {
   type CommandActionStatuses,
   type InspectorTab,
   type LibrarySection,
+  type NewDeckDraft,
   type OperationStatus,
   type ProjectSummary,
   type QaFilter,
@@ -430,19 +431,14 @@ function App(): React.ReactNode {
       });
   }, [desktopApi, openPreview]);
 
-  const handleNewDeck = useCallback((): void => {
+  const handleNewDeck = useCallback((draft: NewDeckDraft): void => {
     if (!desktopApi) {
       handleOpenProject(sampleProjects[0]?.id ?? "demo-alpha");
       return;
     }
 
-    const name = window.prompt("Deck folder name", "demo-deck");
-    if (!name) {
-      return;
-    }
-
     setOperationStatus({ kind: "running", message: "Creating deck" });
-    desktopApi.createProject({ name, workspacePath })
+    desktopApi.createProject({ ...draft, workspacePath })
       .then((result) => {
         if (!result.ok || !result.project) {
           setOperationStatus({
@@ -813,6 +809,7 @@ function App(): React.ReactNode {
         onOpenProject={handleOpenProject}
         onRefreshExternalAgents={handleRefreshExternalAgents}
         onSaveAiEngineSettings={handleSaveAiEngineSettings}
+        operationStatus={operationStatus}
         projects={projects}
         workspacePath={workspacePath}
       />

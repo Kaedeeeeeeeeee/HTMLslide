@@ -22,6 +22,10 @@ type JsonOption = {
   json?: boolean;
 };
 
+type NewCommandOptions = JsonOption & {
+  title?: string;
+};
+
 type ExportCommandOptions = JsonOption & {
   pdf?: boolean;
   html?: boolean;
@@ -110,11 +114,13 @@ program
   .command("new")
   .argument("<name>", "deck project folder name")
   .option("--json", "print machine-readable JSON")
+  .option("--title <title>", "deck title to write into deck.json")
   .description("Create a deck project from the default template.")
-  .action(async (name: string, options: JsonOption) => {
+  .action(async (name: string, options: NewCommandOptions) => {
     const json = Boolean(options.json ?? program.opts<JsonOption>().json);
     try {
-      const project = await createProject(name, path.basename(path.resolve(name)));
+      const title = options.title?.trim() || path.basename(path.resolve(name));
+      const project = await createProject(name, title);
       writeResult({ status: "passed", projectPath: project.projectPath, title: project.manifest.title }, json);
     } catch (error) {
       fail(error, json);

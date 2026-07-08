@@ -139,6 +139,20 @@ export type DesktopByokAgentRunRequest = DesktopMockAgentRunRequest;
 export type DesktopByokAgentRunSummary = DesktopMockAgentRunSummary & {
   provider: "openai" | "anthropic" | "compatible";
   model: string;
+  baseUrl?: string;
+};
+
+export type DesktopByokAgentAppliedResult = {
+  projectPath: string;
+  source: "provider-source-writes";
+  filesChanged: string[];
+  writeCount: number;
+  stages: Array<{
+    stage: Extract<AgentRunStage, "build" | "repair">;
+    attempt?: number;
+    filesChanged: string[];
+    writeCount: number;
+  }>;
 };
 
 export type DesktopByokAgentRunResult = {
@@ -148,12 +162,13 @@ export type DesktopByokAgentRunResult = {
   settings: {
     provider: "openai" | "anthropic" | "compatible";
     model: string;
+    baseUrl?: string;
   };
   stages: DesktopMockAgentStageSummary[];
   events: AgentRunEvent[];
   logs: AgentRunLog[];
   agent?: AgentRunResult;
-  applied?: ApplyMockAgentProjectResult;
+  applied?: DesktopByokAgentAppliedResult;
   checkpointDiff?: FileCopyCheckpointDiff;
   check?: DesktopCliResult;
   export?: DesktopCliResult;

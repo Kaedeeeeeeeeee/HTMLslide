@@ -16,7 +16,7 @@ export const onboardingSteps: OnboardingStep[] = [
   {
     id: "engine",
     title: "Choose AI engine",
-    description: "Connect BYOK providers later or start with mock generation now.",
+    description: "Connect a BYOK provider or start with local mock generation.",
     optionalAction: "Continue without AI"
   },
   {

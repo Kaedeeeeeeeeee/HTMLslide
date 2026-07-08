@@ -11,6 +11,7 @@ export type ExternalAgentId = "claude-code" | "codex-cli" | "generic";
 export interface ApiKeyMetadata {
   provider: ApiKeyProvider;
   model: string;
+  baseUrl?: string;
   hasKey: boolean;
   updatedAt?: string;
 }
@@ -43,6 +44,7 @@ export interface AiEngineSettingsDraft {
   mode: AiEngineMode;
   provider: ApiKeyProvider;
   model: string;
+  baseUrl?: string;
   apiKeyInput?: string;
   clearKey?: boolean;
   externalAgentId: ExternalAgentId;
@@ -165,10 +167,12 @@ export function buildAiEngineSettingsUpdate(
         ? false
         : current.apiKey.hasKey;
   const model = normalizeModel(draft.model, provider);
+  const baseUrl = normalizeBaseUrl(draft.baseUrl, provider);
   const externalAgentId = normalizeExternalAgentId(draft.externalAgentId);
 
   return {
     apiKey: {
+      baseUrl,
       hasKey,
       model,
       provider,
@@ -197,6 +201,7 @@ export function normalizeAiEngineSettings(value: unknown): AiEngineSettings {
 
   return {
     apiKey: {
+      baseUrl: normalizeBaseUrl(apiKey.baseUrl, provider),
       hasKey: apiKey.hasKey === true,
       model: normalizeModel(apiKey.model, provider),
       provider,
@@ -271,6 +276,31 @@ function normalizeExternalAgentId(value: unknown): ExternalAgentId {
 function normalizeModel(value: unknown, provider: ApiKeyProvider): string {
   const fallback = apiKeyProviders.find((item) => item.id === provider)?.defaultModel ?? "gpt-5-mini";
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
+}
+
+function normalizeBaseUrl(value: unknown, provider: ApiKeyProvider): string | undefined {
+  if (provider !== "compatible" || typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+      return undefined;
+    }
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/+$/u, "");
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeCustomCommand(value: unknown): string {

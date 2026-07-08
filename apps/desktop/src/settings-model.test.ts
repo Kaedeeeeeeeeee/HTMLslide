@@ -23,6 +23,7 @@ describe("AI engine settings model", () => {
     );
 
     expect(settings.apiKey).toEqual({
+      baseUrl: undefined,
       hasKey: true,
       model: "gpt-5.1",
       provider: "openai",
@@ -30,6 +31,45 @@ describe("AI engine settings model", () => {
     });
     expect(JSON.stringify(settings)).not.toContain("sk-test-secret");
     expect(formatRedactedKeyStatus(settings)).toBe("OpenAI key saved");
+  });
+
+  it("preserves compatible provider base URLs as metadata only", () => {
+    const compatible = buildAiEngineSettingsUpdate(
+      createDefaultAiEngineSettings(),
+      {
+        apiKeyInput: "provider-token-secret",
+        baseUrl: " https://user:pass@models.example.test/v1/?api_key=url-secret#fragment ",
+        externalAgentId: "codex-cli",
+        mode: "htmlslide-agent",
+        model: "compatible-model",
+        provider: "compatible"
+      },
+      "2026-07-09T00:02:00.000Z"
+    );
+
+    expect(compatible.apiKey).toMatchObject({
+      baseUrl: "https://models.example.test/v1",
+      hasKey: true,
+      model: "compatible-model",
+      provider: "compatible"
+    });
+    expect(JSON.stringify(compatible)).not.toContain("provider-token-secret");
+    expect(JSON.stringify(compatible)).not.toContain("url-secret");
+    expect(JSON.stringify(compatible)).not.toContain("user:pass");
+
+    const switched = buildAiEngineSettingsUpdate(
+      compatible,
+      {
+        baseUrl: "https://models.example.test/v1",
+        externalAgentId: "codex-cli",
+        mode: "htmlslide-agent",
+        model: "gpt-5-mini",
+        provider: "openai"
+      },
+      "2026-07-09T00:03:00.000Z"
+    );
+
+    expect(switched.apiKey.baseUrl).toBeUndefined();
   });
 
   it("clears key metadata when provider changes without a new key", () => {
@@ -74,6 +114,7 @@ describe("AI engine settings model", () => {
 
     expect(normalized).toMatchObject({
       apiKey: {
+        baseUrl: undefined,
         hasKey: true,
         model: "gpt-5-mini",
         provider: "openai"

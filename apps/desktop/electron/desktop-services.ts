@@ -12,14 +12,18 @@ import {
   type GenericAgentAdapterConfig
 } from "@htmlslide/agent-adapters";
 import {
+  applyAgentSourceWrites,
   applyMockAgentProject,
   createFileCopyCheckpoint,
+  createOpenAICompatibleProvider,
   createMockProvider,
   defaultAgentStages,
   diffFileCopyCheckpoint,
+  normalizeAgentSourceWrites,
   recordCheckpointChanges,
   revertFileCopyCheckpoint,
   runAgent,
+  type AgentSourceWrite,
   type AgentRunEvent,
   type AgentRunLog,
   type AgentRunResult,
@@ -28,6 +32,7 @@ import {
   type ApplyMockAgentProjectResult,
   type FileCopyCheckpointDiff,
   type FileCopyCheckpointRevertResult,
+  type FetchLike,
   type ModelProvider
 } from "@htmlslide/agent";
 import {
@@ -206,6 +211,20 @@ export type DesktopByokAgentRunRequest = DesktopMockAgentRunRequest;
 export type DesktopByokAgentRunSummary = DesktopMockAgentRunSummary & {
   provider: DesktopApiKeyProvider;
   model: string;
+  baseUrl?: string;
+};
+
+export type DesktopByokAgentAppliedResult = {
+  projectPath: string;
+  source: "provider-source-writes";
+  filesChanged: string[];
+  writeCount: number;
+  stages: Array<{
+    stage: Extract<AgentRunStage, "build" | "repair">;
+    attempt?: number;
+    filesChanged: string[];
+    writeCount: number;
+  }>;
 };
 
 export type DesktopByokAgentRunResult = {
@@ -215,12 +234,13 @@ export type DesktopByokAgentRunResult = {
   settings: {
     provider: DesktopApiKeyProvider;
     model: string;
+    baseUrl?: string;
   };
   stages: DesktopMockAgentStageSummary[];
   events: AgentRunEvent[];
   logs: AgentRunLog[];
   agent?: AgentRunResult;
-  applied?: ApplyMockAgentProjectResult;
+  applied?: DesktopByokAgentAppliedResult;
   checkpointDiff?: FileCopyCheckpointDiff;
   check?: CliRunResult;
   export?: CliRunResult;
@@ -312,12 +332,14 @@ export type DesktopMockAgentRunnerOptions = {
 
 export type DesktopByokAgentProviderFactory = (input: {
   apiKey: string;
+  baseUrl?: string;
   model: string;
   provider: DesktopApiKeyProvider;
 }) => ModelProvider;
 
 export type DesktopByokAgentRunnerOptions = DesktopMockAgentRunnerOptions & {
   credentialStore?: DesktopCredentialStore;
+  providerFetch?: FetchLike;
   providerFactory?: DesktopByokAgentProviderFactory;
   settings?: DesktopAiEngineSettings;
   settingsPath?: string;
@@ -343,6 +365,7 @@ export type DesktopAiEngineSettings = {
   apiKey: {
     provider: DesktopApiKeyProvider;
     model: string;
+    baseUrl?: string;
     hasKey: boolean;
     updatedAt?: string;
   };
@@ -1239,10 +1262,12 @@ export async function runDesktopByokAgent(
     : DEFAULT_AI_ENGINE_SETTINGS));
   const provider = settings.apiKey.provider;
   const model = settings.apiKey.model;
-  const settingsSummary = { provider, model };
+  const baseUrl = settings.apiKey.baseUrl;
+  const settingsSummary = { provider, model, baseUrl };
+  const settingsMetadata = byokSettingsMetadata(settingsSummary);
 
   addEvent("brief", "running", "HTMLslide Agent request accepted.", "run-created", {
-    metadata: settingsSummary,
+    metadata: settingsMetadata,
     nextAction: "Validate provider credential"
   });
 
@@ -1290,13 +1315,22 @@ export async function runDesktopByokAgent(
     });
   }
 
-  const modelProvider = (options.providerFactory ?? createDesktopByokModelProvider)({
-    apiKey,
-    model,
-    provider
-  });
-
+  let modelProvider: ModelProvider;
   try {
+    modelProvider = options.providerFactory
+      ? options.providerFactory({
+          apiKey,
+          baseUrl,
+          model,
+          provider
+        })
+      : createDesktopByokModelProvider({
+          apiKey,
+          baseUrl,
+          fetch: options.providerFetch,
+          model,
+          provider
+        });
     const credentialStatus = await modelProvider.validateCredentials();
     if (!credentialStatus.ok) {
       return byokAgentFailureResult({
@@ -1333,6 +1367,7 @@ export async function runDesktopByokAgent(
     runId,
     metadata: {
       credentialAccount,
+      ...(baseUrl ? { baseUrl } : {}),
       mode: "desktop-byok-agent",
       model,
       provider
@@ -1346,6 +1381,7 @@ export async function runDesktopByokAgent(
     message: `${credentialStore.label} credential validated for ${provider}.`,
     metadata: {
       credentialAccount,
+      ...(baseUrl ? { baseUrl } : {}),
       model,
       provider
     },
@@ -1354,15 +1390,14 @@ export async function runDesktopByokAgent(
   });
   logs.push(...agent.logs);
 
-  let applied: ApplyMockAgentProjectResult | undefined;
+  let applied: DesktopByokAgentAppliedResult | undefined;
   let checkpointDiff: FileCopyCheckpointDiff | undefined;
   let check: CliRunResult | undefined;
   let exportResult: CliRunResult | undefined;
   let project: DesktopProjectPreview | undefined;
 
   if (agent.ok) {
-    applied = await applyMockAgentProject({
-      brief,
+    applied = await applyByokAgentSourceWrites({
       projectPath,
       result: agent
     });
@@ -1382,11 +1417,13 @@ export async function runDesktopByokAgent(
     logs.push({
       createdAt: new Date().toISOString(),
       level: "info",
-      message: `Applied HTMLslide Agent source files: ${applied.filesChanged.join(", ")}`,
+      message: `Applied HTMLslide Agent source writes: ${applied.filesChanged.join(", ")}`,
       runId: agent.runId,
       stage: "build",
       metadata: {
         filesChanged: applied.filesChanged,
+        source: applied.source,
+        writeCount: applied.writeCount,
         model,
         provider
       }
@@ -1705,6 +1742,7 @@ function sanitizeAiEngineSettings(value: unknown): DesktopAiEngineSettings {
 
   return {
     apiKey: {
+      baseUrl: normalizeProviderBaseUrl(apiKey.baseUrl, provider),
       hasKey: apiKey.hasKey === true,
       model: normalizeModel(apiKey.model, provider),
       provider,
@@ -1747,6 +1785,31 @@ function normalizeModel(value: unknown, provider: DesktopApiKeyProvider): string
   }
 
   return "gpt-5-mini";
+}
+
+function normalizeProviderBaseUrl(value: unknown, provider: DesktopApiKeyProvider): string | undefined {
+  if (provider !== "compatible" || typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+      return undefined;
+    }
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/+$/u, "");
+  } catch {
+    return undefined;
+  }
 }
 
 function externalAgentStatus({
@@ -2467,16 +2530,17 @@ function byokAgentFailureResult({
   projectPath: string;
   runId: string;
   settings: {
+    baseUrl?: string;
     provider: DesktopApiKeyProvider;
     model: string;
   };
   stage: AgentRunStage;
 }): DesktopByokAgentRunResult {
   addEvent(stage, "failed", error, "stage-failed", {
-    metadata: settings,
+    metadata: byokSettingsMetadata(settings),
     nextAction: "Update AI Engines settings and retry."
   });
-  addLog("error", error, stage, settings);
+  addLog("error", error, stage, byokSettingsMetadata(settings));
 
   return {
     ok: false,
@@ -2491,18 +2555,129 @@ function byokAgentFailureResult({
   };
 }
 
+function byokSettingsMetadata(settings: {
+  baseUrl?: string;
+  provider: DesktopApiKeyProvider;
+  model: string;
+}): Record<string, string> {
+  return settings.baseUrl
+    ? {
+        baseUrl: settings.baseUrl,
+        model: settings.model,
+        provider: settings.provider
+      }
+    : {
+        model: settings.model,
+        provider: settings.provider
+      };
+}
+
 function createDesktopByokModelProvider({
+  apiKey,
+  baseUrl,
+  fetch,
   model,
   provider
 }: {
   apiKey: string;
+  baseUrl?: string;
+  fetch?: FetchLike;
   model: string;
   provider: DesktopApiKeyProvider;
 }): ModelProvider {
-  return createMockProvider({
+  if (provider === "anthropic") {
+    throw new Error("Anthropic BYOK provider is not wired yet. Select OpenAI or OpenAI-compatible for this build.");
+  }
+
+  if (provider === "compatible" && !baseUrl) {
+    throw new Error("OpenAI-compatible BYOK provider requires a base URL in AI Engines settings.");
+  }
+
+  return createOpenAICompatibleProvider({
+    apiKey,
+    baseUrl,
+    fetch,
     id: "htmlslide-byok",
-    label: `HTMLslide Agent (${providerLabel(provider)} / ${model})`
+    label: `HTMLslide Agent (${providerLabel(provider)} / ${model})`,
+    model
   });
+}
+
+async function applyByokAgentSourceWrites({
+  projectPath,
+  result
+}: {
+  projectPath: string;
+  result: AgentRunResult;
+}): Promise<DesktopByokAgentAppliedResult> {
+  if (!result.ok || result.status !== "succeeded") {
+    throw new Error("Cannot apply BYOK source writes from a non-successful agent run.");
+  }
+
+  if (!result.outputs.build?.sourceWrites) {
+    throw new Error("HTMLslide Agent provider did not return build sourceWrites.");
+  }
+
+  const batches: Array<{
+    stage: Extract<AgentRunStage, "build" | "repair">;
+    attempt?: number;
+    writes: AgentSourceWrite[];
+  }> = [
+    {
+      stage: "build",
+      writes: normalizeAgentSourceWrites(result.outputs.build.sourceWrites)
+    }
+  ];
+
+  for (const repair of result.outputs.repairs) {
+    if (!repair.sourceWrites) {
+      throw new Error(`HTMLslide Agent provider did not return sourceWrites for repair attempt ${repair.attempt}.`);
+    }
+    batches.push({
+      attempt: repair.attempt,
+      stage: "repair",
+      writes: normalizeAgentSourceWrites(repair.sourceWrites)
+    });
+  }
+
+  const stageResults: DesktopByokAgentAppliedResult["stages"] = [];
+  for (const batch of batches) {
+    const applied = await applyAgentSourceWrites({
+      projectPath,
+      writes: batch.writes
+    });
+    const stageResult: DesktopByokAgentAppliedResult["stages"][number] = {
+      filesChanged: applied.filesChanged,
+      stage: batch.stage,
+      writeCount: applied.writes.length
+    };
+    if (batch.attempt !== undefined) {
+      stageResult.attempt = batch.attempt;
+    }
+    stageResults.push(stageResult);
+  }
+
+  return {
+    projectPath: path.resolve(projectPath),
+    source: "provider-source-writes",
+    filesChanged: uniqueStrings(stageResults.flatMap((stage) => stage.filesChanged)),
+    stages: stageResults,
+    writeCount: stageResults.reduce((total, stage) => total + stage.writeCount, 0)
+  };
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+
+  for (const value of values) {
+    if (!seen.has(value)) {
+      seen.add(value);
+      unique.push(value);
+    }
+  }
+
+  return unique;
 }
 
 function providerLabel(provider: DesktopApiKeyProvider): string {
@@ -2646,12 +2821,14 @@ function summarizeDesktopByokAgentRun(
   check: CliRunResult | undefined,
   exportResult: CliRunResult | undefined,
   settings: {
+    baseUrl?: string;
     provider: DesktopApiKeyProvider;
     model: string;
   }
 ): DesktopByokAgentRunSummary {
   return {
     ...summarizeDesktopMockAgentRun(agent, check, exportResult),
+    baseUrl: settings.baseUrl,
     model: settings.model,
     provider: settings.provider
   };
@@ -2661,6 +2838,7 @@ function summarizeDesktopByokFailureRun(
   runId: string,
   events: readonly AgentRunEvent[],
   settings: {
+    baseUrl?: string;
     provider: DesktopApiKeyProvider;
     model: string;
   }
@@ -2677,6 +2855,7 @@ function summarizeDesktopByokFailureRun(
     completedStages: stages.filter((stage) => stage.status === "succeeded").length,
     failedStages: stages.filter((stage) => stage.status === "failed").length,
     exportArtifacts: [],
+    baseUrl: settings.baseUrl,
     model: settings.model,
     provider: settings.provider
   };

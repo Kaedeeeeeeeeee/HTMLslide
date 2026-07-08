@@ -102,6 +102,51 @@ describe("AI engine settings persistence", () => {
     expect(raw).not.toContain("bearer-secret");
   });
 
+  it("sanitizes compatible provider base URL metadata", async () => {
+    const root = await tempDir();
+    const settingsPath = path.join(root, "ai-engine-settings.json");
+
+    const saved = await writeAiEngineSettings(settingsPath, {
+      apiKey: {
+        baseUrl: " https://user:pass@models.example.test/v1/?api_key=url-secret#fragment ",
+        hasKey: true,
+        model: "compatible-model",
+        provider: "compatible",
+        rawKey: "provider-token-secret"
+      },
+      externalAgent: {
+        customCommand: "",
+        selectedId: "codex-cli"
+      },
+      mode: "htmlslide-agent"
+    });
+
+    expect(saved.apiKey).toMatchObject({
+      baseUrl: "https://models.example.test/v1",
+      hasKey: true,
+      model: "compatible-model",
+      provider: "compatible"
+    });
+
+    const raw = await readFile(settingsPath, "utf8");
+    expect(raw).toContain("https://models.example.test/v1");
+    expect(raw).not.toContain("provider-token-secret");
+    expect(raw).not.toContain("url-secret");
+    expect(raw).not.toContain("user:pass");
+
+    const openAi = await writeAiEngineSettings(settingsPath, {
+      apiKey: {
+        baseUrl: "https://models.example.test/v1",
+        hasKey: true,
+        model: "gpt-5-mini",
+        provider: "openai"
+      },
+      mode: "htmlslide-agent"
+    });
+
+    expect(openAi.apiKey.baseUrl).toBeUndefined();
+  });
+
   it("stores raw API keys in the credential store while keeping settings JSON secret-free", async () => {
     const root = await tempDir();
     const settingsPath = path.join(root, "ai-engine-settings.json");

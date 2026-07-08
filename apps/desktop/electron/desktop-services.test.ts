@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createMockProvider } from "@htmlslide/agent";
+import { createMockPassedCheck, createMockProvider, type FetchLike, type ModelProvider } from "@htmlslide/agent";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   diffDesktopCheckpoint,
@@ -121,11 +121,19 @@ function externalAgentSettings(commandTemplate: string, selectedId: "claude-code
   };
 }
 
-function byokSettings(provider: "openai" | "anthropic" | "compatible" = "openai"): DesktopAiEngineSettings {
+function byokSettings(
+  provider: "openai" | "anthropic" | "compatible" = "openai",
+  overrides: { baseUrl?: string; model?: string } = {}
+): DesktopAiEngineSettings {
   return {
     apiKey: {
       hasKey: true,
-      model: provider === "anthropic" ? "claude-sonnet-4.5" : "gpt-5-mini",
+      baseUrl: overrides.baseUrl,
+      model: overrides.model ?? (provider === "anthropic"
+        ? "claude-sonnet-4.5"
+        : provider === "compatible"
+          ? "openai-compatible/default"
+          : "gpt-5-mini"),
       provider
     },
     externalAgent: {
@@ -137,8 +145,183 @@ function byokSettings(provider: "openai" | "anthropic" | "compatible" = "openai"
   };
 }
 
-function createMockTestProvider() {
-  return createMockProvider({ id: "test-byok-provider" });
+function byokSourceWrites(title = "BYOK Generated Deck") {
+  return [
+    {
+      path: "deck.json",
+      content: `${JSON.stringify(
+        {
+          schemaVersion: "0.1.0",
+          id: "deck_byok_test",
+          title,
+          language: "en",
+          aspectRatio: "16:9",
+          viewport: { width: 1920, height: 1080 },
+          slides: [
+            {
+              id: "001-title",
+              title,
+              source: "slides/001-title.html",
+              notes: "notes/001-title.md",
+              durationSec: 75,
+              kind: "title",
+              status: "ready"
+            }
+          ]
+        },
+        null,
+        2
+      )}\n`
+    },
+    {
+      path: "slides/001-title.html",
+      content: `<section class="slide" data-slide-id="001-title"><h1>${title}</h1><ul><li>Provider source write</li></ul></section>\n`
+    },
+    {
+      path: "notes/001-title.md",
+      content: `# ${title}\n\nGenerated through provider source writes.\n`
+    }
+  ];
+}
+
+function createSourceWriteTestProvider(title = "BYOK Generated Deck"): ModelProvider {
+  const provider = createMockProvider({
+    checkResults: [createMockPassedCheck()],
+    id: "test-byok-provider"
+  });
+
+  return {
+    id: "test-byok-provider",
+    label: "Test BYOK Provider",
+    async validateCredentials() {
+      return { ok: true };
+    },
+    async complete(request) {
+      const response = await provider.complete(request);
+      if (request.stage !== "build") {
+        return response;
+      }
+
+      return {
+        ...response,
+        output: {
+          ...(response.output as Record<string, unknown>),
+          sourceWrites: byokSourceWrites(title)
+        }
+      };
+    }
+  };
+}
+
+function createOpenAiByokFetch(title = "BYOK OpenAI Deck"): { calls: Array<{ url: string; body?: unknown; method?: string }>; fetch: FetchLike } {
+  const calls: Array<{ url: string; body?: unknown; method?: string }> = [];
+  const fetch: FetchLike = async (input, init) => {
+    const body = typeof init?.body === "string" ? JSON.parse(init.body) as unknown : undefined;
+    const url = String(input);
+    calls.push({ body, method: init?.method, url });
+
+    if (init?.method === "GET" && url.endsWith("/models/gpt-5-mini")) {
+      return jsonResponse({ id: "gpt-5-mini" });
+    }
+
+    if (init?.method === "POST" && url.endsWith("/chat/completions")) {
+      const requestBody = body as { messages?: Array<{ content?: string }> };
+      const userContent = requestBody.messages?.[1]?.content ?? "{}";
+      const userInput = JSON.parse(userContent) as { stage?: string };
+      return jsonResponse({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify(openAiStageOutput(userInput.stage, title))
+            }
+          }
+        ],
+        usage: {
+          completion_tokens: 7,
+          prompt_tokens: 11,
+          total_tokens: 18
+        }
+      });
+    }
+
+    return jsonResponse({ error: { message: `Unexpected fetch ${init?.method ?? "GET"} ${url}` } }, { status: 500 });
+  };
+
+  return { calls, fetch };
+}
+
+function jsonResponse(value: unknown, init: ResponseInit = {}): Response {
+  return new Response(JSON.stringify(value), {
+    headers: {
+      "content-type": "application/json"
+    },
+    ...init
+  });
+}
+
+function openAiStageOutput(stage: string | undefined, title: string): unknown {
+  switch (stage) {
+    case "brief":
+      return {
+        title,
+        brief: "Build a provider-backed deck.",
+        language: "en-US",
+        audience: "reviewers",
+        durationMinutes: 8
+      };
+    case "outline":
+      return {
+        title,
+        language: "en-US",
+        audience: "reviewers",
+        durationMinutes: 8,
+        slides: [{ id: "001-title", title, kind: "title", goal: "Introduce provider-backed generation." }]
+      };
+    case "visual-direction":
+      return {
+        directions: [
+          {
+            id: "direction-provider",
+            label: "Provider Light",
+            rationale: "Simple readable provider output.",
+            sampleSlideIds: ["001-title"],
+            tokens: {
+              accent: "#2357d9",
+              background: "#ffffff",
+              text: "#111827"
+            }
+          }
+        ],
+        selectedDirectionId: null
+      };
+    case "build":
+      return {
+        filesChanged: ["deck.json", "slides/001-title.html", "notes/001-title.md"],
+        notesChanged: ["001-title"],
+        slidesChanged: ["001-title"],
+        themeChanged: [],
+        sourceWrites: byokSourceWrites(title)
+      };
+    case "check":
+      return {
+        status: "passed",
+        summary: { errors: 0, warnings: 0, info: 0 },
+        issues: []
+      };
+    case "export":
+      return {
+        artifacts: [{ type: "pdf", path: "exports/provider.pdf" }]
+      };
+    case "review":
+      return {
+        summary: "Provider-backed deck is ready for review.",
+        filesChanged: ["deck.json", "slides/001-title.html", "notes/001-title.md"],
+        issuesRemaining: 0,
+        nextActions: ["Review deck"]
+      };
+    default:
+      throw new Error(`Unexpected OpenAI stage: ${stage ?? "unknown"}`);
+  }
 }
 
 async function writeExternalAgentScript(projectPath: string, name: string, source: string): Promise<string> {
@@ -573,6 +756,242 @@ describe("desktop services", () => {
     expect(restoredDeck.slides).toHaveLength(1);
   });
 
+  it("runs the default OpenAI BYOK provider through injected fetch and applies source writes", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const calls: string[][] = [];
+    const runner: DesktopCliRunner = async (args) => {
+      calls.push(args);
+
+      if (args[0] === "check") {
+        return {
+          ok: true,
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+          json: {
+            status: "passed",
+            summary: {
+              errors: 0,
+              warnings: 0,
+              info: 0,
+              suggestions: 0
+            },
+            issues: []
+          }
+        };
+      }
+
+      if (args[0] === "export") {
+        return {
+          ok: true,
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+          json: {
+            status: "passed",
+            artifacts: {
+              deckpkg: path.join(projectPath, "exports", "openai.deckpkg"),
+              pdf: path.join(projectPath, "exports", "openai.pdf")
+            }
+          }
+        };
+      }
+
+      throw new Error(`Unexpected CLI call: ${args.join(" ")}`);
+    };
+    const credentialStore = createFakeCredentialStore({
+      "app.htmlslide.ai-key:provider:openai": "sk-openai-secret"
+    });
+    const providerFetch = createOpenAiByokFetch("BYOK OpenAI Deck");
+
+    const result = await runDesktopByokAgent(
+      {
+        brief: "Create a deck through the real provider adapter.",
+        projectPath,
+        runId: "run-byok-openai"
+      },
+      {
+        cliRuntime: {
+          cliPath: "/fake/htmlslide.js",
+          cwd: "/fake",
+          mode: "development",
+          rootPath: "/fake"
+        },
+        cliRunner: runner,
+        credentialStore,
+        providerFetch: providerFetch.fetch,
+        settings: byokSettings("openai")
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.agent?.ok).toBe(true);
+    expect(result.applied).toMatchObject({
+      filesChanged: ["deck.json", "slides/001-title.html", "notes/001-title.md"],
+      source: "provider-source-writes",
+      writeCount: 3
+    });
+    expect(result.checkpointDiff?.summary).toMatchObject({
+      added: 0,
+      changed: 3,
+      deleted: 0
+    });
+    expect(result.project?.project).toMatchObject({
+      path: projectPath,
+      title: "BYOK OpenAI Deck"
+    });
+    const deck = JSON.parse(await readFile(path.join(projectPath, "deck.json"), "utf8"));
+    expect(deck.title).toBe("BYOK OpenAI Deck");
+    expect(JSON.stringify(result.logs)).not.toContain("sk-openai-secret");
+    expect(providerFetch.calls[0]).toMatchObject({
+      method: "GET",
+      url: "https://api.openai.com/v1/models/gpt-5-mini"
+    });
+    const completionCalls = providerFetch.calls.filter((call) => call.url === "https://api.openai.com/v1/chat/completions");
+    expect(completionCalls.length).toBeGreaterThan(0);
+    expect(calls).toEqual([
+      ["check", projectPath, "--json"],
+      ["export", projectPath, "--json"]
+    ]);
+  });
+
+  it("runs compatible BYOK providers against the configured base URL", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const calls: string[][] = [];
+    const runner: DesktopCliRunner = async (args) => {
+      calls.push(args);
+      if (args[0] === "check") {
+        return {
+          ok: true,
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+          json: {
+            status: "passed",
+            summary: { errors: 0, warnings: 0, info: 0, suggestions: 0 },
+            issues: []
+          }
+        };
+      }
+      throw new Error(`Unexpected CLI call: ${args.join(" ")}`);
+    };
+    const credentialStore = createFakeCredentialStore({
+      "app.htmlslide.ai-key:provider:compatible": "provider-token-secret"
+    });
+    const providerFetch = createOpenAiByokFetch("Compatible BYOK Deck");
+
+    const result = await runDesktopByokAgent(
+      {
+        brief: "Create through compatible endpoint.",
+        projectPath,
+        runExport: false,
+        runId: "run-byok-compatible"
+      },
+      {
+        cliRuntime: {
+          cliPath: "/fake/htmlslide.js",
+          cwd: "/fake",
+          mode: "development",
+          rootPath: "/fake"
+        },
+        cliRunner: runner,
+        credentialStore,
+        providerFetch: providerFetch.fetch,
+        settings: byokSettings("compatible", {
+          baseUrl: "https://compatible.example.test/v1",
+          model: "gpt-5-mini"
+        })
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.settings).toMatchObject({
+      baseUrl: "https://compatible.example.test/v1",
+      model: "gpt-5-mini",
+      provider: "compatible"
+    });
+    expect(providerFetch.calls[0]?.url).toBe("https://compatible.example.test/v1/models/gpt-5-mini");
+    expect(providerFetch.calls.some((call) => call.url === "https://compatible.example.test/v1/chat/completions")).toBe(true);
+    expect(JSON.stringify(result.logs)).not.toContain("provider-token-secret");
+    expect(calls).toEqual([["check", projectPath, "--json"]]);
+  });
+
+  it("blocks compatible BYOK runs without a base URL", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const calls: string[][] = [];
+
+    const result = await runDesktopByokAgent(
+      {
+        brief: "Create through compatible endpoint.",
+        projectPath,
+        runId: "run-byok-compatible-missing-base-url"
+      },
+      {
+        credentialStore: createFakeCredentialStore({
+          "app.htmlslide.ai-key:provider:compatible": "provider-token-secret"
+        }),
+        cliRunner: async (args) => {
+          calls.push(args);
+          throw new Error(`Unexpected CLI call: ${args.join(" ")}`);
+        },
+        settings: byokSettings("compatible")
+      }
+    );
+
+    expect(result).toMatchObject({
+      error: "OpenAI-compatible BYOK provider requires a base URL in AI Engines settings.",
+      ok: false,
+      providerId: "htmlslide-byok",
+      summary: {
+        provider: "compatible",
+        status: "failed"
+      }
+    });
+    expect(result.agent).toBeUndefined();
+    expect(JSON.stringify(result.logs)).not.toContain("provider-token-secret");
+    expect(calls).toEqual([]);
+  });
+
+  it("blocks Anthropic BYOK runs until an Anthropic adapter exists", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const calls: string[][] = [];
+
+    const result = await runDesktopByokAgent(
+      {
+        brief: "Create through Anthropic.",
+        projectPath,
+        runId: "run-byok-anthropic"
+      },
+      {
+        credentialStore: createFakeCredentialStore({
+          "app.htmlslide.ai-key:provider:anthropic": "anthropic-secret"
+        }),
+        cliRunner: async (args) => {
+          calls.push(args);
+          throw new Error(`Unexpected CLI call: ${args.join(" ")}`);
+        },
+        settings: byokSettings("anthropic")
+      }
+    );
+
+    expect(result).toMatchObject({
+      error: "Anthropic BYOK provider is not wired yet. Select OpenAI or OpenAI-compatible for this build.",
+      ok: false,
+      providerId: "htmlslide-byok",
+      summary: {
+        provider: "anthropic",
+        status: "failed"
+      }
+    });
+    expect(result.agent).toBeUndefined();
+    expect(JSON.stringify(result.logs)).not.toContain("anthropic-secret");
+    expect(calls).toEqual([]);
+  });
+
   it("runs the BYOK desktop agent only after loading a stored provider key", async () => {
     const projectPath = await tempDir();
     await writeDeck(projectPath);
@@ -620,7 +1039,7 @@ describe("desktop services", () => {
     const credentialStore = createFakeCredentialStore({
       "app.htmlslide.ai-key:provider:openai": "sk-test-secret"
     });
-    const providerInputs: Array<{ apiKey: string; model: string; provider: string }> = [];
+    const providerInputs: Array<{ apiKey: string; baseUrl?: string; model: string; provider: string }> = [];
     let credentialValidationCalls = 0;
 
     const result = await runDesktopByokAgent(
@@ -640,16 +1059,12 @@ describe("desktop services", () => {
         credentialStore,
         providerFactory: (input) => {
           providerInputs.push(input);
-          const provider = createMockTestProvider();
+          const provider = createSourceWriteTestProvider("Injected BYOK Deck");
           return {
-            id: "test-byok-provider",
-            label: "Test BYOK Provider",
+            ...provider,
             async validateCredentials() {
               credentialValidationCalls += 1;
               return { ok: true };
-            },
-            async complete(request) {
-              return provider.complete(request);
             }
           };
         },
@@ -659,13 +1074,14 @@ describe("desktop services", () => {
 
     expect(result.ok).toBe(true);
     expect(result.providerId).toBe("htmlslide-byok");
-    expect(result.settings).toEqual({
+    expect(result.settings).toMatchObject({
       model: "gpt-5-mini",
       provider: "openai"
     });
     expect(providerInputs).toEqual([
       {
         apiKey: "sk-test-secret",
+        baseUrl: undefined,
         model: "gpt-5-mini",
         provider: "openai"
       }
@@ -684,11 +1100,183 @@ describe("desktop services", () => {
       path.join(projectPath, "exports", "byok.deckpkg"),
       path.join(projectPath, "exports", "byok.pdf")
     ]);
+    expect(result.applied).toMatchObject({
+      filesChanged: ["deck.json", "slides/001-title.html", "notes/001-title.md"],
+      source: "provider-source-writes",
+      writeCount: 3
+    });
     expect(result.project?.project).toMatchObject({
       path: projectPath,
-      title: "Mock HTMLslide Deck"
+      title: "Injected BYOK Deck"
     });
     expect(JSON.stringify(result.logs)).not.toContain("sk-test-secret");
+    expect(calls).toEqual([
+      ["check", projectPath, "--json"],
+      ["export", projectPath, "--json"]
+    ]);
+  });
+
+  it("skips BYOK export when the real CLI check fails", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const calls: string[][] = [];
+    const result = await runDesktopByokAgent(
+      {
+        brief: "Create a deck that fails real check.",
+        projectPath,
+        runId: "run-byok-check-failed"
+      },
+      {
+        cliRuntime: {
+          cliPath: "/fake/htmlslide.js",
+          cwd: "/fake",
+          mode: "development",
+          rootPath: "/fake"
+        },
+        cliRunner: async (args) => {
+          calls.push(args);
+          if (args[0] === "check") {
+            return {
+              ok: false,
+              exitCode: 2,
+              stdout: "",
+              stderr: "",
+              json: {
+                status: "failed",
+                summary: { errors: 1, warnings: 0, info: 0, suggestions: 0 },
+                issues: [{ severity: "error", type: "missing-notes", message: "Missing notes." }]
+              }
+            };
+          }
+          throw new Error(`Unexpected CLI call: ${args.join(" ")}`);
+        },
+        credentialStore: createFakeCredentialStore({
+          "app.htmlslide.ai-key:provider:openai": "sk-check-failed"
+        }),
+        providerFactory: () => createSourceWriteTestProvider("BYOK Failed Check Deck"),
+        settings: byokSettings("openai")
+      }
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.agent?.ok).toBe(true);
+    expect(result.check?.ok).toBe(false);
+    expect(result.export).toBeUndefined();
+    expect(result.summary).toMatchObject({
+      checkErrors: 1,
+      checkStatus: "failed",
+      exportArtifacts: []
+    });
+    expect(calls).toEqual([["check", projectPath, "--json"]]);
+  });
+
+  it("applies BYOK repair source writes after build source writes", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const calls: string[][] = [];
+    const provider = createMockProvider({ id: "test-byok-repair-provider" });
+    const result = await runDesktopByokAgent(
+      {
+        brief: "Create and repair a deck.",
+        projectPath,
+        runId: "run-byok-repair-writes"
+      },
+      {
+        cliRuntime: {
+          cliPath: "/fake/htmlslide.js",
+          cwd: "/fake",
+          mode: "development",
+          rootPath: "/fake"
+        },
+        cliRunner: async (args) => {
+          calls.push(args);
+          if (args[0] === "check") {
+            return {
+              ok: true,
+              exitCode: 0,
+              stdout: "",
+              stderr: "",
+              json: {
+                status: "passed",
+                summary: { errors: 0, warnings: 0, info: 0, suggestions: 0 },
+                issues: []
+              }
+            };
+          }
+          if (args[0] === "export") {
+            return {
+              ok: true,
+              exitCode: 0,
+              stdout: "",
+              stderr: "",
+              json: {
+                status: "passed",
+                artifacts: { pdf: path.join(projectPath, "exports", "repair.pdf") }
+              }
+            };
+          }
+          throw new Error(`Unexpected CLI call: ${args.join(" ")}`);
+        },
+        credentialStore: createFakeCredentialStore({
+          "app.htmlslide.ai-key:provider:openai": "sk-repair-secret"
+        }),
+        providerFactory: () => ({
+          id: "test-byok-repair-provider",
+          label: "Test BYOK Repair Provider",
+          async validateCredentials() {
+            return { ok: true };
+          },
+          async complete(request) {
+            const response = await provider.complete(request);
+            if (request.stage === "build") {
+              return {
+                ...response,
+                output: {
+                  ...(response.output as Record<string, unknown>),
+                  sourceWrites: byokSourceWrites("BYOK Repair Deck")
+                }
+              };
+            }
+            if (request.stage === "repair") {
+              return {
+                ...response,
+                output: {
+                  ...(response.output as Record<string, unknown>),
+                  sourceWrites: [
+                    {
+                      path: "notes/001-title.md",
+                      content: "# BYOK Repair Deck\n\nRepair notes overwrite build notes.\n"
+                    }
+                  ]
+                }
+              };
+            }
+            return response;
+          }
+        }),
+        settings: byokSettings("openai")
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.agent?.outputs.repairs).toHaveLength(1);
+    expect(result.applied?.stages).toEqual([
+      {
+        filesChanged: ["deck.json", "slides/001-title.html", "notes/001-title.md"],
+        stage: "build",
+        writeCount: 3
+      },
+      {
+        attempt: 1,
+        filesChanged: ["notes/001-title.md"],
+        stage: "repair",
+        writeCount: 1
+      }
+    ]);
+    await expect(readFile(path.join(projectPath, "notes", "001-title.md"), "utf8")).resolves.toContain(
+      "Repair notes overwrite build notes."
+    );
+    expect(JSON.stringify(result.logs)).not.toContain("sk-repair-secret");
     expect(calls).toEqual([
       ["check", projectPath, "--json"],
       ["export", projectPath, "--json"]

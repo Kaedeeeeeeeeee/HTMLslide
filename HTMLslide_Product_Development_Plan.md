@@ -2890,7 +2890,8 @@ Alpha 版本必须能做到：
   [ ] Project Library 显示最近项目
 
 生成：
-  [ ] BYOK mock provider 完整流程通过
+  [ ] Local Mock provider 完整流程通过
+  [ ] BYOK provider-backed sourceWrites/check/export 流程通过
   [ ] 至少一个真实 provider 人工验证通过
   [ ] 生成 outline
   [ ] 生成 visual directions
@@ -3092,4 +3093,3 @@ HTMLslide 的核心不是“用 HTML 做 PPT”，而是：
 ```
 
 只要这个闭环稳定，HTMLslide 就会明显区别于传统 PPT、普通 HTML slide framework、以及零散的 AI slide skill。
-

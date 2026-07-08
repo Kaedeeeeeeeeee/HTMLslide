@@ -35,6 +35,7 @@ export function AiEngineSettingsPanel({
   const [mode, setMode] = useState<AiEngineMode>(settings.mode);
   const [provider, setProvider] = useState<ApiKeyProvider>(settings.apiKey.provider);
   const [model, setModel] = useState(settings.apiKey.model);
+  const [baseUrl, setBaseUrl] = useState(settings.apiKey.baseUrl ?? "");
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [externalAgentId, setExternalAgentId] = useState<ExternalAgentId>(settings.externalAgent.selectedId);
   const [customCommand, setCustomCommand] = useState(settings.externalAgent.customCommand);
@@ -43,10 +44,12 @@ export function AiEngineSettingsPanel({
     setMode(settings.mode);
     setProvider(settings.apiKey.provider);
     setModel(settings.apiKey.model);
+    setBaseUrl(settings.apiKey.baseUrl ?? "");
     setExternalAgentId(settings.externalAgent.selectedId);
     setCustomCommand(settings.externalAgent.customCommand);
     setApiKeyInput("");
   }, [
+    settings.apiKey.baseUrl,
     settings.apiKey.model,
     settings.apiKey.provider,
     settings.externalAgent.customCommand,
@@ -73,6 +76,7 @@ export function AiEngineSettingsPanel({
   const save = (clearKey = false): void => {
     onSaveSettings({
       apiKeyInput,
+      baseUrl,
       clearKey,
       customCommand,
       externalAgentId,
@@ -140,6 +144,17 @@ export function AiEngineSettingsPanel({
                 value={model}
               />
             </label>
+
+            {provider === "compatible" ? (
+              <label className="settings-field">
+                <span>Base URL</span>
+                <input
+                  onChange={(event) => setBaseUrl(event.currentTarget.value)}
+                  placeholder="https://api.openai.com/v1"
+                  value={baseUrl}
+                />
+              </label>
+            ) : null}
 
             <label className="settings-field">
               <span>API key</span>

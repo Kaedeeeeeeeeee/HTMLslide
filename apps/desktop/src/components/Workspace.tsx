@@ -60,12 +60,16 @@ import {
   type ReactNode
 } from "react";
 import {
+  buildAgentRunStages,
   buildRuntimeStages,
   countIssuesBySeverity,
   filterQaIssues
 } from "../model";
 import type {
+  AgentRunEventLike,
+  AgentRunLogLike,
   AgentStage,
+  CommandActionStatuses,
   InspectorTab,
   OperationStatus,
   ProjectSummary,
@@ -85,6 +89,9 @@ interface WorkspaceProps {
   selectedSlideId: string;
   slides: SlideSummary[];
   stages: AgentStage[];
+  agentRunEvents: AgentRunEventLike[];
+  agentRunLogs: AgentRunLogLike[];
+  commandActionStatuses: CommandActionStatuses;
   operationStatus: OperationStatus;
   onCommandChange: (value: string) => void;
   onCommandSubmit: () => void;
@@ -136,7 +143,10 @@ function toolbarIcon(action: keyof typeof toolbarActionLabels): ReactNode {
 
 export function Workspace({
   activeStageIndex,
+  agentRunEvents,
+  agentRunLogs,
   commandValue,
+  commandActionStatuses,
   inspectorTab,
   onCommandChange,
   onCommandSubmit,
@@ -155,12 +165,28 @@ export function Workspace({
   slides,
   stages
 }: WorkspaceProps): ReactNode {
-  const currentSlide = slides.find((slide) => slide.id === selectedSlideId) ?? slides[0];
+  const currentSlide =
+    slides.find((slide) => slide.id === selectedSlideId) ??
+    slides[0] ??
+    ({
+      accent: "#315fcb",
+      bullets: ["Open or create a local project to load deck slides."],
+      duration: "0:00",
+      id: "empty-workspace",
+      number: "00",
+      section: "Workspace",
+      speakerNotes: "No slide notes are loaded.",
+      status: "needs-check",
+      title: "No deck loaded"
+    } satisfies SlideSummary);
   const selectedSlideIssues = filterQaIssues(qaIssues, "all", selectedSlideId);
   const selectedIssues = filterQaIssues(qaIssues, qaFilter, selectedSlideId);
   const issueCounts = countIssuesBySeverity(qaIssues);
   const selectedIssueCounts = countIssuesBySeverity(selectedSlideIssues);
-  const runtimeStages = buildRuntimeStages(stages, activeStageIndex, running);
+  const runtimeStages =
+    agentRunEvents.length > 0
+      ? buildAgentRunStages(agentRunEvents, agentRunLogs, stages)
+      : buildRuntimeStages(stages, activeStageIndex, running);
   const presenterDeck = useMemo(
     () =>
       slides.length > 0
@@ -222,10 +248,6 @@ export function Workspace({
     [handleOpenPresenter, onToolbarAction]
   );
 
-  if (!currentSlide) {
-    return null;
-  }
-
   return (
     <main className="workspace-shell">
       <Toolbar
@@ -236,7 +258,7 @@ export function Workspace({
         onToolbarAction={handleWorkspaceToolbarAction}
         operationStatus={operationStatus}
         project={project}
-        running={running}
+        statuses={commandActionStatuses}
       />
 
       <section className="workspace-body">
@@ -271,6 +293,7 @@ export function Workspace({
         onCommandSubmit={onCommandSubmit}
         onRunAction={onRunAction}
         running={running}
+        statuses={commandActionStatuses}
         stages={runtimeStages}
       />
 
@@ -672,7 +695,7 @@ interface ToolbarProps {
   issueCounts: Record<"error" | "warning" | "suggestion", number>;
   operationStatus: OperationStatus;
   project: ProjectSummary;
-  running: boolean;
+  statuses: CommandActionStatuses;
   onInspectorTabChange: (tab: InspectorTab) => void;
   onRunAction: (action: "start" | "pause" | "cancel" | "retry") => void;
   onSettingsOpen: () => void;
@@ -687,8 +710,9 @@ function Toolbar({
   onToolbarAction,
   operationStatus,
   project,
-  running
+  statuses
 }: ToolbarProps): ReactNode {
+  const localPathLoaded = project.path.length > 0 && !project.path.startsWith("~");
   return (
     <header className="workspace-toolbar">
       <div className="workspace-title">
@@ -724,15 +748,30 @@ function Toolbar({
             {toolbarActionLabels[action]}
           </Button>
         ))}
+        <Button
+          icon={<RotateCcw />}
+          onClick={() => onRunAction("retry")}
+          variant="secondary"
+        >
+          Repair
+        </Button>
       </div>
 
       <div className="toolbar-status">
-        <StatusPill tone={running ? "info" : "warning"}>
-          {running ? "Agent running" : "Needs check"}
+        <StatusPill tone={localPathLoaded ? "success" : "warning"}>
+          {localPathLoaded ? "Local project" : "Sample project"}
         </StatusPill>
         <StatusPill tone={issueCounts.error > 0 ? "danger" : "success"}>
           {issueCounts.error} blocking
         </StatusPill>
+        {(["generate", "check", "repair", "export", "review"] as const).map((action) => (
+          <StatusPill
+            key={action}
+            tone={statusTone(statuses[action].kind)}
+          >
+            {action}: {statuses[action].message}
+          </StatusPill>
+        ))}
         <StatusPill tone={operationStatus.kind === "failed" ? "danger" : operationStatus.kind === "success" ? "success" : "info"}>
           {operationStatus.message}
         </StatusPill>
@@ -744,6 +783,22 @@ function Toolbar({
       </div>
     </header>
   );
+}
+
+function statusTone(status: OperationStatus["kind"]): "danger" | "info" | "neutral" | "success" | "warning" {
+  if (status === "failed") {
+    return "danger";
+  }
+
+  if (status === "running") {
+    return "info";
+  }
+
+  if (status === "success") {
+    return "success";
+  }
+
+  return "neutral";
 }
 
 interface FilmstripProps {
@@ -1143,6 +1198,7 @@ interface AgentRunConsoleProps {
   commandValue: string;
   running: boolean;
   stages: ReturnType<typeof buildRuntimeStages>;
+  statuses: CommandActionStatuses;
   onCommandChange: (value: string) => void;
   onCommandSubmit: () => void;
   onRunAction: (action: "start" | "pause" | "cancel" | "retry") => void;
@@ -1154,6 +1210,7 @@ function AgentRunConsole({
   onCommandSubmit,
   onRunAction,
   running,
+  statuses,
   stages
 }: AgentRunConsoleProps): ReactNode {
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
@@ -1219,6 +1276,17 @@ function AgentRunConsole({
             icon={<TerminalSquare />}
             label="Open logs"
           />
+        </div>
+        <div className="command-bar__status" aria-label="Command statuses">
+          {(["generate", "check", "repair", "export", "review"] as const).map((action) => (
+            <span
+              className={`command-status is-${statuses[action].kind}`}
+              key={action}
+            >
+              <strong>{action}</strong>
+              <span>{statuses[action].message}</span>
+            </span>
+          ))}
         </div>
         <form onSubmit={handleSubmit}>
           <MessageSquareText />

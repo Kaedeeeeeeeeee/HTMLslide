@@ -1,5 +1,6 @@
 import type { ProjectSummary, SlideSummary } from "./model";
 import type { AiEngineSettings, ExternalAgentStatus } from "./settings-model";
+import type { AgentRunEvent, AgentRunLog, AgentRunResult, AgentRunStage, AgentRunStatus } from "@htmlslide/agent";
 
 export type DesktopSetupState = {
   appName: string;
@@ -57,6 +58,47 @@ export type DesktopCheckReport = {
   }>;
 };
 
+export type DesktopMockAgentRunRequest = {
+  projectPath: string;
+  brief: string;
+  runExport?: boolean;
+  maxRepairRounds?: number;
+  runId?: string;
+};
+
+export type DesktopMockAgentStageSummary = {
+  stage: AgentRunStage;
+  status: AgentRunStatus;
+  summary: string;
+  updatedAt?: string;
+};
+
+export type DesktopMockAgentRunSummary = {
+  runId: string;
+  status: "succeeded" | "failed" | "cancelled";
+  stageCount: number;
+  completedStages: number;
+  failedStages: number;
+  checkStatus?: string;
+  checkErrors?: number;
+  checkWarnings?: number;
+  exportStatus?: string;
+  exportArtifacts: string[];
+};
+
+export type DesktopMockAgentRunResult = {
+  ok: boolean;
+  providerId: "htmlslide-mock";
+  projectPath: string;
+  stages: DesktopMockAgentStageSummary[];
+  events: AgentRunEvent[];
+  logs: AgentRunLog[];
+  agent: AgentRunResult;
+  check?: DesktopCliResult;
+  export?: DesktopCliResult;
+  summary: DesktopMockAgentRunSummary;
+};
+
 export type HtmlslideDesktopApi = {
   appName: string;
   platform: string;
@@ -72,6 +114,7 @@ export type HtmlslideDesktopApi = {
   createProject(request: { name: string; workspacePath?: string }): Promise<DesktopCliResult>;
   checkProject(projectPath: string): Promise<DesktopCliResult>;
   exportProject(projectPath: string): Promise<DesktopCliResult>;
+  runMockAgent(request: DesktopMockAgentRunRequest): Promise<DesktopMockAgentRunResult>;
 };
 
 export function getDesktopApi(): HtmlslideDesktopApi | undefined {

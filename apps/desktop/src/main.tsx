@@ -6,11 +6,22 @@ import { createRoot } from "react-dom/client";
 import { Onboarding } from "./components/Onboarding";
 import { ProjectLibrary } from "./components/ProjectLibrary";
 import { Workspace } from "./components/Workspace";
-import { getDesktopApi, type DesktopCheckReport, type DesktopProjectPreview, type DesktopProjectRecord } from "./desktop-api";
 import {
+  getDesktopApi,
+  type DesktopCheckReport,
+  type DesktopMockAgentRunResult,
+  type DesktopProjectPreview,
+  type DesktopProjectRecord
+} from "./desktop-api";
+import {
+  defaultCommandActionStatuses,
   formatProjectOpenedAt,
   getNextStageIndex,
+  type AgentRunEventLike,
+  type AgentRunLogLike,
   type AppView,
+  type CommandAction,
+  type CommandActionStatuses,
   type InspectorTab,
   type LibrarySection,
   type OperationStatus,
@@ -40,6 +51,8 @@ const idleStatus: OperationStatus = {
   kind: "idle",
   message: "Ready"
 };
+
+const nowIso = (): string => new Date().toISOString();
 
 function projectRecordToSummary(project: DesktopProjectRecord): ProjectSummary {
   return {
@@ -97,6 +110,11 @@ function App(): React.ReactNode {
   const [running, setRunning] = useState(true);
   const [activeStageIndex, setActiveStageIndex] = useState(4);
   const [operationStatus, setOperationStatus] = useState<OperationStatus>(idleStatus);
+  const [commandActionStatuses, setCommandActionStatuses] = useState<CommandActionStatuses>(() =>
+    defaultCommandActionStatuses()
+  );
+  const [agentRunEvents, setAgentRunEvents] = useState<AgentRunEventLike[]>([]);
+  const [agentRunLogs, setAgentRunLogs] = useState<AgentRunLogLike[]>([]);
   const [aiEngineSettings, setAiEngineSettings] = useState<AiEngineSettings>(() => createDefaultAiEngineSettings());
   const [externalAgentStatuses, setExternalAgentStatuses] = useState<ExternalAgentStatus[]>(() =>
     createDefaultExternalAgentStatuses()
@@ -157,7 +175,7 @@ function App(): React.ReactNode {
   }, [desktopApi]);
 
   useEffect(() => {
-    if (!running) {
+    if (!running || agentRunEvents.length > 0) {
       return;
     }
 
@@ -166,7 +184,111 @@ function App(): React.ReactNode {
     }, 2800);
 
     return () => window.clearInterval(timer);
-  }, [running]);
+  }, [agentRunEvents.length, running]);
+
+  const updateCommandActionStatus = useCallback((action: CommandAction, status: OperationStatus): void => {
+    setCommandActionStatuses((current) => ({
+      ...current,
+      [action]: status
+    }));
+  }, []);
+
+  const seedMockAgentRun = useCallback((summary: string): void => {
+    const runId = `mock-${Date.now()}`;
+    const createdAt = nowIso();
+    setAgentRunEvents([
+      {
+        createdAt,
+        nextAction: "Build slide source",
+        runId,
+        sequence: 1,
+        stage: "brief",
+        status: "succeeded",
+        summary: "Command accepted for local mock generation.",
+        type: "run-created"
+      },
+      {
+        createdAt,
+        filesChanged: ["slides/outline.json"],
+        nextAction: "Run check",
+        runId,
+        sequence: 2,
+        stage: "build",
+        status: "running",
+        summary,
+        type: "stage-started"
+      }
+    ]);
+    setAgentRunLogs([
+      {
+        createdAt,
+        level: "info",
+        message: "Desktop agent service is not connected; showing mock run state.",
+        runId,
+        stage: "brief"
+      },
+      {
+        createdAt,
+        level: "info",
+        message: summary,
+        runId,
+        stage: "build"
+      }
+    ]);
+  }, []);
+
+  const applyMockAgentResult = useCallback(
+    (result: DesktopMockAgentRunResult): void => {
+      const checkReport = result.check?.json as DesktopCheckReport | undefined;
+      const repairs = result.agent.outputs.repairs ?? [];
+      const checkErrors = result.summary.checkErrors ?? 0;
+      const checkWarnings = result.summary.checkWarnings ?? 0;
+
+      setAgentRunEvents(result.events);
+      setAgentRunLogs(result.logs);
+      setQaIssues(reportToIssues(checkReport));
+      setRunning(false);
+      setOperationStatus({
+        kind: result.ok ? "success" : "failed",
+        message: result.ok
+          ? "Mock agent completed check and export"
+          : result.check?.ok === false
+            ? "Mock agent completed, but check found issues"
+            : result.export?.ok === false
+              ? "Mock agent completed, but export failed"
+              : "Mock agent run failed"
+      });
+      updateCommandActionStatus("generate", {
+        kind: result.agent.ok ? "success" : "failed",
+        message: result.agent.ok ? "Mock generation complete" : "Mock generation failed"
+      });
+      updateCommandActionStatus("check", {
+        kind: result.check?.ok ? "success" : result.check ? "failed" : "idle",
+        message: result.check
+          ? result.check.ok
+            ? `Check passed (${checkWarnings} warnings)`
+            : `Check failed (${checkErrors} errors)`
+          : "Check skipped"
+      });
+      updateCommandActionStatus("repair", {
+        kind: repairs.length > 0 ? "success" : "idle",
+        message: repairs.length > 0 ? `${repairs.length} repair pass` : "No repair needed"
+      });
+      updateCommandActionStatus("export", {
+        kind: result.export?.ok ? "success" : result.export ? "failed" : "idle",
+        message: result.export
+          ? result.export.ok
+            ? `${result.summary.exportArtifacts.length} artifacts`
+            : "Export failed"
+          : "Export skipped"
+      });
+      updateCommandActionStatus("review", {
+        kind: result.ok ? "success" : "failed",
+        message: result.ok ? "Ready for review" : "Review required"
+      });
+    },
+    [updateCommandActionStatus]
+  );
 
   const activeProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? projects[0] ?? sampleProjects[0],
@@ -354,51 +476,130 @@ function App(): React.ReactNode {
     if (!desktopApi || !activeProject || activeProject.path.startsWith("~")) {
       setInspectorTab("qa");
       setOperationStatus({ kind: "failed", message: "Open a local deck project before running check" });
+      updateCommandActionStatus("check", { kind: "failed", message: "Local project required" });
       return;
     }
 
     setInspectorTab("qa");
     setOperationStatus({ kind: "running", message: "Running check" });
+    updateCommandActionStatus("check", { kind: "running", message: "Checking project" });
     desktopApi.checkProject(activeProject.path)
       .then((result) => {
         const report = result.json as DesktopCheckReport | undefined;
         setQaIssues(reportToIssues(report));
-        setOperationStatus({
+        const nextStatus: OperationStatus = {
           kind: result.ok ? "success" : "failed",
           message: result.ok ? "Check passed" : report?.status === "failed" ? "Check found issues" : result.error ?? "Check failed"
+        };
+        setOperationStatus({
+          kind: nextStatus.kind,
+          message: nextStatus.message
+        });
+        updateCommandActionStatus("check", nextStatus);
+        updateCommandActionStatus("repair", {
+          kind: result.ok ? "idle" : "running",
+          message: result.ok ? "No repair needed" : "Repair recommended"
         });
       })
       .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
         setOperationStatus({
           kind: "failed",
-          message: error instanceof Error ? error.message : String(error)
+          message
         });
+        updateCommandActionStatus("check", { kind: "failed", message });
       });
-  }, [activeProject, desktopApi]);
+  }, [activeProject, desktopApi, updateCommandActionStatus]);
 
   const runExport = useCallback((): void => {
     if (!desktopApi || !activeProject || activeProject.path.startsWith("~")) {
       setInspectorTab("export");
       setOperationStatus({ kind: "failed", message: "Open a local deck project before export" });
+      updateCommandActionStatus("export", { kind: "failed", message: "Local project required" });
       return;
     }
 
     setInspectorTab("export");
     setOperationStatus({ kind: "running", message: "Exporting artifacts" });
+    updateCommandActionStatus("export", { kind: "running", message: "Exporting artifacts" });
     desktopApi.exportProject(activeProject.path)
       .then((result) => {
-        setOperationStatus({
+        const nextStatus: OperationStatus = {
           kind: result.ok ? "success" : "failed",
           message: result.ok ? "Export complete" : result.error ?? `Export exited with ${result.exitCode}`
+        };
+        setOperationStatus({
+          kind: nextStatus.kind,
+          message: nextStatus.message
+        });
+        updateCommandActionStatus("export", nextStatus);
+        updateCommandActionStatus("review", {
+          kind: result.ok ? "running" : "idle",
+          message: result.ok ? "Ready for review" : "Waiting for clean export"
         });
       })
       .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
         setOperationStatus({
           kind: "failed",
-          message: error instanceof Error ? error.message : String(error)
+          message
         });
+        updateCommandActionStatus("export", { kind: "failed", message });
       });
-  }, [activeProject, desktopApi]);
+  }, [activeProject, desktopApi, updateCommandActionStatus]);
+
+  const runMockGeneration = useCallback(
+    (brief: string, action: "generate" | "retry" = "generate"): void => {
+      const trimmedBrief = brief.trim();
+      const prompt = trimmedBrief.length > 0 ? trimmedBrief : "Create or revise this HTMLslide deck.";
+
+      setRunning(true);
+      setActiveStageIndex(0);
+      setInspectorTab("qa");
+      setAgentRunEvents([]);
+      setAgentRunLogs([]);
+      setCommandActionStatuses({
+        ...defaultCommandActionStatuses(),
+        generate: {
+          kind: "running",
+          message: action === "retry" ? "Retrying mock generation" : "Mock generation running"
+        },
+        review: {
+          kind: "idle",
+          message: "Waiting for generated result"
+        }
+      });
+
+      if (!desktopApi || !activeProject || activeProject.path.startsWith("~")) {
+        seedMockAgentRun(
+          !desktopApi
+            ? `Mock generation running for: ${prompt}`
+            : "Open a local deck project before running the mock agent."
+        );
+        if (desktopApi && activeProject?.path.startsWith("~")) {
+          updateCommandActionStatus("generate", { kind: "failed", message: "Local project required" });
+          setOperationStatus({ kind: "failed", message: "Open a local deck project before Generate" });
+          setRunning(false);
+        }
+        return;
+      }
+
+      setOperationStatus({ kind: "running", message: "Running mock agent" });
+      desktopApi.runMockAgent({
+        brief: prompt,
+        projectPath: activeProject.path,
+        runExport: true
+      })
+        .then(applyMockAgentResult)
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          setRunning(false);
+          setOperationStatus({ kind: "failed", message });
+          updateCommandActionStatus("generate", { kind: "failed", message });
+        });
+    },
+    [activeProject, applyMockAgentResult, desktopApi, seedMockAgentRun, updateCommandActionStatus]
+  );
 
   if (!activeProject) {
     return null;
@@ -448,23 +649,25 @@ function App(): React.ReactNode {
       inspectorTab={inspectorTab}
       onCommandChange={setCommandValue}
       onCommandSubmit={() => {
-        if (commandValue.trim().length === 0) {
+        const command = commandValue.trim();
+        if (command.length === 0) {
           return;
         }
-        setRunning(true);
-        setActiveStageIndex(0);
-        setInspectorTab("qa");
+        runMockGeneration(command);
         setCommandValue("");
       }}
       onInspectorTabChange={setInspectorTab}
       onQaFilterChange={setQaFilter}
       onRunAction={(action) => {
         if (action === "start" || action === "retry") {
-          setRunning(true);
-          setActiveStageIndex(action === "retry" ? 0 : activeStageIndex);
+          runMockGeneration(commandValue.trim(), action === "retry" ? "retry" : "generate");
         }
         if (action === "pause" || action === "cancel") {
           setRunning(false);
+          updateCommandActionStatus("generate", {
+            kind: action === "cancel" ? "failed" : "idle",
+            message: action === "cancel" ? "Generation cancelled" : "Generation paused"
+          });
         }
       }}
       onSelectSlide={setSelectedSlideId}
@@ -481,8 +684,15 @@ function App(): React.ReactNode {
         }
         if (action === "present") {
           setOperationStatus({ kind: "success", message: "Rehearsal mode open" });
+          updateCommandActionStatus("review", { kind: "success", message: "Reviewing in rehearsal" });
+        }
+        if (action === "generate") {
+          runMockGeneration(commandValue.trim());
         }
       }}
+      agentRunEvents={agentRunEvents}
+      agentRunLogs={agentRunLogs}
+      commandActionStatuses={commandActionStatuses}
       operationStatus={operationStatus}
       project={activeProject}
       qaFilter={qaFilter}

@@ -44,6 +44,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@htmlslide/agent':
+        specifier: workspace:*
+        version: link:../../packages/agent
       '@htmlslide/agent-adapters':
         specifier: workspace:*
         version: link:../../packages/agent-adapters

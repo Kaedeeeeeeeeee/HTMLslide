@@ -3,6 +3,16 @@ import { existsSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  createMockProvider,
+  defaultAgentStages,
+  runAgent,
+  type AgentRunEvent,
+  type AgentRunLog,
+  type AgentRunResult,
+  type AgentRunStage,
+  type AgentRunStatus
+} from "@htmlslide/agent";
 
 export type DesktopProjectStatus =
   | "Ready"
@@ -69,6 +79,54 @@ export type CliRunnerOptions = {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
+};
+
+export type DesktopCliRunner = (args: string[], options: CliRunnerOptions) => Promise<CliRunResult>;
+
+export type DesktopMockAgentRunRequest = {
+  projectPath: string;
+  brief: string;
+  runExport?: boolean;
+  maxRepairRounds?: number;
+  runId?: string;
+};
+
+export type DesktopMockAgentStageSummary = {
+  stage: AgentRunStage;
+  status: AgentRunStatus;
+  summary: string;
+  updatedAt?: string;
+};
+
+export type DesktopMockAgentRunSummary = {
+  runId: string;
+  status: "succeeded" | "failed" | "cancelled";
+  stageCount: number;
+  completedStages: number;
+  failedStages: number;
+  checkStatus?: string;
+  checkErrors?: number;
+  checkWarnings?: number;
+  exportStatus?: string;
+  exportArtifacts: string[];
+};
+
+export type DesktopMockAgentRunResult = {
+  ok: boolean;
+  providerId: "htmlslide-mock";
+  projectPath: string;
+  stages: DesktopMockAgentStageSummary[];
+  events: AgentRunEvent[];
+  logs: AgentRunLog[];
+  agent: AgentRunResult;
+  check?: CliRunResult;
+  export?: CliRunResult;
+  summary: DesktopMockAgentRunSummary;
+};
+
+export type DesktopMockAgentRunnerOptions = {
+  cliRuntime?: CliRuntime;
+  cliRunner?: DesktopCliRunner;
 };
 
 export type DesktopAiEngineMode = "no-ai" | "htmlslide-agent" | "external-agent";
@@ -522,6 +580,57 @@ export async function runHtmlslideCli(args: string[], options: CliRunnerOptions)
   });
 }
 
+export async function runDesktopMockAgent(
+  request: DesktopMockAgentRunRequest,
+  options: DesktopMockAgentRunnerOptions = {}
+): Promise<DesktopMockAgentRunResult> {
+  const projectPath = path.resolve(request.projectPath);
+  const brief = request.brief.trim();
+  const logs: AgentRunLog[] = [];
+  const cliRunner = options.cliRunner ?? runHtmlslideCli;
+
+  const agent = await runAgent({
+    brief: brief.length > 0 ? brief : "Create or revise this HTMLslide deck.",
+    maxRepairRounds: request.maxRepairRounds,
+    projectRoot: projectPath,
+    provider: createMockProvider(),
+    runId: request.runId,
+    metadata: {
+      mode: "desktop-mock-agent"
+    }
+  });
+
+  logs.push(...agent.logs);
+
+  let check: CliRunResult | undefined;
+  let exportResult: CliRunResult | undefined;
+
+  if (agent.ok) {
+    check = await runDesktopAgentCliStep(["check", projectPath, "--json"], options.cliRuntime, cliRunner);
+    logs.push(desktopAgentCliLog(agent.runId, "check", check));
+
+    if (check.ok && request.runExport !== false) {
+      exportResult = await runDesktopAgentCliStep(["export", projectPath, "--json"], options.cliRuntime, cliRunner);
+      logs.push(desktopAgentCliLog(agent.runId, "export", exportResult));
+    }
+  }
+
+  const summary = summarizeDesktopMockAgentRun(agent, check, exportResult);
+
+  return {
+    ok: agent.ok && (check === undefined || check.ok) && (exportResult === undefined || exportResult.ok),
+    providerId: "htmlslide-mock",
+    projectPath,
+    stages: summarizeAgentStages(agent.events),
+    events: agent.events,
+    logs,
+    agent,
+    check,
+    export: exportResult,
+    summary
+  };
+}
+
 export function findCliRuntime(startPath: string, resourcesPath?: string): CliRuntime | undefined {
   const repoRoot = findRepositoryRoot(startPath);
   if (repoRoot) {
@@ -854,6 +963,127 @@ function parseJsonOutput(stdout: string): unknown {
   } catch {
     return undefined;
   }
+}
+
+async function runDesktopAgentCliStep(
+  args: string[],
+  cliRuntime: CliRuntime | undefined,
+  cliRunner: DesktopCliRunner
+): Promise<CliRunResult> {
+  if (!cliRuntime) {
+    return {
+      ok: false,
+      exitCode: 4,
+      stdout: "",
+      stderr: "",
+      error: "HTMLslide CLI runtime is not available. Rebuild the app or reinstall HTMLslide."
+    };
+  }
+
+  return cliRunner(args, {
+    cliPath: cliRuntime.cliPath,
+    cwd: cliRuntime.cwd,
+    rootPath: cliRuntime.rootPath
+  });
+}
+
+function desktopAgentCliLog(runId: string, stage: "check" | "export", result: CliRunResult): AgentRunLog {
+  return {
+    runId,
+    stage,
+    level: result.ok ? "info" : "error",
+    message: result.ok
+      ? `htmlslide ${stage} completed with exit code ${result.exitCode}.`
+      : `htmlslide ${stage} failed with exit code ${result.exitCode}.`,
+    createdAt: new Date().toISOString(),
+    metadata: {
+      exitCode: result.exitCode
+    }
+  };
+}
+
+function summarizeAgentStages(events: readonly AgentRunEvent[]): DesktopMockAgentStageSummary[] {
+  return defaultAgentStages.map((stage) => {
+    const stageEvents = events.filter((event) => event.stage === stage);
+    const terminalEvent = lastMatchingEvent(
+      stageEvents,
+      (event) => event.type === "stage-failed" || event.type === "stage-completed"
+    );
+    const lastEvent = terminalEvent ?? stageEvents.at(-1);
+    return {
+      stage,
+      status: lastEvent?.status ?? "queued",
+      summary: lastEvent?.summary ?? `${stage} queued.`,
+      updatedAt: lastEvent?.createdAt
+    };
+  });
+}
+
+function lastMatchingEvent(
+  events: readonly AgentRunEvent[],
+  predicate: (event: AgentRunEvent) => boolean
+): AgentRunEvent | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event && predicate(event)) {
+      return event;
+    }
+  }
+  return undefined;
+}
+
+function summarizeDesktopMockAgentRun(
+  agent: AgentRunResult,
+  check: CliRunResult | undefined,
+  exportResult: CliRunResult | undefined
+): DesktopMockAgentRunSummary {
+  const stages = summarizeAgentStages(agent.events);
+  const checkJson = asRecord(check?.json);
+  const checkSummary = asRecord(checkJson?.summary);
+  const exportJson = asRecord(exportResult?.json);
+
+  return {
+    runId: agent.runId,
+    status: agent.status,
+    stageCount: stages.length,
+    completedStages: stages.filter((stage) => stage.status === "succeeded").length,
+    failedStages: stages.filter((stage) => stage.status === "failed").length,
+    checkStatus: typeof checkJson?.status === "string" ? checkJson.status : undefined,
+    checkErrors: numberFromRecord(checkSummary, "errors"),
+    checkWarnings: numberFromRecord(checkSummary, "warnings"),
+    exportStatus: typeof exportJson?.status === "string" ? exportJson.status : undefined,
+    exportArtifacts: collectExportArtifacts(exportJson)
+  };
+}
+
+function collectExportArtifacts(value: Record<string, unknown> | undefined): string[] {
+  const artifacts = asRecord(value?.artifacts);
+  if (!artifacts) {
+    return [];
+  }
+
+  const paths: string[] = [];
+  for (const entry of Object.values(artifacts)) {
+    if (typeof entry === "string") {
+      paths.push(entry);
+    } else if (Array.isArray(entry)) {
+      for (const item of entry) {
+        if (typeof item === "string") {
+          paths.push(item);
+        }
+      }
+    }
+  }
+  return paths;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : undefined;
+}
+
+function numberFromRecord(value: Record<string, unknown> | undefined, key: string): number | undefined {
+  const item = value?.[key];
+  return typeof item === "number" && Number.isFinite(item) ? item : undefined;
 }
 
 function firstNonEmptyLine(output: string): string | undefined {

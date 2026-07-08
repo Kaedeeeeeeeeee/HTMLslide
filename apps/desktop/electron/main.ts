@@ -10,6 +10,7 @@ import {
   loadProjectPreview,
   readAiEngineSettings,
   readDesktopLibrary,
+  runDesktopMockAgent,
   runHtmlslideCli,
   summarizeDeckProject,
   upsertRecentProject,
@@ -173,6 +174,20 @@ function registerIpcHandlers(): void {
     }
     return result;
   });
+
+  ipcMain.handle(
+    "htmlslide:run-mock-agent",
+    async (
+      _event,
+      request: {
+        projectPath: string;
+        brief: string;
+        runExport?: boolean;
+        maxRepairRounds?: number;
+        runId?: string;
+      }
+    ) => runDesktopMockAgent(request, { cliRuntime })
+  );
 }
 
 function createWindow(): void {

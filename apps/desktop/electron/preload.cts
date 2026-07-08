@@ -18,5 +18,12 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
   createProject: (request: { name: string; workspacePath?: string }) =>
     ipcRenderer.invoke("htmlslide:create-project", request),
   checkProject: (projectPath: string) => ipcRenderer.invoke("htmlslide:check-project", projectPath),
-  exportProject: (projectPath: string) => ipcRenderer.invoke("htmlslide:export-project", projectPath)
+  exportProject: (projectPath: string) => ipcRenderer.invoke("htmlslide:export-project", projectPath),
+  runMockAgent: (request: {
+    projectPath: string;
+    brief: string;
+    runExport?: boolean;
+    maxRepairRounds?: number;
+    runId?: string;
+  }) => ipcRenderer.invoke("htmlslide:run-mock-agent", request)
 });

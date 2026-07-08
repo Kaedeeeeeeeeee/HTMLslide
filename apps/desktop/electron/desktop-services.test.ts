@@ -6,9 +6,11 @@ import {
   findCliRuntime,
   loadProjectPreview,
   readDesktopLibrary,
+  runDesktopMockAgent,
   summarizeDeckProject,
   upsertRecentProject,
   writeDesktopLibrary,
+  type DesktopCliRunner,
   type DesktopProjectRecord
 } from "./desktop-services.js";
 
@@ -158,5 +160,154 @@ describe("desktop services", () => {
       cwd: root,
       rootPath: root
     });
+  });
+
+  it("runs the mock agent and then real project check/export through the CLI runner", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const calls: string[][] = [];
+    const runner: DesktopCliRunner = async (args) => {
+      calls.push(args);
+
+      if (args[0] === "check") {
+        return {
+          ok: true,
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+          json: {
+            status: "passed",
+            summary: {
+              errors: 0,
+              warnings: 1,
+              info: 0,
+              suggestions: 0
+            },
+            issues: []
+          }
+        };
+      }
+
+      if (args[0] === "export") {
+        return {
+          ok: true,
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+          json: {
+            status: "passed",
+            artifacts: {
+              html: path.join(projectPath, "exports", "deck.html"),
+              notes: path.join(projectPath, "exports", "notes.json"),
+              thumbnails: [path.join(projectPath, "exports", "thumbnails", "001-title.png")]
+            }
+          }
+        };
+      }
+
+      throw new Error(`Unexpected CLI call: ${args.join(" ")}`);
+    };
+
+    const result = await runDesktopMockAgent(
+      {
+        brief: "Make a deterministic product-alpha deck",
+        projectPath,
+        runId: "run-desktop-test"
+      },
+      {
+        cliRuntime: {
+          cliPath: "/fake/htmlslide.js",
+          cwd: "/fake",
+          mode: "development",
+          rootPath: "/fake"
+        },
+        cliRunner: runner
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.providerId).toBe("htmlslide-mock");
+    expect(result.agent.ok).toBe(true);
+    expect(result.check?.ok).toBe(true);
+    expect(result.export?.ok).toBe(true);
+    expect(result.summary).toMatchObject({
+      checkErrors: 0,
+      checkStatus: "passed",
+      checkWarnings: 1,
+      completedStages: 8,
+      exportStatus: "passed",
+      runId: "run-desktop-test",
+      status: "succeeded"
+    });
+    expect(result.summary.exportArtifacts).toEqual([
+      path.join(projectPath, "exports", "deck.html"),
+      path.join(projectPath, "exports", "notes.json"),
+      path.join(projectPath, "exports", "thumbnails", "001-title.png")
+    ]);
+    expect(result.stages.map((stage) => stage.stage)).toEqual([
+      "brief",
+      "outline",
+      "visual-direction",
+      "build",
+      "check",
+      "repair",
+      "export",
+      "review"
+    ]);
+    expect(calls).toEqual([
+      ["check", projectPath, "--json"],
+      ["export", projectPath, "--json"]
+    ]);
+  });
+
+  it("skips export when real project check fails", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const calls: string[][] = [];
+    const runner: DesktopCliRunner = async (args) => {
+      calls.push(args);
+      return {
+        ok: false,
+        exitCode: 2,
+        stdout: "",
+        stderr: "",
+        json: {
+          status: "failed",
+          summary: {
+            errors: 1,
+            warnings: 0,
+            info: 0,
+            suggestions: 0
+          },
+          issues: [{ severity: "error", type: "missing-file", message: "Missing slide source." }]
+        }
+      };
+    };
+
+    const result = await runDesktopMockAgent(
+      {
+        brief: "Check without exporting",
+        projectPath
+      },
+      {
+        cliRuntime: {
+          cliPath: "/fake/htmlslide.js",
+          cwd: "/fake",
+          mode: "development",
+          rootPath: "/fake"
+        },
+        cliRunner: runner
+      }
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.agent.ok).toBe(true);
+    expect(result.check?.ok).toBe(false);
+    expect(result.export).toBeUndefined();
+    expect(result.summary).toMatchObject({
+      checkErrors: 1,
+      checkStatus: "failed"
+    });
+    expect(calls).toEqual([["check", projectPath, "--json"]]);
   });
 });

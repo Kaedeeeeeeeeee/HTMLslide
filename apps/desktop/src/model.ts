@@ -6,11 +6,14 @@ export type InspectorTab = InspectorTabId;
 export type QaSeverity = QaSeverityId;
 export type QaFilter = "all" | QaSeverity;
 export type OperationStatusKind = "idle" | "running" | "success" | "failed";
+export type CommandAction = "generate" | "check" | "repair" | "export" | "review";
 
 export interface OperationStatus {
   kind: OperationStatusKind;
   message: string;
 }
+
+export type CommandActionStatuses = Record<CommandAction, OperationStatus>;
 
 export interface OnboardingStep {
   id: string;
@@ -60,6 +63,16 @@ export interface QaIssue {
 }
 
 export type AgentStageStatus = "complete" | "running" | "queued" | "paused";
+export type AgentRunStageId =
+  | "brief"
+  | "outline"
+  | "visual-direction"
+  | "build"
+  | "check"
+  | "repair"
+  | "export"
+  | "review";
+export type AgentRunEventStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
 export interface AgentStage {
   id: string;
@@ -73,6 +86,76 @@ export interface AgentStage {
 
 export interface RuntimeAgentStage extends AgentStage {
   status: AgentStageStatus;
+  eventCount?: number;
+  lastEventAt?: string;
+  runId?: string;
+}
+
+export interface AgentRunEventLike {
+  stage: AgentRunStageId;
+  status: AgentRunEventStatus;
+  summary: string;
+  createdAt: string;
+  runId?: string;
+  sequence?: number;
+  type?: string;
+  filesChanged?: string[];
+  issuesFound?: number;
+  nextAction?: string;
+}
+
+export interface AgentRunLogLike {
+  runId: string;
+  stage?: AgentRunStageId;
+  level: "debug" | "info" | "warning" | "error";
+  message: string;
+  createdAt: string;
+}
+
+export const defaultCommandActionStatuses = (): CommandActionStatuses => ({
+  check: { kind: "idle", message: "Not checked" },
+  export: { kind: "idle", message: "Not exported" },
+  generate: { kind: "idle", message: "Ready" },
+  repair: { kind: "idle", message: "No repair queued" },
+  review: { kind: "idle", message: "No review yet" }
+});
+
+const agentStageLabels: Record<AgentRunStageId, string> = {
+  brief: "Brief",
+  build: "Build",
+  check: "Check",
+  export: "Export",
+  outline: "Outline",
+  repair: "Repair",
+  review: "Review",
+  "visual-direction": "Visual direction"
+};
+
+const agentStageOrder: AgentRunStageId[] = [
+  "brief",
+  "outline",
+  "visual-direction",
+  "build",
+  "check",
+  "repair",
+  "export",
+  "review"
+];
+
+function mapEventStatusToStageStatus(status: AgentRunEventStatus): AgentStageStatus {
+  if (status === "succeeded") {
+    return "complete";
+  }
+
+  if (status === "running") {
+    return "running";
+  }
+
+  if (status === "failed" || status === "cancelled") {
+    return "paused";
+  }
+
+  return "queued";
 }
 
 export function filterQaIssues(
@@ -121,6 +204,65 @@ export function buildRuntimeStages(
 
     return { ...stage, status: "queued" };
   });
+}
+
+export function buildAgentRunStages(
+  events: readonly AgentRunEventLike[],
+  logs: readonly AgentRunLogLike[],
+  fallbackStages: readonly AgentStage[] = []
+): RuntimeAgentStage[] {
+  if (events.length === 0) {
+    return buildRuntimeStages(fallbackStages, 0, false);
+  }
+
+  const sortedEvents = [...events].sort((a, b) => {
+    const sequenceDiff = (a.sequence ?? Number.MAX_SAFE_INTEGER) - (b.sequence ?? Number.MAX_SAFE_INTEGER);
+    if (sequenceDiff !== 0) {
+      return sequenceDiff;
+    }
+    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+  });
+  const stageOrder = [
+    ...agentStageOrder,
+    ...sortedEvents.map((event) => event.stage).filter((stage) => !agentStageOrder.includes(stage))
+  ];
+
+  return stageOrder
+    .map((stageId): RuntimeAgentStage | undefined => {
+      const stageEvents = sortedEvents.filter((event) => event.stage === stageId);
+      const latest = stageEvents.at(-1);
+      const fallback = fallbackStages.find((stage) => stage.id === stageId);
+      const canonical = agentStageOrder.includes(stageId);
+
+      if (!latest && !fallback && !canonical) {
+        return undefined;
+      }
+
+      const stageLogs = logs
+        .filter((log) => log.stage === stageId || (!log.stage && latest?.runId && log.runId === latest.runId))
+        .map((log) => `${log.level}: ${log.message}`);
+
+      return {
+        filesChanged:
+          latest?.filesChanged && latest.filesChanged.length > 0
+            ? String(latest.filesChanged.length)
+            : fallback?.filesChanged ?? "0",
+        id: stageId,
+        issuesFound:
+          typeof latest?.issuesFound === "number"
+            ? String(latest.issuesFound)
+            : fallback?.issuesFound ?? "0",
+        label: fallback?.label ?? agentStageLabels[stageId],
+        lastEventAt: latest?.createdAt,
+        logs: stageLogs.length > 0 ? stageLogs : fallback?.logs ?? [],
+        nextAction: latest?.nextAction ?? fallback?.nextAction ?? "Await event",
+        runId: latest?.runId,
+        status: mapEventStatusToStageStatus(latest?.status ?? "queued"),
+        summary: latest?.summary ?? fallback?.summary ?? "Waiting for agent event.",
+        eventCount: stageEvents.length
+      };
+    })
+    .filter((stage): stage is RuntimeAgentStage => Boolean(stage));
 }
 
 export function getNextStageIndex(currentIndex: number, stageCount: number): number {

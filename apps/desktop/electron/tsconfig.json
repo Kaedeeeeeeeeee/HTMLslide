@@ -7,6 +7,7 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "outDir": "../dist/electron",
+    "paths": {},
     "rootDir": ".",
     "types": ["node"]
   },

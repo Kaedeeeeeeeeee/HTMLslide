@@ -16,6 +16,7 @@
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
+    "@htmlslide/agent": "workspace:*",
     "@htmlslide/agent-adapters": "workspace:*",
     "@htmlslide/presenter": "workspace:*",
     "@htmlslide/shared-ui": "workspace:*",

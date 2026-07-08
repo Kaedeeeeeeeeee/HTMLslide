@@ -248,4 +248,81 @@ describe("CLI project helpers", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("lists mock agent engines as machine-readable JSON", async () => {
+    const executed = await runCli(["agent", "engines", "--json"]);
+    const payload = JSON.parse(executed.stdout);
+
+    expect(payload.status).toBe("passed");
+    expect(payload.engines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "htmlslide-mock",
+          mode: "mock",
+          available: true
+        })
+      ])
+    );
+  });
+
+  it("runs the mock agent through the CLI and returns deterministic JSON", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
+    try {
+      const executed = await runCli([
+        "agent",
+        "run",
+        "--engine",
+        "htmlslide-mock",
+        "--task",
+        "Create a deterministic CLI coverage deck",
+        "--path",
+        root,
+        "--json"
+      ]);
+      const payload = JSON.parse(executed.stdout);
+
+      expect(payload.status).toBe("succeeded");
+      expect(payload.runId).toBe("run-0001");
+      expect(payload.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "run-created",
+            runId: "run-0001",
+            sequence: 1,
+            createdAt: "2026-01-01T00:00:00.000Z"
+          }),
+          expect.objectContaining({
+            type: "run-completed",
+            stage: "review",
+            status: "succeeded"
+          })
+        ])
+      );
+      expect(payload.outputs.brief).toMatchObject({
+        brief: "Create a deterministic CLI coverage deck",
+        title: "Mock HTMLslide Deck"
+      });
+      expect(payload.outputs.checks.map((check: { status: string }) => check.status)).toEqual(["failed", "passed"]);
+      expect(payload.outputs.repairs).toHaveLength(1);
+      expect(payload.outputs.export.artifacts).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "pdf",
+            path: "exports/mock-htmlslide-deck.pdf"
+          })
+        ])
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("returns actionable JSON and exit code 6 for unknown agent engines", async () => {
+    await expect(
+      runCli(["agent", "run", "--engine", "missing-engine", "--task", "No external calls", "--json"])
+    ).rejects.toMatchObject({
+      code: EXIT_CODES.agentFailed,
+      stdout: expect.stringContaining('"code": "AGENT_ENGINE_NOT_FOUND"')
+    });
+  });
 });

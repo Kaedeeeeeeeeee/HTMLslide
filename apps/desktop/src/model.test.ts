@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildAgentRunStages,
   buildRuntimeStages,
   countIssuesBySeverity,
+  defaultCommandActionStatuses,
   filterQaIssues,
   formatProjectOpenedAt,
   getNextStageIndex
 } from "./model";
-import type { AgentStage, QaIssue } from "./model";
+import type { AgentRunEventLike, AgentRunLogLike, AgentStage, QaIssue } from "./model";
 
 const issues: QaIssue[] = [
   {
@@ -92,6 +94,61 @@ describe("desktop model helpers", () => {
       "running",
       "queued"
     ]);
+  });
+
+  it("maps real agent events and logs into runtime stages", () => {
+    const events: AgentRunEventLike[] = [
+      {
+        createdAt: "2026-07-09T00:00:00.000Z",
+        filesChanged: ["deck.json"],
+        nextAction: "Build",
+        runId: "run-1",
+        sequence: 2,
+        stage: "outline",
+        status: "succeeded",
+        summary: "Outline complete."
+      },
+      {
+        createdAt: "2026-07-09T00:01:00.000Z",
+        issuesFound: 2,
+        nextAction: "Repair",
+        runId: "run-1",
+        sequence: 3,
+        stage: "check",
+        status: "running",
+        summary: "Checking deck."
+      }
+    ];
+    const logs: AgentRunLogLike[] = [
+      {
+        createdAt: "2026-07-09T00:01:10.000Z",
+        level: "warning",
+        message: "Safe area issue found.",
+        runId: "run-1",
+        stage: "check"
+      }
+    ];
+
+    const runtimeStages = buildAgentRunStages(events, logs, stages);
+
+    expect(runtimeStages.find((stage) => stage.id === "outline")?.status).toBe("complete");
+    expect(runtimeStages.find((stage) => stage.id === "check")).toMatchObject({
+      issuesFound: "2",
+      logs: ["warning: Safe area issue found."],
+      nextAction: "Repair",
+      status: "running",
+      summary: "Checking deck."
+    });
+  });
+
+  it("creates explicit default command action statuses", () => {
+    expect(defaultCommandActionStatuses()).toMatchObject({
+      check: { kind: "idle", message: "Not checked" },
+      export: { kind: "idle", message: "Not exported" },
+      generate: { kind: "idle", message: "Ready" },
+      repair: { kind: "idle", message: "No repair queued" },
+      review: { kind: "idle", message: "No review yet" }
+    });
   });
 
   it("caps stage advancement at the last known stage", () => {

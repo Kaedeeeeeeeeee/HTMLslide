@@ -11,6 +11,7 @@ import {
   installCliShim,
   listAgentEngines,
   loadProject,
+  runAgentTask,
   tryLoadProjectForCheck,
   uninstallCliShim
 } from "../index.js";
@@ -31,6 +32,12 @@ type SetupCommandOptions = JsonOption & {
   targetPath?: string;
   appPath?: string;
   fallbackCliPath?: string;
+};
+
+type AgentRunCommandOptions = JsonOption & {
+  engine: string;
+  task: string;
+  path?: string;
 };
 
 type CliError = Error & {
@@ -246,15 +253,39 @@ program
     }
   });
 
-program
-  .command("agent")
-  .description("Inspect or run configured AI engines.")
+const agentCommand = program.command("agent").description("Inspect or run configured AI engines.");
+
+agentCommand
   .command("engines")
   .option("--json", "print machine-readable JSON")
   .description("List known AI engine adapters.")
   .action((options: JsonOption) => {
     const json = Boolean(options.json ?? program.opts<JsonOption>().json);
     writeResult({ status: "passed", engines: listAgentEngines() }, json);
+  });
+
+agentCommand
+  .command("run")
+  .requiredOption("--engine <engine>", "agent engine id from htmlslide agent engines")
+  .requiredOption("--task <task>", "task or brief for the agent run")
+  .option("--path <path>", "deck project path", process.cwd())
+  .option("--json", "print machine-readable JSON")
+  .description("Run an agent task with a configured engine.")
+  .action(async (options: AgentRunCommandOptions) => {
+    const json = Boolean(options.json ?? program.opts<JsonOption>().json);
+    try {
+      const result = await runAgentTask({
+        engine: options.engine,
+        task: options.task,
+        projectPath: options.path
+      });
+      writeResult(result, json);
+      if (!result.ok) {
+        process.exit(EXIT_CODES.agentFailed);
+      }
+    } catch (error) {
+      fail(error, json);
+    }
   });
 
 program.parseAsync(process.argv);

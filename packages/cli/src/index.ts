@@ -3,7 +3,7 @@ import { access, chmod, lstat, mkdir, readFile, rename, rm, writeFile } from "no
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { mockEngines } from "@htmlslide/agent";
+import { createMockProvider, mockEngines, runAgent, type AgentRunResult } from "@htmlslide/agent";
 import { exportDeck, type CompilerProjectInput, type ExportOptions } from "@htmlslide/compiler";
 import { loadDeckProject, parseDeck, ProjectLoadError, type Deck, type LoadedDeckProject } from "@htmlslide/core";
 import { checkProject, type CheckReport } from "@htmlslide/linter";
@@ -35,6 +35,12 @@ export type ProjectLoadResult =
       exitCode: number;
       report: CheckReport;
     };
+
+export type AgentRunCliOptions = {
+  engine: string;
+  task: string;
+  projectPath?: string;
+};
 
 export type CliShimTargetOptions = {
   targetDir?: string;
@@ -736,3 +742,50 @@ export const doctor = async (options: CliShimTargetOptions = {}) => {
 };
 
 export const listAgentEngines = () => mockEngines;
+
+const agentError = (
+  code: string,
+  message: string,
+  suggestedFix: string,
+  extra?: Record<string, unknown>
+): Error =>
+  Object.assign(new Error(message), {
+    code,
+    exitCode: EXIT_CODES.agentFailed,
+    suggestedFix,
+    ...extra
+  });
+
+const deterministicAgentClock = () => new Date("2026-01-01T00:00:00.000Z");
+
+export const runAgentTask = async (options: AgentRunCliOptions): Promise<AgentRunResult> => {
+  const engine = mockEngines.find((candidate) => candidate.id === options.engine);
+  if (engine === undefined) {
+    throw agentError(
+      "AGENT_ENGINE_NOT_FOUND",
+      `Unknown agent engine: ${options.engine}.`,
+      "Run htmlslide agent engines --json and pass one of the listed engine ids.",
+      { engine: options.engine }
+    );
+  }
+
+  if (engine.id !== "htmlslide-mock") {
+    throw agentError(
+      "AGENT_ENGINE_UNAVAILABLE",
+      `Agent engine ${engine.id} is not available from the CLI yet.`,
+      "Use --engine htmlslide-mock for deterministic local test runs.",
+      { engine: engine.id }
+    );
+  }
+
+  return runAgent(
+    {
+      projectRoot: path.resolve(options.projectPath ?? process.cwd()),
+      brief: options.task,
+      provider: createMockProvider()
+    },
+    {
+      clock: deterministicAgentClock
+    }
+  );
+};

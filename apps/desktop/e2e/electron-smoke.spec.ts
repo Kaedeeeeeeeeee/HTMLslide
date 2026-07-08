@@ -1,7 +1,7 @@
 import { _electron as electron, expect, test } from "@playwright/test";
 import type { ElectronApplication, Page } from "@playwright/test";
 import { createRequire } from "node:module";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,8 +42,10 @@ test.describe("HTMLslide desktop smoke", () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
     const homeDir = path.join(tempRoot, "home");
     const workspaceDir = path.join(tempRoot, "workspace");
+    const projectPath = path.join(tempRoot, "valid-full");
     await mkdir(homeDir, { recursive: true });
     await mkdir(workspaceDir, { recursive: true });
+    await cp(sampleProjectPath, projectPath, { recursive: true });
 
     electronApp = await electron.launch({
       executablePath: electronExecutable,
@@ -53,7 +55,7 @@ test.describe("HTMLslide desktop smoke", () => {
         ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
         HOME: homeDir,
         HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir,
-        HTMLSLIDE_E2E_OPEN_PROJECT_PATH: sampleProjectPath
+        HTMLSLIDE_E2E_OPEN_PROJECT_PATH: projectPath
       }
     });
 
@@ -84,6 +86,15 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(page.getByRole("heading", { name: "Slides" })).toBeVisible();
     await expect(page.getByLabel("HTML as source slide preview")).toBeVisible();
     await expect(page.getByText("PDF and deckpkg remain deterministic artifacts.")).toBeVisible();
+    await expectNoFrameworkOverlay(page);
+
+    await page.getByRole("button", { name: "Generate", exact: true }).click();
+
+    await expect(page.getByText("Mock agent completed check and export")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("generate: Mock generation complete")).toBeVisible();
+    await expect(page.getByText(/check: Check passed/)).toBeVisible();
+    await expect(page.getByText(/export: [1-9][0-9]* artifacts/)).toBeVisible();
+    await expect(page.getByText("review: Ready for review")).toBeVisible();
     await expectNoFrameworkOverlay(page);
     expect(browserErrors).toEqual([]);
   });

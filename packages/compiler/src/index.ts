@@ -154,6 +154,8 @@ const DEFAULT_SAFE_AREA: NonNullable<CompilerProjectInput["safeArea"]> = {
 
 const ZIP_DATE = new Date("2000-01-01T00:00:00.000Z");
 const PDF_DATE = new Date("2000-01-01T00:00:00.000Z");
+const ZIP_FILE_PERMISSIONS = 0o100644;
+const ZIP_DIR_PERMISSIONS = 0o40755;
 const PACKAGE_HTML_PATH = "deck.html";
 const PACKAGE_PDF_PATH = "deck.pdf";
 const PACKAGE_NOTES_PATH = "notes.json";
@@ -741,7 +743,16 @@ const presenterSettings = {
 
 const addZipFile = (zip: JSZip, filePath: string, content: string | Uint8Array): void => {
   zip.file(filePath, content, {
-    date: ZIP_DATE
+    date: ZIP_DATE,
+    unixPermissions: ZIP_FILE_PERMISSIONS
+  });
+};
+
+const addZipDirectory = (zip: JSZip, directoryPath: string): void => {
+  zip.file(directoryPath.endsWith("/") ? directoryPath : `${directoryPath}/`, null, {
+    date: ZIP_DATE,
+    dir: true,
+    unixPermissions: ZIP_DIR_PERMISSIONS
   });
 };
 
@@ -821,6 +832,7 @@ export const exportDeck = async (
     addZipFile(zip, PACKAGE_PDF_PATH, pdfBytes);
     addZipFile(zip, PACKAGE_NOTES_PATH, notesJson);
     addZipFile(zip, PACKAGE_PRESENTER_SETTINGS_PATH, `${JSON.stringify(presenterSettings, null, 2)}\n`);
+    addZipDirectory(zip, "thumbnails");
     for (const thumbnail of thumbnailEntries) {
       addZipFile(zip, thumbnail.packagePath, thumbnail.bytes);
     }

@@ -8,13 +8,14 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
+pnpm e2e:desktop
 ```
 
 Required root package contract:
 
 - `packageManager` pinned to a pnpm version.
 - `pnpm-lock.yaml` committed.
-- `lint`, `typecheck`, `test`, and `build` scripts in `package.json`.
+- `lint`, `typecheck`, `test`, `build`, and `e2e:desktop` scripts in `package.json`.
 - `package:alpha` and `smoke:package:alpha` scripts before unsigned alpha packaging is enabled.
 
 ## Test Layers
@@ -48,6 +49,8 @@ pnpm e2e:desktop:headed
 ```
 
 The smoke test builds `@htmlslide/desktop`, launches the built Electron main process with Playwright, verifies the app loads without a Vite/framework error overlay, skips onboarding into No AI mode, reaches the project library, creates a No AI source deck, confirms BYOK generation is visibly blocked until the backend exists, creates and generates a Local Mock deck from the New Deck wizard, mocks the native folder picker, opens `packages/test-fixtures/decks/valid-full`, runs Check and Export through the shared CLI/compiler path, asserts PDF/HTML/deckpkg/notes/thumbnail artifacts exist, verifies Present loads the exported deckpkg metadata and notes before exercising navigation/overlays/keyboard exit, and verifies Settings can reinstall/copy/uninstall the CLI shim in an isolated target directory.
+
+GitHub `CI` runs this smoke on `macos-latest` for pull requests and pushes to `main`. The `Alpha Package` workflow also runs it before unsigned packaging so release artifacts are gated on the desktop app path, not only package creation.
 
 Artifacts are written under `tmp/playwright/` so they stay out of release artifacts and normal source diffs. This is a foundation smoke, not full coverage for BYOK providers, real Claude/Codex agents, dual-screen presenter placement, or native packaging install flows. Generic external-agent command coverage lives in desktop service tests with controlled fake commands.
 

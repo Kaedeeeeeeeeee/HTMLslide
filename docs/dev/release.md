@@ -8,8 +8,8 @@ HTMLslide uses SemVer for app releases and a separate schema version for deck fo
 
 ## CI Workflows
 
-- `CI`: runs `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` on pull requests and pushes to `main`.
-- `Alpha Package`: runs on manual dispatch, nightly schedule, and `v*` tags. It repeats the CI checks, runs `pnpm package:alpha`, smokes the generated package, and uploads unsigned artifacts.
+- `CI`: runs `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` on Ubuntu, plus `pnpm e2e:desktop` on macOS for Electron workspace/presenter smoke coverage.
+- `Alpha Package`: runs on manual dispatch, nightly schedule, and `v*` tags. It repeats the CI checks, runs macOS desktop Electron E2E before packaging, runs `pnpm package:alpha`, smokes the generated package, and uploads unsigned artifacts.
 
 Both workflows intentionally fail early if the root package scaffold is missing required scripts. Add those scripts in the app scaffold rather than weakening workflow checks.
 

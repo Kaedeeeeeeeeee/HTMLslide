@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "0.1.0",
+  "appVersion": "0.1.0",
+  "id": "golden_export_basic",
+  "title": "Golden Export Basic",
+  "language": "en-US",
+  "aspectRatio": "16:9",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "safeArea": {
+    "top": 72,
+    "right": 96,
+    "bottom": 72,
+    "left": 96
+  },
+  "theme": {
+    "css": "theme/theme.css"
+  },
+  "slides": [
+    {
+      "id": "001-title",
+      "title": "Deterministic HTML",
+      "source": "slides/001-title.html",
+      "notes": "notes/001-title.md",
+      "durationSec": 45,
+      "kind": "title",
+      "status": "ready"
+    },
+    {
+      "id": "002-artifacts",
+      "title": "Artifact Map",
+      "source": "slides/002-artifacts.html",
+      "notes": "notes/002-artifacts.md",
+      "durationSec": 75,
+      "kind": "content",
+      "status": "ready"
+    }
+  ],
+  "export": {
+    "pdf": true,
+    "html": true,
+    "deckpkg": true,
+    "thumbnails": true,
+    "speakerNotes": true
+  }
+}

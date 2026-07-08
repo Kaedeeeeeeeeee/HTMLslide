@@ -1,8 +1,8 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { mockEngines } from "@htmlslide/agent";
-import { exportDeck, type CompilerProjectInput } from "@htmlslide/compiler";
-import { parseDeck, type Deck } from "@htmlslide/core";
+import { exportDeck, type CompilerProjectInput, type ExportOptions } from "@htmlslide/compiler";
+import { loadDeckProject, parseDeck, ProjectLoadError, type Deck, type LoadedDeckProject } from "@htmlslide/core";
 import { checkProject, type CheckReport } from "@htmlslide/linter";
 
 export const EXIT_CODES = {
@@ -21,6 +21,17 @@ export type LoadedProject = {
   projectPath: string;
   manifest: Deck;
 };
+
+export type ProjectLoadResult =
+  | {
+      ok: true;
+      project: LoadedProject;
+    }
+  | {
+      ok: false;
+      exitCode: number;
+      report: CheckReport;
+    };
 
 const exists = async (filePath: string): Promise<boolean> => {
   try {
@@ -265,23 +276,74 @@ export const createProject = async (projectPath: string, name: string): Promise<
 };
 
 export const loadProject = async (projectPath = process.cwd()): Promise<LoadedProject> => {
-  const resolvedPath = path.resolve(projectPath);
-  const deckPath = path.join(resolvedPath, "deck.json");
-  if (!(await exists(deckPath))) {
-    throw Object.assign(new Error(`No deck.json found at ${deckPath}`), {
-      exitCode: EXIT_CODES.projectNotFound
-    });
-  }
-  let manifest: Deck;
   try {
-    manifest = parseDeck(JSON.parse(await readFile(deckPath, "utf8")));
+    const project = await loadDeckProject(projectPath, { verifyFiles: false });
+    return fromCoreProject(project);
   } catch (error) {
+    if (error instanceof ProjectLoadError) {
+      throw Object.assign(error, {
+        exitCode: error.code === "PROJECT_NOT_FOUND" ? EXIT_CODES.projectNotFound : EXIT_CODES.validationFailed
+      });
+    }
     throw Object.assign(error instanceof Error ? error : new Error(String(error)), {
       exitCode: EXIT_CODES.validationFailed
     });
   }
-  return { projectPath: resolvedPath, manifest };
 };
+
+export const tryLoadProjectForCheck = async (projectPath = process.cwd()): Promise<ProjectLoadResult> => {
+  try {
+    return {
+      ok: true,
+      project: await loadProject(projectPath)
+    };
+  } catch (error) {
+    if (error instanceof ProjectLoadError) {
+      const report: CheckReport = {
+        status: "failed",
+        projectPath: path.resolve(projectPath),
+        summary: {
+          errors: Math.max(error.issues.length, 1),
+          warnings: 0,
+          suggestions: 0,
+          info: 0
+        },
+        issues:
+          error.issues.length > 0
+            ? error.issues.map((issue) => ({
+                slideId: issue.slideId ?? "deck",
+                severity: "error",
+                type: "missing-slide-source",
+                message: issue.message,
+                suggestedFix: issue.suggestedFix ?? "Fix the project manifest and rerun htmlslide check.",
+                agentInstruction:
+                  issue.suggestedFix ?? "Inspect deck.json and referenced source files, then fix the reported load error."
+              }))
+            : [
+                {
+                  slideId: "deck",
+                  severity: "error",
+                  type: "missing-slide-source",
+                  message: error.message,
+                  suggestedFix: "Run htmlslide from a deck project or pass a path containing deck.json.",
+                  agentInstruction: "Locate the deck project root before running check or export."
+                }
+              ]
+      };
+      return {
+        ok: false,
+        exitCode: error.code === "PROJECT_NOT_FOUND" ? EXIT_CODES.projectNotFound : EXIT_CODES.validationFailed,
+        report
+      };
+    }
+    throw error;
+  }
+};
+
+const fromCoreProject = (project: LoadedDeckProject): LoadedProject => ({
+  projectPath: project.projectRoot,
+  manifest: project.deck
+});
 
 const toCompilerInput = (project: LoadedProject): CompilerProjectInput => ({
   projectPath: project.projectPath,
@@ -311,7 +373,8 @@ export const checkLoadedProject = async (project: LoadedProject): Promise<CheckR
     }))
   });
 
-export const exportLoadedProject = async (project: LoadedProject) => exportDeck(toCompilerInput(project));
+export const exportLoadedProject = async (project: LoadedProject, options?: ExportOptions) =>
+  exportDeck(toCompilerInput(project), options);
 
 export const doctor = () => ({
   status: "passed" as const,

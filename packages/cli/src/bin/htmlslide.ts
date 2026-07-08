@@ -8,11 +8,19 @@ import {
   EXIT_CODES,
   exportLoadedProject,
   listAgentEngines,
-  loadProject
+  loadProject,
+  tryLoadProjectForCheck
 } from "../index.js";
 
 type JsonOption = {
   json?: boolean;
+};
+
+type ExportCommandOptions = JsonOption & {
+  pdf?: boolean;
+  html?: boolean;
+  deckpkg?: boolean;
+  thumbnails?: boolean;
 };
 
 const writeResult = (payload: unknown, json = false): void => {
@@ -83,8 +91,12 @@ program
   .action(async (projectPath: string, options: JsonOption) => {
     const json = Boolean(options.json ?? program.opts<JsonOption>().json);
     try {
-      const project = await loadProject(projectPath);
-      const report = await checkLoadedProject(project);
+      const loaded = await tryLoadProjectForCheck(projectPath);
+      if (!loaded.ok) {
+        writeResult(loaded.report, json);
+        process.exit(loaded.exitCode);
+      }
+      const report = await checkLoadedProject(loaded.project);
       writeResult(report, json);
       if (report.status === "failed") {
         process.exit(EXIT_CODES.validationFailed);
@@ -98,12 +110,16 @@ program
   .command("export")
   .argument("[path]", "deck project path", process.cwd())
   .option("--json", "print machine-readable JSON")
-  .option("--pdf", "export PDF", true)
-  .option("--html", "export standalone HTML", true)
-  .option("--deckpkg", "export deckpkg", true)
-  .option("--thumbnails", "export thumbnails", true)
+  .option("--pdf", "export PDF")
+  .option("--no-pdf", "skip PDF export")
+  .option("--html", "export standalone HTML")
+  .option("--no-html", "skip standalone HTML export")
+  .option("--deckpkg", "export deckpkg")
+  .option("--no-deckpkg", "skip deckpkg export")
+  .option("--thumbnails", "export thumbnails")
+  .option("--no-thumbnails", "skip thumbnail export")
   .description("Export PDF, HTML, thumbnails, notes, and deckpkg artifacts.")
-  .action(async (projectPath: string, options: JsonOption) => {
+  .action(async (projectPath: string, options: ExportCommandOptions) => {
     const json = Boolean(options.json ?? program.opts<JsonOption>().json);
     try {
       const project = await loadProject(projectPath);
@@ -112,7 +128,12 @@ program
         writeResult(report, json);
         process.exit(EXIT_CODES.validationFailed);
       }
-      const result = await exportLoadedProject(project);
+      const result = await exportLoadedProject(project, {
+        pdf: options.pdf,
+        html: options.html,
+        deckpkg: options.deckpkg,
+        thumbnails: options.thumbnails
+      });
       writeResult({ status: "passed", ...result }, json);
     } catch (error) {
       fail(error, json);

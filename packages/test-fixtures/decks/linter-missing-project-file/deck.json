@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "0.1.0",
+  "id": "deck_linter_missing_project_file",
+  "title": "Linter Missing Project File",
+  "language": "en-US",
+  "aspectRatio": "16:9",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "slides": [
+    {
+      "id": "001-missing",
+      "title": "Missing Project File",
+      "source": "slides/001-missing.html",
+      "notes": "notes/001-missing.md"
+    }
+  ]
+}

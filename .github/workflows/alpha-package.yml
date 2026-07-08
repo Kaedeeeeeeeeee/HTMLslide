@@ -92,23 +92,41 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p .alpha-artifacts
+          artifact_dir="dist/alpha"
 
-          while IFS= read -r artifact; do
-            cp "$artifact" .alpha-artifacts/
-          done < <(
-            find dist release out build -maxdepth 4 -type f \
-              \( -name "*.dmg" -o -name "*.zip" -o -name "*.pkg" -o -name "*.tar.gz" -o -name "*.blockmap" \) \
-              2>/dev/null | sort
-          )
-
-          count="$(find .alpha-artifacts -type f | wc -l | tr -d ' ')"
-          if [[ "$count" == "0" ]]; then
-            echo "::error title=No package artifacts::pnpm package:alpha completed but no DMG/ZIP/PKG/TAR artifacts were found under dist/, release/, out/, or build/."
+          if [[ ! -d "$artifact_dir" ]]; then
+            echo "::error title=Missing alpha artifact directory::pnpm package:alpha must write unsigned alpha artifacts to dist/alpha."
             exit 1
           fi
 
-          find .alpha-artifacts -type f -maxdepth 1 -print | sort
+          shopt -s nullglob
+          dmgs=("$artifact_dir"/*.dmg)
+          zips=("$artifact_dir"/*.zip)
+          artifacts=("$artifact_dir"/*.dmg "$artifact_dir"/*.zip "$artifact_dir"/*.json "$artifact_dir"/*.blockmap)
+
+          if (( ${#dmgs[@]} == 0 )); then
+            echo "::error title=Missing alpha DMG::pnpm package:alpha completed but no DMG was found under dist/alpha."
+            exit 1
+          fi
+
+          if (( ${#zips[@]} == 0 )); then
+            echo "::error title=Missing alpha ZIP::pnpm package:alpha completed but no ZIP was found under dist/alpha."
+            exit 1
+          fi
+
+          mkdir -p .alpha-artifacts
+
+          for artifact in "${artifacts[@]}"; do
+            cp "$artifact" .alpha-artifacts/
+          done
+
+          count="$(find .alpha-artifacts -type f | wc -l | tr -d ' ')"
+          if [[ "$count" == "0" ]]; then
+            echo "::error title=No package artifacts::pnpm package:alpha completed but no alpha artifacts were copied from dist/alpha."
+            exit 1
+          fi
+
+          find .alpha-artifacts -type f -print | sort
 
       - name: Upload unsigned alpha artifact
         uses: actions/upload-artifact@v4

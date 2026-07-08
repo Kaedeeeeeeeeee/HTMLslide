@@ -21,14 +21,17 @@ The alpha packaging contract is:
 pnpm package:alpha
 ```
 
-The script should create unsigned macOS artifacts under one of:
+The script runs the desktop build and creates current-architecture macOS alpha artifacts under:
 
-- `dist/`
-- `release/`
-- `out/`
-- `build/`
+- `dist/alpha/HTMLslide-<version>-unsigned-alpha-<arch>.dmg`
+- `dist/alpha/HTMLslide-<version>-unsigned-alpha-<arch>.zip`
+- `dist/alpha/HTMLslide-<version>-unsigned-alpha-<arch>.json`
 
-Accepted artifact extensions are `.dmg`, `.zip`, `.pkg`, `.tar.gz`, and `.blockmap`. The workflow sets `CSC_IDENTITY_AUTO_DISCOVERY=false` so electron-builder-style tooling does not silently sign with a local identity.
+Alpha packaging uses the installed Electron macOS runtime and `hdiutil`/`ditto`, so it must run on macOS. The workflow sets `CSC_IDENTITY_AUTO_DISCOVERY=false` so electron-builder-style tooling does not silently sign with a local Developer ID identity.
+
+The alpha bundle may be ad-hoc signed to keep the local app bundle internally valid, but it is not Developer ID signed, notarized, or stapled. Treat it as an internal/tester artifact, not a production release. Testers may see Gatekeeper warnings and may need to right-click Open for the first launch.
+
+The DMG contains `HTMLslide.app` and an `Applications` symlink. The ZIP is provided as a fallback transport artifact for CI downloads and manual inspection.
 
 ## Alpha Checklist
 
@@ -51,7 +54,7 @@ Before calling an alpha build public, verify:
 
 ## Signed Releases
 
-Signed and notarized macOS releases are intentionally out of the unsigned alpha workflow. Add a separate signing workflow only after Developer ID credentials, notarization credentials, artifact naming, and secret ownership are documented. Signing secrets must be repository or organization secrets, never committed files.
+Signed and notarized macOS releases are intentionally out of the unsigned alpha workflow. A production release must use a separate workflow with Developer ID signing, notarization, stapling, helper/CLI binary signing, release artifact naming, and documented secret ownership. Signing and notarization secrets must be repository or organization secrets, never committed files.
 
 ## Release Notes
 

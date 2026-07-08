@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "0.1.0",
+  "id": "deck_linter_valid_clean",
+  "title": "Linter Valid Clean",
+  "language": "en-US",
+  "aspectRatio": "16:9",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "slides": [
+    {
+      "id": "001-clean",
+      "title": "Local QA Clean Slide",
+      "source": "slides/001-clean.html",
+      "notes": "notes/001-clean.md",
+      "durationSec": 60,
+      "kind": "content",
+      "status": "ready"
+    }
+  ]
+}

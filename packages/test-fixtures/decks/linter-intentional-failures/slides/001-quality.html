@@ -1,0 +1,16 @@
+<section class="slide" data-slide-id="wrong-slide-id">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@700" />
+  <script src="https://cdn.example.com/chart-runtime.js"></script>
+  <h1>This title is also far too long for a single slide and repeats the manifest problem</h1>
+  <p>
+    This slide intentionally includes far more body copy than a single fixed-canvas presentation slide should carry.
+    The paragraph keeps adding operational detail, caveats, backstory, implementation notes, review notes, supporting
+    examples, and repeated reminders until the main claim becomes hard to scan. A useful checker should flag this
+    density so an agent can split the material across multiple slides, move details into speaker notes, or reduce the
+    visible copy to the few statements that the audience can read during a talk. The wording continues with redundant
+    filler about assets, exports, local review, offline reliability, and future repair instructions so the threshold is
+    crossed deterministically without relying on visual rendering or local browser state.
+  </p>
+  <img src="https://example.com/remote-chart.png" alt="Remote chart" />
+  <img src="../assets/missing-chart.png" alt="Missing local chart" />
+</section>

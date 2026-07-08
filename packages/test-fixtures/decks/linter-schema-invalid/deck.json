@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "0.1.0",
+  "id": "deck_linter_schema_invalid",
+  "title": "Linter Schema Invalid",
+  "language": "en-US",
+  "aspectRatio": "16:9",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "slides": [
+    {
+      "id": "001-repeat",
+      "title": "First Repeat",
+      "source": "slides/001-repeat.html"
+    },
+    {
+      "id": "001-repeat",
+      "title": "Second Repeat",
+      "source": "slides/002-repeat.html"
+    }
+  ]
+}

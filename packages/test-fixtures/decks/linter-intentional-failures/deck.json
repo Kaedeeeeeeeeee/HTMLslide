@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "0.1.0",
+  "id": "deck_linter_intentional_failures",
+  "title": "Linter Intentional Failures",
+  "language": "en-US",
+  "aspectRatio": "16:9",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "slides": [
+    {
+      "id": "001-quality",
+      "title": "This slide title is intentionally far too long for a presentation viewport and should be shortened by an agent",
+      "source": "slides/001-quality.html",
+      "notes": "notes/001-quality.md",
+      "durationSec": 60,
+      "kind": "content",
+      "status": "draft"
+    },
+    {
+      "id": "002-missing-notes",
+      "title": "Missing Notes",
+      "source": "slides/002-missing-notes.html",
+      "durationSec": 45,
+      "kind": "content",
+      "status": "draft"
+    }
+  ],
+  "export": {
+    "pdf": true,
+    "html": true,
+    "deckpkg": true,
+    "thumbnails": true,
+    "speakerNotes": true
+  }
+}

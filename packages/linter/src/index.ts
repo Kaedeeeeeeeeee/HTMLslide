@@ -1,36 +1,44 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  statusFromIssueSummary,
+  summarizeIssues,
+  tryLoadDeckProject,
+  type HtmlslideIssue as CoreIssue,
+  type IssueSeverity as CoreIssueSeverity,
+  type IssueStatus,
+  type LoadedDeckProject,
+  type ResolvedProjectSlide
+} from "@htmlslide/core";
 
-export type IssueSeverity = "error" | "warning" | "suggestion";
+export type IssueSeverity = CoreIssueSeverity;
+
+export type MeasurementValue = number | string | boolean;
 
 export type HtmlslideIssue = {
   slideId: string;
   severity: IssueSeverity;
-  type:
-    | "missing-slide-source"
-    | "missing-notes"
-    | "slide-id-mismatch"
-    | "remote-asset"
-    | "remote-font"
-    | "text-overflow"
-    | "safe-area-violation"
-    | "title-too-long";
-  selector?: string;
+  type: string;
   message: string;
-  measurement?: Record<string, number | string | boolean>;
+  path?: string;
+  selector?: string;
+  measurement?: Record<string, MeasurementValue>;
   suggestedFix: string;
   agentInstruction: string;
 };
 
+export type CheckReportSummary = {
+  errors: number;
+  warnings: number;
+  info: number;
+  suggestions: number;
+};
+
 export type CheckReport = {
-  status: "passed" | "failed";
+  schemaVersion?: "0.1.0";
+  status: IssueStatus;
   projectPath: string;
-  summary: {
-    errors: number;
-    warnings: number;
-    suggestions: number;
-    info: number;
-  };
+  summary: CheckReportSummary;
   issues: HtmlslideIssue[];
 };
 
@@ -39,15 +47,77 @@ export type LintSlideInput = {
   title: string;
   sourcePath: string;
   notesPath?: string;
+  durationSec?: number;
 };
 
 export type LintProjectInput = {
   projectPath: string;
-  slides: LintSlideInput[];
+  slides?: LintSlideInput[];
   writeReport?: boolean;
+  reportFileName?: string;
 };
 
-const exists = async (filePath: string): Promise<boolean> => {
+type NormalizedLintInput = LintProjectInput & {
+  projectPath: string;
+};
+
+type SlideCheckContext = {
+  index: number;
+  id: string;
+  title: string;
+  sourcePath: string;
+  sourceProjectPath: string;
+  notesPath?: string;
+  notesProjectPath?: string;
+  durationSec?: number;
+};
+
+type ResourceReference = {
+  url: string;
+  selector: string;
+  kind: "attribute" | "css-import" | "css-url";
+  attribute?: string;
+  rel?: string;
+  tag?: string;
+};
+
+type ResourceCheckResult = {
+  issues: HtmlslideIssue[];
+  assetPaths: string[];
+};
+
+type ExportExpectation = {
+  artifactPath: string;
+  artifactProjectPath: string;
+  artifactKind: "deckpkg" | "html" | "notes" | "pdf" | "thumbnail";
+  slideId: string;
+};
+
+const REPORT_SCHEMA_VERSION = "0.1.0";
+const DEFAULT_REPORT_FILE_NAMES = ["report.json", "check-report.json"] as const;
+const TITLE_MAX_CHARACTERS = 72;
+const BODY_MAX_WORDS = 120;
+const BODY_MAX_CHARACTERS = 850;
+const NOTES_MIN_WORDS = 12;
+const EXPORT_MTIME_TOLERANCE_MS = 1000;
+
+const ASSET_EXTENSION_PATTERN =
+  /\.(avif|bmp|csv|gif|ico|jpe?g|json|mp3|mp4|ogg|otf|pdf|png|svg|ttf|wav|webm|webp|woff2?)$/i;
+const FONT_EXTENSION_PATTERN = /\.(eot|otf|ttf|woff2?)$/i;
+const REMOTE_URL_PATTERN = /^https?:\/\//i;
+const URL_SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*:/i;
+const CJK_CHARACTER_PATTERN = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]/g;
+const LATIN_WORD_PATTERN = /[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)*/g;
+
+const normalizeInput = (project: LintProjectInput | string): NormalizedLintInput =>
+  typeof project === "string" ? { projectPath: project } : project;
+
+const makeIssue = (issue: HtmlslideIssue): HtmlslideIssue => ({
+  ...issue,
+  measurement: issue.measurement ?? {}
+});
+
+const pathExists = async (filePath: string): Promise<boolean> => {
   try {
     await access(filePath);
     return true;
@@ -56,133 +126,944 @@ const exists = async (filePath: string): Promise<boolean> => {
   }
 };
 
-const countBySeverity = (issues: HtmlslideIssue[], severity: IssueSeverity): number =>
-  issues.filter((issue) => issue.severity === severity).length;
+const statIfExists = async (filePath: string) => {
+  try {
+    return await stat(filePath);
+  } catch {
+    return undefined;
+  }
+};
 
-const checkSlideSource = async (projectPath: string, slide: LintSlideInput): Promise<HtmlslideIssue[]> => {
+export const checkProject = async (project: LintProjectInput | string): Promise<CheckReport> => {
+  const input = normalizeInput(project);
+  const loaded = await tryLoadDeckProject(input.projectPath, { verifyFiles: false });
+
+  if (loaded.ok) {
+    return checkLoadedDeckProject(loaded.project, input);
+  }
+
+  if (loaded.error.code === "PROJECT_NOT_FOUND" && input.slides && input.slides.length > 0) {
+    return checkManualProject(input);
+  }
+
+  const issues = normalizeCoreIssues(
+    loaded.issues.length > 0
+      ? loaded.issues
+      : [
+          {
+            severity: "error",
+            type: "project-load-error",
+            message: loaded.error.message,
+            suggestedFix: "Run the checker from a deck project or pass a path containing deck.json."
+          }
+        ],
+    path.resolve(input.projectPath)
+  );
+  const report = buildReport(path.resolve(input.projectPath), sortIssues(issues));
+  await writeReportIfRequested(report, input);
+  return report;
+};
+
+const checkLoadedDeckProject = async (
+  project: LoadedDeckProject,
+  input: NormalizedLintInput
+): Promise<CheckReport> => {
+  const slideOrder = buildSlideOrder(project.slides);
+  const coreFileIssues = await collectCoreProjectFileIssues(project);
+  const missingProjectPaths = new Set(coreFileIssues.map((issue) => issue.path).filter(isPresent));
+  const issues: HtmlslideIssue[] = normalizeCoreIssues(coreFileIssues, project.projectRoot);
+  const localAssetPaths = new Set<string>();
+
+  for (const slide of project.slides) {
+    const context = slideContextFromCoreSlide(slide);
+    const slideResult = await checkSlide(project.projectRoot, context, missingProjectPaths);
+    issues.push(...slideResult.issues);
+    slideResult.assetPaths.forEach((assetPath) => localAssetPaths.add(assetPath));
+  }
+
+  if (project.theme?.cssPath && !missingProjectPaths.has(project.deck.theme?.css ?? "")) {
+    const themeCss = await readFileIfExists(project.theme.cssPath);
+    if (themeCss !== undefined) {
+      const themeResult = await checkResourceReferences({
+        content: themeCss,
+        projectRoot: project.projectRoot,
+        sourcePath: project.theme.cssPath,
+        sourceProjectPath: project.deck.theme?.css ?? "theme css",
+        slideId: "deck"
+      });
+      issues.push(...themeResult.issues);
+      themeResult.assetPaths.forEach((assetPath) => localAssetPaths.add(assetPath));
+    }
+  }
+
+  issues.push(...(await checkExports(project, [...localAssetPaths])));
+
+  const report = buildReport(project.projectRoot, sortIssues(issues, slideOrder));
+  await writeReportIfRequested(report, input);
+  return report;
+};
+
+const checkManualProject = async (input: NormalizedLintInput): Promise<CheckReport> => {
+  const projectRoot = path.resolve(input.projectPath);
+  const slideOrder = buildManualSlideOrder(input.slides ?? []);
   const issues: HtmlslideIssue[] = [];
-  const sourcePath = path.resolve(projectPath, slide.sourcePath);
-  if (!(await exists(sourcePath))) {
+
+  for (const slide of input.slides ?? []) {
+    const context = slideContextFromManualSlide(projectRoot, slideOrder.get(slide.id) ?? 0, slide);
+    const slideResult = await checkSlide(projectRoot, context, new Set());
+    issues.push(...slideResult.issues);
+  }
+
+  const report = buildReport(projectRoot, sortIssues(issues, slideOrder));
+  await writeReportIfRequested(report, input);
+  return report;
+};
+
+const collectCoreProjectFileIssues = async (project: LoadedDeckProject): Promise<CoreIssue[]> => {
+  const verified = await tryLoadDeckProject(project.projectRoot, { verifyFiles: true });
+  if (verified.ok) {
+    return [];
+  }
+
+  if (verified.issues.length > 0) {
+    return verified.issues;
+  }
+
+  return [
+    {
+      severity: "error",
+      type: "project-load-error",
+      message: verified.error.message,
+      suggestedFix: "Fix deck.json and referenced project files, then rerun the checker."
+    }
+  ];
+};
+
+const checkSlide = async (
+  projectRoot: string,
+  slide: SlideCheckContext,
+  missingProjectPaths: ReadonlySet<string>
+): Promise<ResourceCheckResult> => {
+  const issues: HtmlslideIssue[] = [];
+  const assetPaths: string[] = [];
+
+  issues.push(...checkTitleLength(slide));
+
+  if (!(await pathExists(slide.sourcePath))) {
+    if (!missingProjectPaths.has(slide.sourceProjectPath)) {
+      issues.push(
+        makeIssue({
+          slideId: slide.id,
+          severity: "error",
+          type: "missing-file",
+          path: slide.sourceProjectPath,
+          message: `Missing slide source: ${slide.sourceProjectPath}.`,
+          measurement: { path: slide.sourceProjectPath },
+          suggestedFix: `Create ${slide.sourceProjectPath} or update deck.json to point at an existing project file.`,
+          agentInstruction: `Create the missing slide HTML for ${slide.id}, or update deck.json to use the correct source path.`
+        })
+      );
+    }
+    issues.push(...(await checkNotes(projectRoot, slide, missingProjectPaths)));
+    return { issues, assetPaths };
+  }
+
+  const html = await readFile(slide.sourcePath, "utf8");
+  issues.push(...checkSlideId(slide, html));
+  issues.push(...checkBodyDensity(slide, html));
+
+  const resourceResult = await checkResourceReferences({
+    content: html,
+    projectRoot,
+    sourcePath: slide.sourcePath,
+    sourceProjectPath: slide.sourceProjectPath,
+    slideId: slide.id
+  });
+  issues.push(...resourceResult.issues);
+  assetPaths.push(...resourceResult.assetPaths);
+
+  issues.push(...(await checkNotes(projectRoot, slide, missingProjectPaths)));
+
+  return { issues, assetPaths };
+};
+
+const checkTitleLength = (slide: SlideCheckContext): HtmlslideIssue[] => {
+  if (slide.title.length <= TITLE_MAX_CHARACTERS) {
+    return [];
+  }
+
+  return [
+    makeIssue({
+      slideId: slide.id,
+      severity: "warning",
+      type: "title-too-long",
+      path: slide.sourceProjectPath,
+      selector: "deck.json slides[].title",
+      message: `Slide title has ${slide.title.length} characters; keep titles at or below ${TITLE_MAX_CHARACTERS}.`,
+      measurement: {
+        titleLength: slide.title.length,
+        maxTitleLength: TITLE_MAX_CHARACTERS
+      },
+      suggestedFix: "Shorten the title or split the claim across title and body text.",
+      agentInstruction: `Rewrite the deck.json title for slide ${slide.id} to ${TITLE_MAX_CHARACTERS} characters or fewer while preserving the main claim.`
+    })
+  ];
+};
+
+const checkSlideId = (slide: SlideCheckContext, html: string): HtmlslideIssue[] => {
+  const slideIdMatch = html.match(/\bdata-slide-id\s*=\s*["']([^"']+)["']/i);
+
+  if (!slideIdMatch) {
     return [
-      {
+      makeIssue({
         slideId: slide.id,
         severity: "error",
-        type: "missing-slide-source",
-        message: `Slide source is missing: ${slide.sourcePath}`,
-        suggestedFix: "Create the missing slide HTML fragment or remove it from deck.json.",
-        agentInstruction: `Create ${slide.sourcePath} for slide ${slide.id}, or update deck.json to point at an existing source file.`
-      }
+        type: "slide-id-mismatch",
+        path: slide.sourceProjectPath,
+        selector: "[data-slide-id]",
+        message: "Slide fragment is missing data-slide-id.",
+        measurement: {
+          expectedSlideId: slide.id,
+          actualSlideId: ""
+        },
+        suggestedFix: "Add data-slide-id to the root slide element.",
+        agentInstruction: `Add data-slide-id="${slide.id}" to the root slide element in ${slide.sourceProjectPath}.`
+      })
     ];
   }
 
-  const html = await readFile(sourcePath, "utf8");
-  const slideIdMatch = html.match(/data-slide-id=["']([^"']+)["']/);
-  if (!slideIdMatch) {
-    issues.push({
+  const actualSlideId = slideIdMatch[1] ?? "";
+  if (actualSlideId === slide.id) {
+    return [];
+  }
+
+  return [
+    makeIssue({
       slideId: slide.id,
       severity: "error",
       type: "slide-id-mismatch",
-      selector: ".slide",
-      message: "Slide fragment is missing data-slide-id.",
-      suggestedFix: "Add data-slide-id to the root slide section.",
-      agentInstruction: `Add data-slide-id="${slide.id}" to the root <section> for slide ${slide.id}.`
-    });
-  } else if (slideIdMatch[1] !== slide.id) {
-    issues.push({
+      path: slide.sourceProjectPath,
+      selector: "[data-slide-id]",
+      message: `data-slide-id is "${actualSlideId}", expected "${slide.id}".`,
+      measurement: {
+        expectedSlideId: slide.id,
+        actualSlideId
+      },
+      suggestedFix: "Keep deck.json slide ids and slide source data-slide-id values identical.",
+      agentInstruction: `Change the root slide data-slide-id in ${slide.sourceProjectPath} to "${slide.id}" without changing deck.json.`
+    })
+  ];
+};
+
+const checkBodyDensity = (slide: SlideCheckContext, html: string): HtmlslideIssue[] => {
+  const text = htmlToText(html);
+  const wordCount = countWords(text);
+  const characterCount = text.length;
+
+  if (wordCount <= BODY_MAX_WORDS && characterCount <= BODY_MAX_CHARACTERS) {
+    return [];
+  }
+
+  return [
+    makeIssue({
       slideId: slide.id,
+      severity: "warning",
+      type: "body-too-dense",
+      path: slide.sourceProjectPath,
+      selector: ".slide",
+      message: `Slide body is dense: ${wordCount} words and ${characterCount} characters.`,
+      measurement: {
+        wordCount,
+        maxWords: BODY_MAX_WORDS,
+        characterCount,
+        maxCharacters: BODY_MAX_CHARACTERS
+      },
+      suggestedFix: "Split the content across multiple slides or reduce body copy.",
+      agentInstruction: `Reduce the visible copy in ${slide.sourceProjectPath} below ${BODY_MAX_WORDS} words and ${BODY_MAX_CHARACTERS} characters, or split it into multiple slides.`
+    })
+  ];
+};
+
+const checkNotes = async (
+  projectRoot: string,
+  slide: SlideCheckContext,
+  missingProjectPaths: ReadonlySet<string>
+): Promise<HtmlslideIssue[]> => {
+  if (!slide.notesPath || !slide.notesProjectPath) {
+    return [
+      makeIssue({
+        slideId: slide.id,
+        severity: "warning",
+        type: "missing-notes",
+        path: "deck.json",
+        selector: "slides[].notes",
+        message: "Slide has no speaker notes file.",
+        measurement: { minWords: NOTES_MIN_WORDS },
+        suggestedFix: "Add a project-local Markdown notes file and reference it from deck.json.",
+        agentInstruction: `Create speaker notes for slide ${slide.id} under notes/ and add the notes path to deck.json.`
+      })
+    ];
+  }
+
+  if (!(await pathExists(slide.notesPath))) {
+    if (missingProjectPaths.has(slide.notesProjectPath)) {
+      return [];
+    }
+
+    return [
+      makeIssue({
+        slideId: slide.id,
+        severity: "warning",
+        type: "missing-notes",
+        path: slide.notesProjectPath,
+        message: `Speaker notes file is missing: ${slide.notesProjectPath}.`,
+        measurement: { path: slide.notesProjectPath, minWords: NOTES_MIN_WORDS },
+        suggestedFix: "Create the missing notes Markdown file.",
+        agentInstruction: `Create ${slide.notesProjectPath} with concise speaker notes for slide ${slide.id}.`
+      })
+    ];
+  }
+
+  const notes = await readFile(path.resolve(projectRoot, slide.notesPath), "utf8");
+  const notesText = markdownToText(notes);
+  const wordCount = countWords(notesText);
+
+  if (wordCount >= NOTES_MIN_WORDS) {
+    return [];
+  }
+
+  return [
+    makeIssue({
+      slideId: slide.id,
+      severity: "warning",
+      type: "notes-too-short",
+      path: slide.notesProjectPath,
+      message: `Speaker notes are short: ${wordCount} words.`,
+      measurement: {
+        wordCount,
+        minWords: NOTES_MIN_WORDS
+      },
+      suggestedFix: "Expand the notes with the slide's talk track and timing guidance.",
+      agentInstruction: `Expand ${slide.notesProjectPath} to at least ${NOTES_MIN_WORDS} useful words for slide ${slide.id}.`
+    })
+  ];
+};
+
+const checkResourceReferences = async (input: {
+  content: string;
+  projectRoot: string;
+  sourcePath: string;
+  sourceProjectPath: string;
+  slideId: string;
+}): Promise<ResourceCheckResult> => {
+  const issues: HtmlslideIssue[] = [];
+  const assetPaths: string[] = [];
+  const seenIssues = new Set<string>();
+
+  for (const reference of extractResourceReferences(input.content)) {
+    const url = decodeHtmlEntities(reference.url.trim());
+    if (isIgnorableUrl(url)) {
+      continue;
+    }
+
+    if (REMOTE_URL_PATTERN.test(url)) {
+      if (!isRemoteReferenceCheckable(reference, url)) {
+        continue;
+      }
+
+      const issueType = remoteIssueType(reference, url);
+      const issueKey = [input.slideId, input.sourceProjectPath, issueType, url].join("\u0000");
+      if (seenIssues.has(issueKey)) {
+        continue;
+      }
+      seenIssues.add(issueKey);
+
+      issues.push(remoteResourceIssue(input.slideId, input.sourceProjectPath, reference, url, issueType));
+      continue;
+    }
+
+    if (!isLocalAssetReference(reference, url)) {
+      continue;
+    }
+
+    const cleanUrl = stripUrlFragmentAndQuery(url);
+    const resolvedAssetPath = await findExistingLocalAsset(input.projectRoot, input.sourcePath, cleanUrl);
+    if (resolvedAssetPath) {
+      assetPaths.push(resolvedAssetPath);
+      continue;
+    }
+
+    const issueKey = [input.slideId, input.sourceProjectPath, "missing-asset", cleanUrl].join("\u0000");
+    if (seenIssues.has(issueKey)) {
+      continue;
+    }
+    seenIssues.add(issueKey);
+
+    issues.push(
+      makeIssue({
+        slideId: input.slideId,
+        severity: "error",
+        type: "missing-asset",
+        path: input.sourceProjectPath,
+        selector: reference.selector,
+        message: `Referenced asset is missing: ${cleanUrl}.`,
+        measurement: {
+          url: cleanUrl,
+          source: input.sourceProjectPath
+        },
+        suggestedFix: "Add the asset to the project or update the reference to an existing local file.",
+        agentInstruction: `Add ${cleanUrl} to the project or update the reference in ${input.sourceProjectPath} to point at an existing local asset.`
+      })
+    );
+  }
+
+  return { issues, assetPaths };
+};
+
+const remoteResourceIssue = (
+  slideId: string,
+  sourceProjectPath: string,
+  reference: ResourceReference,
+  url: string,
+  issueType: "remote-asset" | "remote-font" | "remote-script"
+): HtmlslideIssue => {
+  if (issueType === "remote-script") {
+    return makeIssue({
+      slideId,
       severity: "error",
-      type: "slide-id-mismatch",
-      selector: ".slide",
-      message: `data-slide-id is ${slideIdMatch[1]}, expected ${slide.id}.`,
-      suggestedFix: "Keep deck.json and slide source ids identical.",
-      agentInstruction: `Change the root slide data-slide-id to "${slide.id}" without changing the deck.json id.`
+      type: issueType,
+      path: sourceProjectPath,
+      selector: reference.selector,
+      message: `Remote script is not allowed in local-first decks: ${url}.`,
+      measurement: { url },
+      suggestedFix: "Bundle required behavior locally or remove the script dependency.",
+      agentInstruction: `Remove the remote script reference from ${sourceProjectPath}; if behavior is required, replace it with local project code.`
     });
   }
 
-  if (/https?:\/\//i.test(html)) {
-    issues.push({
-      slideId: slide.id,
+  if (issueType === "remote-font") {
+    return makeIssue({
+      slideId,
       severity: "warning",
-      type: "remote-asset",
-      message: "Slide source references a remote URL.",
-      suggestedFix: "Move assets into the project assets folder and reference them locally.",
-      agentInstruction: `Replace remote URLs in slide ${slide.id} with project-local assets.`
-    });
-  }
-
-  if (/@import\s+url\(|fonts\.googleapis|fonts\.gstatic/i.test(html)) {
-    issues.push({
-      slideId: slide.id,
-      severity: "warning",
-      type: "remote-font",
-      message: "Slide source appears to reference remote fonts.",
+      type: issueType,
+      path: sourceProjectPath,
+      selector: reference.selector,
+      message: `Remote font reference may fail offline: ${url}.`,
+      measurement: { url },
       suggestedFix: "Bundle fonts locally or use system fonts.",
-      agentInstruction: `Remove remote font references from slide ${slide.id}.`
+      agentInstruction: `Replace the remote font reference in ${sourceProjectPath} with a local font asset or a system font stack.`
     });
   }
 
-  if (slide.title.length > 72) {
-    issues.push({
-      slideId: slide.id,
-      severity: "suggestion",
-      type: "title-too-long",
-      selector: "h1",
-      message: "Slide title is long for a presentation viewport.",
-      measurement: { titleLength: slide.title.length },
-      suggestedFix: "Shorten the title or split the slide.",
-      agentInstruction: `Shorten the title for slide ${slide.id} while preserving the main claim.`
-    });
+  return makeIssue({
+    slideId,
+    severity: "warning",
+    type: issueType,
+    path: sourceProjectPath,
+    selector: reference.selector,
+    message: `Remote asset may fail offline: ${url}.`,
+    measurement: { url },
+    suggestedFix: "Move the asset into the project assets folder and reference it locally.",
+    agentInstruction: `Download or otherwise provide the asset legally, place it under assets/, and update ${sourceProjectPath} to use the local path.`
+  });
+};
+
+const checkExports = async (project: LoadedDeckProject, localAssetPaths: string[]): Promise<HtmlslideIssue[]> => {
+  const expectations = exportExpectations(project);
+  if (expectations.length === 0) {
+    return [];
+  }
+
+  const issues: HtmlslideIssue[] = [];
+  const sourceMtimeMs = await newestSourceMtime(project, localAssetPaths);
+
+  for (const expectation of expectations) {
+    const artifactStat = await statIfExists(expectation.artifactPath);
+    if (!artifactStat) {
+      issues.push(
+        makeIssue({
+          slideId: expectation.slideId,
+          severity: "warning",
+          type: "export-missing",
+          path: expectation.artifactProjectPath,
+          message: `Expected ${expectation.artifactKind} export is missing: ${expectation.artifactProjectPath}.`,
+          measurement: {
+            artifactKind: expectation.artifactKind,
+            artifactPath: expectation.artifactProjectPath
+          },
+          suggestedFix: "Run htmlslide export for the requested artifact type.",
+          agentInstruction: `Run htmlslide export for this project so ${expectation.artifactProjectPath} is regenerated.`
+        })
+      );
+      continue;
+    }
+
+    if (sourceMtimeMs > artifactStat.mtimeMs + EXPORT_MTIME_TOLERANCE_MS) {
+      issues.push(
+        makeIssue({
+          slideId: expectation.slideId,
+          severity: "warning",
+          type: "export-outdated",
+          path: expectation.artifactProjectPath,
+          message: `${expectation.artifactKind} export is older than deck sources: ${expectation.artifactProjectPath}.`,
+          measurement: {
+            artifactKind: expectation.artifactKind,
+            artifactMtimeMs: Math.floor(artifactStat.mtimeMs),
+            newestSourceMtimeMs: Math.floor(sourceMtimeMs)
+          },
+          suggestedFix: "Regenerate exports after source changes.",
+          agentInstruction: `Run htmlslide export to refresh ${expectation.artifactProjectPath} after the source edits.`
+        })
+      );
+    }
   }
 
   return issues;
 };
 
-export const checkProject = async (project: LintProjectInput): Promise<CheckReport> => {
-  const issues = (
-    await Promise.all(
-      project.slides.map(async (slide) => {
-        const slideIssues = await checkSlideSource(project.projectPath, slide);
-        if (!slide.notesPath) {
-          slideIssues.push({
-            slideId: slide.id,
-            severity: "warning",
-            type: "missing-notes",
-            message: "Slide has no speaker notes file.",
-            suggestedFix: "Add notes/<slide-id>.md and reference it from deck.json.",
-            agentInstruction: `Create speaker notes for slide ${slide.id} and reference them in deck.json.`
-          });
-        } else if (!(await exists(path.resolve(project.projectPath, slide.notesPath)))) {
-          slideIssues.push({
-            slideId: slide.id,
-            severity: "warning",
-            type: "missing-notes",
-            message: `Speaker notes file is missing: ${slide.notesPath}`,
-            suggestedFix: "Create the missing notes Markdown file.",
-            agentInstruction: `Create ${slide.notesPath} with concise speaker notes for slide ${slide.id}.`
-          });
-        }
-        return slideIssues;
-      })
-    )
-  ).flat();
+const normalizeCoreIssues = (issues: readonly CoreIssue[], projectPath: string): HtmlslideIssue[] =>
+  issues.map((issue) =>
+    makeIssue({
+      slideId: issue.slideId ?? "deck",
+      severity: issue.severity,
+      type: issue.type,
+      path: issue.path,
+      selector: issue.selector,
+      message: issue.message,
+      measurement: coreIssueMeasurement(issue),
+      suggestedFix: issue.suggestedFix ?? suggestedFixForCoreIssue(issue),
+      agentInstruction: agentInstructionForCoreIssue(issue, projectPath)
+    })
+  );
 
-  const report: CheckReport = {
-    status: countBySeverity(issues, "error") > 0 ? "failed" : "passed",
-    projectPath: project.projectPath,
+const coreIssueMeasurement = (issue: CoreIssue): Record<string, MeasurementValue> => {
+  const measurement: Record<string, MeasurementValue> = {};
+  if (issue.path) {
+    measurement.path = issue.path;
+  }
+  if (issue.slideId) {
+    measurement.slideId = issue.slideId;
+  }
+  return measurement;
+};
+
+const suggestedFixForCoreIssue = (issue: CoreIssue): string => {
+  if (issue.type === "schema-validation") {
+    return "Update deck.json so it conforms to the HTMLslide deck schema.";
+  }
+  if (issue.type === "missing-file" && issue.path) {
+    return `Create ${issue.path} or update deck.json to point at an existing project file.`;
+  }
+  return "Fix the reported project issue and rerun htmlslide check.";
+};
+
+const agentInstructionForCoreIssue = (issue: CoreIssue, projectPath: string): string => {
+  if (issue.type === "schema-validation") {
+    return `Open ${path.join(projectPath, "deck.json")} and fix ${issue.path ?? "the schema error"}: ${issue.message}`;
+  }
+  if (issue.type === "missing-file" && issue.path) {
+    return `Create ${issue.path} or update deck.json so it references the correct project-local file.`;
+  }
+  return issue.suggestedFix ?? "Inspect deck.json and the referenced project files, then fix the reported issue.";
+};
+
+const buildReport = (projectPath: string, issues: HtmlslideIssue[]): CheckReport => {
+  const summary = summarizeIssues(issues);
+  return {
+    schemaVersion: REPORT_SCHEMA_VERSION,
+    status: statusFromIssueSummary(summary),
+    projectPath,
     summary: {
-      errors: countBySeverity(issues, "error"),
-      warnings: countBySeverity(issues, "warning"),
-      suggestions: countBySeverity(issues, "suggestion"),
-      info: 0
+      ...summary,
+      suggestions: 0
     },
     issues
   };
+};
 
-  if (project.writeReport) {
-    const reportPath = path.join(project.projectPath, ".htmlslide", "reports", "check-report.json");
-    await mkdir(path.dirname(reportPath), { recursive: true });
-    await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+const writeReportIfRequested = async (report: CheckReport, input: NormalizedLintInput): Promise<void> => {
+  if (!input.writeReport) {
+    return;
   }
 
-  return report;
+  const reportsPath = path.join(report.projectPath, ".htmlslide", "reports");
+  await mkdir(reportsPath, { recursive: true });
+  const reportFileNames = input.reportFileName ? [input.reportFileName] : [...DEFAULT_REPORT_FILE_NAMES];
+  const uniqueReportFileNames = [...new Set(reportFileNames)];
+  await Promise.all(
+    uniqueReportFileNames.map((reportFileName) =>
+      writeFile(path.join(reportsPath, reportFileName), `${JSON.stringify(report, null, 2)}\n`)
+    )
+  );
 };
+
+const buildSlideOrder = (slides: readonly ResolvedProjectSlide[]): Map<string, number> => {
+  const order = new Map<string, number>([["deck", -1]]);
+  slides.forEach((slide) => order.set(slide.id, slide.index));
+  return order;
+};
+
+const buildManualSlideOrder = (slides: readonly LintSlideInput[]): Map<string, number> => {
+  const order = new Map<string, number>([["deck", -1]]);
+  slides.forEach((slide, index) => order.set(slide.id, index));
+  return order;
+};
+
+const sortIssues = (
+  issues: readonly HtmlslideIssue[],
+  slideOrder: ReadonlyMap<string, number> = new Map([["deck", -1]])
+): HtmlslideIssue[] =>
+  [...issues].sort((left, right) => {
+    const severityDelta = severityRank(left.severity) - severityRank(right.severity);
+    if (severityDelta !== 0) {
+      return severityDelta;
+    }
+
+    const slideDelta = issueSlideRank(left, slideOrder) - issueSlideRank(right, slideOrder);
+    if (slideDelta !== 0) {
+      return slideDelta;
+    }
+
+    return [
+      compareStrings(left.path, right.path),
+      compareStrings(left.type, right.type),
+      compareStrings(left.selector, right.selector),
+      compareStrings(left.message, right.message)
+    ].find((result) => result !== 0) ?? 0;
+  });
+
+const severityRank = (severity: IssueSeverity): number => {
+  if (severity === "error") {
+    return 0;
+  }
+  if (severity === "warning") {
+    return 1;
+  }
+  return 2;
+};
+
+const issueSlideRank = (issue: HtmlslideIssue, slideOrder: ReadonlyMap<string, number>): number =>
+  slideOrder.get(issue.slideId) ?? Number.MAX_SAFE_INTEGER;
+
+const compareStrings = (left: string | undefined, right: string | undefined): number =>
+  (left ?? "").localeCompare(right ?? "");
+
+const slideContextFromCoreSlide = (slide: ResolvedProjectSlide): SlideCheckContext => ({
+  index: slide.index,
+  id: slide.id,
+  title: slide.slide.title,
+  sourcePath: slide.sourcePath,
+  sourceProjectPath: slide.slide.source,
+  notesPath: slide.notesPath,
+  notesProjectPath: slide.slide.notes,
+  durationSec: slide.slide.durationSec
+});
+
+const slideContextFromManualSlide = (projectRoot: string, index: number, slide: LintSlideInput): SlideCheckContext => ({
+  index,
+  id: slide.id,
+  title: slide.title,
+  sourcePath: path.resolve(projectRoot, slide.sourcePath),
+  sourceProjectPath: slide.sourcePath,
+  notesPath: slide.notesPath ? path.resolve(projectRoot, slide.notesPath) : undefined,
+  notesProjectPath: slide.notesPath,
+  durationSec: slide.durationSec
+});
+
+const readFileIfExists = async (filePath: string): Promise<string | undefined> => {
+  try {
+    return await readFile(filePath, "utf8");
+  } catch {
+    return undefined;
+  }
+};
+
+const extractResourceReferences = (content: string): ResourceReference[] => {
+  const references: ResourceReference[] = [];
+  const tagPattern = /<([A-Za-z][A-Za-z0-9:-]*)([^>]*)>/g;
+  let tagMatch: RegExpExecArray | null;
+
+  while ((tagMatch = tagPattern.exec(content)) !== null) {
+    const tag = tagMatch[1]?.toLowerCase();
+    if (!tag) {
+      continue;
+    }
+    const attributes = tagMatch[2] ?? "";
+    const rel = getAttributeValue(attributes, "rel")?.toLowerCase();
+
+    for (const attribute of ["src", "href", "poster"]) {
+      const url = getAttributeValue(attributes, attribute);
+      if (url) {
+        references.push({
+          url,
+          selector: `${tag}[${attribute}]`,
+          kind: "attribute",
+          attribute,
+          rel,
+          tag
+        });
+      }
+    }
+  }
+
+  references.push(...extractCssResourceReferences(content));
+  return references;
+};
+
+const extractCssResourceReferences = (content: string): ResourceReference[] => {
+  const references: ResourceReference[] = [];
+  const cssUrlPattern = /url\(\s*(?:"([^"]+)"|'([^']+)'|([^'")\s][^)]*?))\s*\)/gi;
+  let cssUrlMatch: RegExpExecArray | null;
+  while ((cssUrlMatch = cssUrlPattern.exec(content)) !== null) {
+    const url = (cssUrlMatch[1] ?? cssUrlMatch[2] ?? cssUrlMatch[3])?.trim();
+    if (url) {
+      references.push({
+        url,
+        selector: "css url()",
+        kind: "css-url"
+      });
+    }
+  }
+
+  const importPattern = /@import\s+(?:url\(\s*)?(?:"([^"]+)"|'([^']+)'|([^'")\s;]+))/gi;
+  let importMatch: RegExpExecArray | null;
+  while ((importMatch = importPattern.exec(content)) !== null) {
+    const url = (importMatch[1] ?? importMatch[2] ?? importMatch[3])?.trim();
+    if (url) {
+      references.push({
+        url,
+        selector: "@import",
+        kind: "css-import"
+      });
+    }
+  }
+
+  return references;
+};
+
+const getAttributeValue = (attributes: string, name: string): string | undefined => {
+  const pattern = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>]+))`, "i");
+  const match = attributes.match(pattern);
+  return match?.[1] ?? match?.[2] ?? match?.[3];
+};
+
+const isRemoteReferenceCheckable = (reference: ResourceReference, url: string): boolean => {
+  if (reference.tag === "a" && reference.attribute === "href") {
+    return false;
+  }
+
+  if (reference.attribute === "href" && reference.tag !== "link" && !ASSET_EXTENSION_PATTERN.test(stripUrlFragmentAndQuery(url))) {
+    return false;
+  }
+
+  return true;
+};
+
+const remoteIssueType = (
+  reference: ResourceReference,
+  url: string
+): "remote-asset" | "remote-font" | "remote-script" => {
+  if (reference.tag === "script" || reference.selector === "script[src]") {
+    return "remote-script";
+  }
+
+  if (isFontReference(reference, url)) {
+    return "remote-font";
+  }
+
+  return "remote-asset";
+};
+
+const isFontReference = (reference: ResourceReference, url: string): boolean => {
+  const cleanUrl = stripUrlFragmentAndQuery(url);
+  return (
+    FONT_EXTENSION_PATTERN.test(cleanUrl) ||
+    /fonts\.(googleapis|gstatic)\.com/i.test(url) ||
+    reference.kind === "css-import" ||
+    (reference.tag === "link" && reference.rel?.split(/\s+/).includes("stylesheet") === true)
+  );
+};
+
+const isLocalAssetReference = (reference: ResourceReference, url: string): boolean => {
+  if (URL_SCHEME_PATTERN.test(url)) {
+    return false;
+  }
+
+  const cleanUrl = stripUrlFragmentAndQuery(url);
+  if (!cleanUrl || cleanUrl.startsWith("#")) {
+    return false;
+  }
+
+  if (reference.kind === "css-url" || reference.kind === "css-import") {
+    return true;
+  }
+
+  if (reference.attribute === "src" || reference.attribute === "poster") {
+    return true;
+  }
+
+  return reference.tag === "link" || ASSET_EXTENSION_PATTERN.test(cleanUrl);
+};
+
+const isIgnorableUrl = (url: string): boolean => {
+  const trimmed = url.trim();
+  if (!trimmed || trimmed.startsWith("#")) {
+    return true;
+  }
+
+  const lower = trimmed.toLowerCase();
+  return (
+    lower.startsWith("data:") ||
+    lower.startsWith("blob:") ||
+    lower.startsWith("mailto:") ||
+    lower.startsWith("tel:") ||
+    lower.startsWith("javascript:")
+  );
+};
+
+const findExistingLocalAsset = async (
+  projectRoot: string,
+  sourcePath: string,
+  url: string
+): Promise<string | undefined> => {
+  const candidatePaths = localAssetCandidatePaths(projectRoot, sourcePath, url);
+
+  for (const candidatePath of candidatePaths) {
+    if (isPathInside(projectRoot, candidatePath) && (await pathExists(candidatePath))) {
+      return candidatePath;
+    }
+  }
+
+  return undefined;
+};
+
+const localAssetCandidatePaths = (projectRoot: string, sourcePath: string, url: string): string[] => {
+  const decodedPath = decodeUrlPath(url);
+  const candidates =
+    decodedPath.startsWith("/")
+      ? [path.join(projectRoot, decodedPath.slice(1))]
+      : [path.resolve(path.dirname(sourcePath), decodedPath), path.resolve(projectRoot, decodedPath)];
+  return [...new Set(candidates)];
+};
+
+const decodeUrlPath = (url: string): string => {
+  try {
+    return decodeURIComponent(stripUrlFragmentAndQuery(url));
+  } catch {
+    return stripUrlFragmentAndQuery(url);
+  }
+};
+
+const stripUrlFragmentAndQuery = (url: string): string => {
+  const queryIndex = url.search(/[?#]/);
+  return queryIndex === -1 ? url : url.slice(0, queryIndex);
+};
+
+const isPathInside = (rootPath: string, candidatePath: string): boolean => {
+  const relativePath = path.relative(path.resolve(rootPath), path.resolve(candidatePath));
+  return relativePath === "" || (relativePath.length > 0 && !relativePath.startsWith("..") && !path.isAbsolute(relativePath));
+};
+
+const exportExpectations = (project: LoadedDeckProject): ExportExpectation[] => {
+  const baseName = slugFileName(project.deck.title);
+  const exportsPath = path.join(project.projectRoot, "exports");
+  const expectations: ExportExpectation[] = [];
+
+  if (project.deck.export.pdf) {
+    expectations.push(exportExpectation(exportsPath, `${baseName}.pdf`, "pdf", "deck"));
+  }
+  if (project.deck.export.html) {
+    expectations.push(exportExpectation(exportsPath, `${baseName}.html`, "html", "deck"));
+  }
+  if (project.deck.export.deckpkg) {
+    expectations.push(exportExpectation(exportsPath, `${baseName}.deckpkg`, "deckpkg", "deck"));
+  }
+  if (project.deck.export.speakerNotes) {
+    expectations.push(exportExpectation(exportsPath, "notes.json", "notes", "deck"));
+  }
+  if (project.deck.export.thumbnails) {
+    expectations.push(
+      ...project.slides.map((slide) =>
+        exportExpectation(exportsPath, path.join("thumbnails", `${slide.id}.png`), "thumbnail", slide.id)
+      )
+    );
+  }
+
+  return expectations;
+};
+
+const exportExpectation = (
+  exportsPath: string,
+  artifactRelativePath: string,
+  artifactKind: ExportExpectation["artifactKind"],
+  slideId: string
+): ExportExpectation => ({
+  artifactPath: path.join(exportsPath, artifactRelativePath),
+  artifactProjectPath: path.posix.join("exports", artifactRelativePath.split(path.sep).join("/")),
+  artifactKind,
+  slideId
+});
+
+const newestSourceMtime = async (project: LoadedDeckProject, localAssetPaths: string[]): Promise<number> => {
+  const sourcePaths = new Set<string>([
+    project.deckPath,
+    ...project.slides.map((slide) => slide.sourcePath),
+    ...project.slides.map((slide) => slide.notesPath).filter(isPresent),
+    ...[project.theme?.cssPath, project.theme?.tokensPath].filter(isPresent),
+    ...localAssetPaths
+  ]);
+
+  let newest = 0;
+  for (const sourcePath of sourcePaths) {
+    const sourceStat = await statIfExists(sourcePath);
+    if (sourceStat && sourceStat.mtimeMs > newest) {
+      newest = sourceStat.mtimeMs;
+    }
+  }
+  return newest;
+};
+
+const slugFileName = (value: string): string =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "deck";
+
+const htmlToText = (html: string): string =>
+  decodeHtmlEntities(
+    html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  );
+
+const markdownToText = (markdown: string): string =>
+  decodeHtmlEntities(
+    markdown
+      .replace(/```[\s\S]*?```/g, " ")
+      .replace(/`[^`]*`/g, " ")
+      .replace(/!\[[^\]]*]\([^)]*\)/g, " ")
+      .replace(/\[([^\]]+)]\([^)]*\)/g, "$1")
+      .replace(/[#>*_-]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  );
+
+const countWords = (text: string): number => {
+  const latinWords = text.match(LATIN_WORD_PATTERN)?.length ?? 0;
+  const cjkCharacters = text.match(CJK_CHARACTER_PATTERN)?.length ?? 0;
+  return latinWords + Math.ceil(cjkCharacters / 2);
+};
+
+const decodeHtmlEntities = (value: string): string =>
+  value
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'");
+
+const isPresent = <T>(value: T | null | undefined): value is T => value !== null && value !== undefined;

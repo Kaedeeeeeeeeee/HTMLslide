@@ -1,0 +1,9 @@
+{
+  "appName": "HTMLslide",
+  "bundleIdentifier": "app.htmlslide.alpha",
+  "artifactName": "HTMLslide-${version}-unsigned-alpha-${arch}",
+  "outputDirectory": "dist/alpha",
+  "volumeName": "HTMLslide Alpha",
+  "minimumSystemVersion": "13.0",
+  "adHocSign": true
+}

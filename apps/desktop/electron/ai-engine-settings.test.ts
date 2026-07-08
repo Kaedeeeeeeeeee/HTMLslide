@@ -266,7 +266,7 @@ describe("AI engine settings persistence", () => {
         settings: {
           apiKey: {
             hasKey: false,
-            model: "claude-sonnet-4.5",
+            model: "claude-sonnet-4-5",
             provider: "anthropic"
           },
           mode: "htmlslide-agent"

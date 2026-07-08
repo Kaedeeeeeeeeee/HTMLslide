@@ -14,6 +14,7 @@ import {
 import {
   applyAgentSourceWrites,
   applyMockAgentProject,
+  createAnthropicProvider,
   createFileCopyCheckpoint,
   createOpenAICompatibleProvider,
   createMockProvider,
@@ -1777,7 +1778,7 @@ function normalizeModel(value: unknown, provider: DesktopApiKeyProvider): string
   }
 
   if (provider === "anthropic") {
-    return "claude-sonnet-4.5";
+    return "claude-sonnet-4-5";
   }
 
   if (provider === "compatible") {
@@ -2586,7 +2587,13 @@ function createDesktopByokModelProvider({
   provider: DesktopApiKeyProvider;
 }): ModelProvider {
   if (provider === "anthropic") {
-    throw new Error("Anthropic BYOK provider is not wired yet. Select OpenAI or OpenAI-compatible for this build.");
+    return createAnthropicProvider({
+      apiKey,
+      fetch,
+      id: "htmlslide-byok",
+      label: `HTMLslide Agent (${providerLabel(provider)} / ${model})`,
+      model
+    });
   }
 
   if (provider === "compatible" && !baseUrl) {

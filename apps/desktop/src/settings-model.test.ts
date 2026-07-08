@@ -90,7 +90,7 @@ describe("AI engine settings model", () => {
       {
         externalAgentId: "codex-cli",
         mode: "htmlslide-agent",
-        model: "claude-sonnet-4.5",
+        model: "claude-sonnet-4-5",
         provider: "anthropic"
       },
       "2026-07-09T00:05:00.000Z"

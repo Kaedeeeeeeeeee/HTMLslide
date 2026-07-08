@@ -3,14 +3,14 @@ import type {
   ModelProvider,
   ModelRequest,
   ModelResponse,
-  TokenUsage,
+  TokenUsage
 } from "../types.js";
+import type { FetchLike } from "./openai-compatible.js";
 import {
   coerceStageOutput,
   errorMessageFrom,
   extractErrorMessage,
   isRecord,
-  parseJsonObject,
   parseOptionalJson,
   sanitizeProviderText,
   schemaForStage,
@@ -18,67 +18,58 @@ import {
   systemPromptForStage
 } from "./provider-utils.js";
 
-export type OpenAICompatibleProviderOptions = {
+export type AnthropicProviderOptions = {
   apiKey: string;
   model: string;
-  baseUrl?: string;
   fetch?: FetchLike;
   id?: string;
   label?: string;
-  temperature?: number;
+  maxTokens?: number;
 };
 
-export type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
-
-type ChatCompletionResponse = {
-  choices?: Array<{
-    message?: {
-      content?: string | null;
-    };
-  }>;
+type AnthropicMessageResponse = {
+  content?: unknown[];
   usage?: {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    total_tokens?: number;
+    input_tokens?: number;
+    output_tokens?: number;
   };
 };
 
-const defaultBaseUrl = "https://api.openai.com/v1";
+const anthropicVersion = "2023-06-01";
+const defaultBaseUrl = "https://api.anthropic.com/v1";
 
-export class OpenAICompatibleModelProvider implements ModelProvider {
+export class AnthropicModelProvider implements ModelProvider {
   readonly id: string;
   readonly label: string;
 
   readonly #apiKey: string;
-  readonly #baseUrl: string;
   readonly #fetch: FetchLike;
+  readonly #maxTokens: number;
   readonly #model: string;
-  readonly #temperature: number;
 
-  constructor(options: OpenAICompatibleProviderOptions) {
+  constructor(options: AnthropicProviderOptions) {
     const apiKey = options.apiKey.trim();
     if (apiKey.length === 0) {
-      throw new Error("OpenAI-compatible API key is required.");
+      throw new Error("Anthropic API key is required.");
     }
 
     const model = options.model.trim();
     if (model.length === 0) {
-      throw new Error("OpenAI-compatible model is required.");
+      throw new Error("Anthropic model is required.");
     }
 
-    this.id = options.id ?? "openai-compatible";
-    this.label = options.label ?? "OpenAI-compatible provider";
+    this.id = options.id ?? "anthropic";
+    this.label = options.label ?? "Anthropic provider";
     this.#apiKey = apiKey;
-    this.#baseUrl = normalizeBaseUrl(options.baseUrl ?? defaultBaseUrl);
     if (options.fetch) {
       this.#fetch = options.fetch;
     } else if (typeof globalThis.fetch === "function") {
       this.#fetch = globalThis.fetch.bind(globalThis);
     } else {
-      throw new Error("A fetch implementation is required for the OpenAI-compatible provider.");
+      throw new Error("A fetch implementation is required for the Anthropic provider.");
     }
+    this.#maxTokens = options.maxTokens ?? 8192;
     this.#model = model;
-    this.#temperature = options.temperature ?? 0.2;
   }
 
   async validateCredentials() {
@@ -100,14 +91,10 @@ export class OpenAICompatibleModelProvider implements ModelProvider {
   }
 
   async complete(request: ModelRequest): Promise<ModelResponse> {
-    const schema = schemaForStage(request.stage);
-    const response = await this.#fetchJson("POST", "/chat/completions", {
-      model: this.#model,
+    const toolName = `htmlslide_${stageSchemaName(request.stage)}`;
+    const response = await this.#fetchJson("POST", "/messages", {
+      max_tokens: this.#maxTokens,
       messages: [
-        {
-          role: "system",
-          content: systemPromptForStage(request.stage)
-        },
         {
           role: "user",
           content: JSON.stringify({
@@ -119,31 +106,29 @@ export class OpenAICompatibleModelProvider implements ModelProvider {
           }, null, 2)
         }
       ],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: `htmlslide_${stageSchemaName(request.stage)}`,
-          description: `Structured HTMLslide ${request.stage} output.`,
-          strict: true,
-          schema
-        }
+      model: this.#model,
+      system: systemPromptForStage(request.stage),
+      tool_choice: {
+        type: "tool",
+        name: toolName
       },
-      store: false,
-      temperature: this.#temperature
+      tools: [
+        {
+          name: toolName,
+          description: `Return the structured HTMLslide ${request.stage} output. Use only the fields in the input schema and include complete sourceWrites for build and repair stages.`,
+          input_schema: schemaForStage(request.stage),
+          strict: true
+        }
+      ]
     }, request.signal);
 
     if (!response.ok) {
       throw new Error(`${this.label} completion failed (${response.status}): ${response.message}`);
     }
 
-    const completion = asChatCompletionResponse(response.json);
-    const content = completion.choices?.[0]?.message?.content;
-    if (typeof content !== "string" || content.trim().length === 0) {
-      throw new Error(`${this.label} returned no structured message content.`);
-    }
-
-    const parsed = parseJsonObject(content, `${this.label} structured ${request.stage} output`);
-    const output = coerceStageOutput(request.stage, parsed);
+    const completion = asAnthropicMessageResponse(response.json);
+    const input = toolInputFrom(completion, toolName, this.label);
+    const output = coerceStageOutput(request.stage, input);
 
     return {
       content: `${this.label} returned structured ${request.stage} output.`,
@@ -170,11 +155,12 @@ export class OpenAICompatibleModelProvider implements ModelProvider {
   }> {
     let response: Response;
     try {
-      response = await this.#fetch(`${this.#baseUrl}${pathname}`, {
+      response = await this.#fetch(`${defaultBaseUrl}${pathname}`, {
         body: body === undefined ? undefined : JSON.stringify(body),
         headers: {
-          authorization: `Bearer ${this.#apiKey}`,
-          "content-type": "application/json"
+          "anthropic-version": anthropicVersion,
+          "content-type": "application/json",
+          "x-api-key": this.#apiKey
         },
         method,
         signal
@@ -196,33 +182,48 @@ export class OpenAICompatibleModelProvider implements ModelProvider {
   }
 }
 
-export const createOpenAICompatibleProvider = (
-  options: OpenAICompatibleProviderOptions
-): OpenAICompatibleModelProvider => new OpenAICompatibleModelProvider(options);
+export const createAnthropicProvider = (
+  options: AnthropicProviderOptions
+): AnthropicModelProvider => new AnthropicModelProvider(options);
 
-function normalizeBaseUrl(baseUrl: string): string {
-  const trimmed = baseUrl.trim();
-  if (trimmed.length === 0) {
-    throw new Error("OpenAI-compatible base URL is required.");
-  }
-  return trimmed.replace(/\/+$/u, "");
-}
-
-function asChatCompletionResponse(value: unknown): ChatCompletionResponse {
+function asAnthropicMessageResponse(value: unknown): AnthropicMessageResponse {
   if (!isRecord(value)) {
-    throw new Error("OpenAI-compatible response must be a JSON object.");
+    throw new Error("Anthropic response must be a JSON object.");
   }
-  return value as ChatCompletionResponse;
+  return value as AnthropicMessageResponse;
 }
 
-function tokenUsageFrom(usage: ChatCompletionResponse["usage"]): TokenUsage | undefined {
+function toolInputFrom(response: AnthropicMessageResponse, toolName: string, label: string): JsonObject {
+  if (!Array.isArray(response.content)) {
+    throw new Error(`${label} response content must be an array.`);
+  }
+
+  const toolUse = response.content.find((block) =>
+    isRecord(block) && block.type === "tool_use" && block.name === toolName
+  );
+  if (!isRecord(toolUse)) {
+    throw new Error(`${label} returned no ${toolName} tool_use content.`);
+  }
+
+  if (!isRecord(toolUse.input)) {
+    throw new Error(`${label} ${toolName} tool input must be a JSON object.`);
+  }
+
+  return toolUse.input;
+}
+
+function tokenUsageFrom(usage: AnthropicMessageResponse["usage"]): TokenUsage | undefined {
   if (!usage) {
     return undefined;
   }
 
+  const inputTokens = usage.input_tokens;
+  const outputTokens = usage.output_tokens;
   return {
-    inputTokens: usage.prompt_tokens,
-    outputTokens: usage.completion_tokens,
-    totalTokens: usage.total_tokens
+    inputTokens,
+    outputTokens,
+    totalTokens: typeof inputTokens === "number" && typeof outputTokens === "number"
+      ? inputTokens + outputTokens
+      : undefined
   };
 }

@@ -71,7 +71,7 @@ export const aiEngineModes: Array<{ id: AiEngineMode; label: string; description
 
 export const apiKeyProviders: Array<{ id: ApiKeyProvider; label: string; defaultModel: string }> = [
   { id: "openai", label: "OpenAI", defaultModel: "gpt-5-mini" },
-  { id: "anthropic", label: "Anthropic", defaultModel: "claude-sonnet-4.5" },
+  { id: "anthropic", label: "Anthropic", defaultModel: "claude-sonnet-4-5" },
   { id: "compatible", label: "OpenAI-compatible", defaultModel: "openai-compatible/default" }
 ];
 

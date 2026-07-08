@@ -130,7 +130,7 @@ function byokSettings(
       hasKey: true,
       baseUrl: overrides.baseUrl,
       model: overrides.model ?? (provider === "anthropic"
-        ? "claude-sonnet-4.5"
+        ? "claude-sonnet-4-5"
         : provider === "compatible"
           ? "openai-compatible/default"
           : "gpt-5-mini"),
@@ -240,6 +240,43 @@ function createOpenAiByokFetch(title = "BYOK OpenAI Deck"): { calls: Array<{ url
           completion_tokens: 7,
           prompt_tokens: 11,
           total_tokens: 18
+        }
+      });
+    }
+
+    return jsonResponse({ error: { message: `Unexpected fetch ${init?.method ?? "GET"} ${url}` } }, { status: 500 });
+  };
+
+  return { calls, fetch };
+}
+
+function createAnthropicByokFetch(title = "BYOK Anthropic Deck"): { calls: Array<{ url: string; body?: unknown; method?: string }>; fetch: FetchLike } {
+  const calls: Array<{ url: string; body?: unknown; method?: string }> = [];
+  const fetch: FetchLike = async (input, init) => {
+    const body = typeof init?.body === "string" ? JSON.parse(init.body) as unknown : undefined;
+    const url = String(input);
+    calls.push({ body, method: init?.method, url });
+
+    if (init?.method === "GET" && url.endsWith("/models/claude-sonnet-4-5")) {
+      return jsonResponse({ id: "claude-sonnet-4-5" });
+    }
+
+    if (init?.method === "POST" && url.endsWith("/messages")) {
+      const requestBody = body as { messages?: Array<{ content?: string }>; tool_choice?: { name?: string } };
+      const userContent = requestBody.messages?.[0]?.content ?? "{}";
+      const userInput = JSON.parse(userContent) as { stage?: string };
+      return jsonResponse({
+        content: [
+          {
+            type: "tool_use",
+            id: `toolu_${userInput.stage ?? "unknown"}`,
+            name: requestBody.tool_choice?.name ?? `htmlslide_${userInput.stage ?? "unknown"}_output`,
+            input: openAiStageOutput(userInput.stage, title)
+          }
+        ],
+        usage: {
+          input_tokens: 13,
+          output_tokens: 8
         }
       });
     }
@@ -955,10 +992,54 @@ describe("desktop services", () => {
     expect(calls).toEqual([]);
   });
 
-  it("blocks Anthropic BYOK runs until an Anthropic adapter exists", async () => {
+  it("runs Anthropic BYOK providers through injected fetch and applies source writes", async () => {
     const projectPath = await tempDir();
     await writeDeck(projectPath);
     const calls: string[][] = [];
+    const runner: DesktopCliRunner = async (args) => {
+      calls.push(args);
+
+      if (args[0] === "check") {
+        return {
+          ok: true,
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+          json: {
+            status: "passed",
+            summary: {
+              errors: 0,
+              warnings: 0,
+              info: 0,
+              suggestions: 0
+            },
+            issues: []
+          }
+        };
+      }
+
+      if (args[0] === "export") {
+        return {
+          ok: true,
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+          json: {
+            status: "passed",
+            artifacts: {
+              deckpkg: path.join(projectPath, "exports", "anthropic.deckpkg"),
+              pdf: path.join(projectPath, "exports", "anthropic.pdf")
+            }
+          }
+        };
+      }
+
+      throw new Error(`Unexpected CLI call: ${args.join(" ")}`);
+    };
+    const credentialStore = createFakeCredentialStore({
+      "app.htmlslide.ai-key:provider:anthropic": "anthropic-secret"
+    });
+    const providerFetch = createAnthropicByokFetch("BYOK Anthropic Deck");
 
     const result = await runDesktopByokAgent(
       {
@@ -967,29 +1048,46 @@ describe("desktop services", () => {
         runId: "run-byok-anthropic"
       },
       {
-        credentialStore: createFakeCredentialStore({
-          "app.htmlslide.ai-key:provider:anthropic": "anthropic-secret"
-        }),
-        cliRunner: async (args) => {
-          calls.push(args);
-          throw new Error(`Unexpected CLI call: ${args.join(" ")}`);
+        cliRuntime: {
+          cliPath: "/fake/htmlslide.js",
+          cwd: "/fake",
+          mode: "development",
+          rootPath: "/fake"
         },
+        cliRunner: runner,
+        credentialStore,
+        providerFetch: providerFetch.fetch,
         settings: byokSettings("anthropic")
       }
     );
 
-    expect(result).toMatchObject({
-      error: "Anthropic BYOK provider is not wired yet. Select OpenAI or OpenAI-compatible for this build.",
-      ok: false,
-      providerId: "htmlslide-byok",
-      summary: {
-        provider: "anthropic",
-        status: "failed"
-      }
+    expect(result.ok).toBe(true);
+    expect(result.agent?.ok).toBe(true);
+    expect(result.applied).toMatchObject({
+      filesChanged: ["deck.json", "slides/001-title.html", "notes/001-title.md"],
+      source: "provider-source-writes",
+      writeCount: 3
     });
-    expect(result.agent).toBeUndefined();
+    expect(result.project?.project).toMatchObject({
+      path: projectPath,
+      title: "BYOK Anthropic Deck"
+    });
     expect(JSON.stringify(result.logs)).not.toContain("anthropic-secret");
-    expect(calls).toEqual([]);
+    expect(providerFetch.calls[0]).toMatchObject({
+      method: "GET",
+      url: "https://api.anthropic.com/v1/models/claude-sonnet-4-5"
+    });
+    const completionCalls = providerFetch.calls.filter((call) => call.url === "https://api.anthropic.com/v1/messages");
+    expect(completionCalls.length).toBeGreaterThan(0);
+    const firstCompletionBody = completionCalls[0]?.body as { tool_choice?: { type?: string; name?: string } };
+    expect(firstCompletionBody.tool_choice).toEqual({
+      type: "tool",
+      name: "htmlslide_brief_output"
+    });
+    expect(calls).toEqual([
+      ["check", projectPath, "--json"],
+      ["export", projectPath, "--json"]
+    ]);
   });
 
   it("runs the BYOK desktop agent only after loading a stored provider key", async () => {

@@ -125,13 +125,15 @@ Writers may only target `deck.json`, `slides/`, `notes/`, `theme/`, and `assets/
 
 Provider `build` and `repair` outputs may include `sourceWrites` so desktop and CLI callers can apply model-generated source edits through the same boundary before running real `htmlslide check --json`.
 
-## OpenAI-Compatible Provider
+## Provider Adapters
 
 `@htmlslide/agent` includes an OpenAI-compatible provider adapter for BYOK model calls. The adapter uses Chat Completions with `response_format.type = "json_schema"`, `strict: true`, and `store: false`, and validates credentials with `GET /models/{model}` against the configured base URL. Desktop OpenAI runs use the OpenAI API base URL by default; OpenAI-compatible runs require a saved compatible base URL in AI Engines settings. Automated coverage uses injected fake `fetch` implementations only; no CI path requires real provider credentials or network access.
 
-The provider converts structured stage responses into the shared agent output types. `build` and `repair` require `sourceWrites`, then parse and normalize them through the shared source-write boundary before desktop applies edits. Provider errors are sanitized before surfacing so API keys, bearer tokens, and `sk-` style secrets do not appear in logs, validation results, or thrown messages.
+`@htmlslide/agent` also includes an Anthropic Messages provider adapter. It validates credentials with `GET /v1/models/{model}` and completes stages with `POST /v1/messages`, a strict stage-specific client tool schema, and forced `tool_choice` so Claude returns a `tool_use.input` object. The adapter sends `anthropic-version: 2023-06-01`, does not expose a user-configurable Anthropic base URL, and relies on injected fake `fetch` implementations in automated tests.
 
-The desktop BYOK path is now wired to this provider for OpenAI and configured OpenAI-compatible providers. It still treats desktop CLI `check` and `export` as authoritative: provider `check`/`export` stage outputs do not replace the real project gate. Anthropic remains explicitly unsupported until a real Anthropic adapter exists.
+Provider adapters convert structured stage responses into the shared agent output types. `build` and `repair` require `sourceWrites`, then parse and normalize them through the shared source-write boundary before desktop applies edits. Provider errors are sanitized before surfacing so API keys, bearer tokens, raw provider keys, and `sk-` style secrets do not appear in logs, validation results, or thrown messages.
+
+The desktop BYOK path is now wired to OpenAI, configured OpenAI-compatible providers, and Anthropic. It still treats desktop CLI `check` and `export` as authoritative: provider `check`/`export` stage outputs do not replace the real project gate.
 
 ## Desktop New Deck v1
 

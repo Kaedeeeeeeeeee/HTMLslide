@@ -317,6 +317,7 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(presenter.getByText("1 / 2")).toBeVisible();
     await expect(currentSlideHeading).toHaveText("HTML as source");
     await expect(presenter.getByRole("heading", { name: "Speaker Notes" })).toBeVisible();
+    await expect(presenter.getByLabel("Presenter target display")).toBeVisible();
     await expect(presenter.getByText("今天我们把 HTML 作为源码")).toBeVisible();
 
     await page.keyboard.press("ArrowRight");

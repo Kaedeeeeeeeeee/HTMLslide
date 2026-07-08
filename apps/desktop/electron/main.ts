@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, screen, shell } from "electron";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import process from "node:process";
@@ -10,6 +10,7 @@ import {
   findCliRuntime,
   getDesktopCliIntegration,
   installDesktopCliIntegration,
+  listDesktopPresenterDisplays,
   loadProjectPreview,
   loadDesktopPresenterDeck,
   readAiEngineSettings,
@@ -256,6 +257,8 @@ function registerIpcHandlers(): void {
   ipcMain.handle("htmlslide:load-presenter-deck", async (_event, projectPath: string) =>
     loadDesktopPresenterDeck(projectPath, { cliRuntime })
   );
+
+  ipcMain.handle("htmlslide:list-presenter-displays", async () => listDesktopPresenterDisplays(screen));
 
   ipcMain.handle(
     "htmlslide:run-mock-agent",

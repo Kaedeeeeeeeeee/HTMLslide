@@ -848,6 +848,11 @@ function App(): React.ReactNode {
     return null;
   }, [activeProject, desktopApi, updateCommandActionStatus]);
 
+  const listPresenterDisplays = useCallback(
+    () => desktopApi?.listPresenterDisplays() ?? Promise.resolve([]),
+    [desktopApi]
+  );
+
   const handleViewDiff = useCallback((): void => {
     if (!diffReview?.runId && !diffReview?.checkpointId) {
       setOperationStatus({ kind: "failed", message: "No agent checkpoint is available" });
@@ -1049,6 +1054,7 @@ function App(): React.ReactNode {
       }}
       onInspectorTabChange={setInspectorTab}
       loadPresenterDeck={loadPresenterDeck}
+      listPresenterDisplays={listPresenterDisplays}
       onQaFilterChange={setQaFilter}
       onRevertDiff={handleRevertDiff}
       onRunAction={(action) => {

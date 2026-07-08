@@ -303,6 +303,37 @@ export type DesktopPresenterDeckOptions = {
   cliRunner?: DesktopCliRunner;
 };
 
+export type DesktopDisplayBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type DesktopPresenterDisplay = {
+  id: number;
+  label: string;
+  primary: boolean;
+  internal: boolean;
+  scaleFactor: number;
+  bounds: DesktopDisplayBounds;
+  workArea: DesktopDisplayBounds;
+};
+
+export type DesktopNativeDisplay = {
+  id: number;
+  label?: string;
+  internal?: boolean;
+  scaleFactor?: number;
+  bounds: DesktopDisplayBounds;
+  workArea: DesktopDisplayBounds;
+};
+
+export type DesktopDisplaySource = {
+  getAllDisplays(): DesktopNativeDisplay[];
+  getPrimaryDisplay(): DesktopNativeDisplay;
+};
+
 export type DesktopPresenterDeckResult =
   | {
       ok: true;
@@ -957,6 +988,45 @@ export async function loadDesktopPresenterDeck(
       error: error instanceof Error ? error.message : String(error)
     };
   }
+}
+
+export function listDesktopPresenterDisplays(displaySource: DesktopDisplaySource): DesktopPresenterDisplay[] {
+  const primaryDisplay = displaySource.getPrimaryDisplay();
+  return displaySource.getAllDisplays()
+    .map((display, index) => {
+      const primary = display.id === primaryDisplay.id;
+      const fallbackLabel = primary ? "Primary display" : `Display ${index + 1}`;
+      const label = typeof display.label === "string" && display.label.trim().length > 0
+        ? display.label.trim()
+        : fallbackLabel;
+
+      return {
+        id: display.id,
+        label,
+        primary,
+        internal: display.internal === true,
+        scaleFactor: typeof display.scaleFactor === "number" && Number.isFinite(display.scaleFactor)
+          ? display.scaleFactor
+          : 1,
+        bounds: normalizeDisplayBounds(display.bounds),
+        workArea: normalizeDisplayBounds(display.workArea)
+      };
+    })
+    .sort((left, right) => {
+      if (left.primary !== right.primary) {
+        return left.primary ? -1 : 1;
+      }
+      return left.bounds.x - right.bounds.x || left.bounds.y - right.bounds.y || left.id - right.id;
+    });
+}
+
+function normalizeDisplayBounds(bounds: DesktopDisplayBounds): DesktopDisplayBounds {
+  return {
+    x: Number.isFinite(bounds.x) ? Math.round(bounds.x) : 0,
+    y: Number.isFinite(bounds.y) ? Math.round(bounds.y) : 0,
+    width: Number.isFinite(bounds.width) ? Math.max(0, Math.round(bounds.width)) : 0,
+    height: Number.isFinite(bounds.height) ? Math.max(0, Math.round(bounds.height)) : 0
+  };
 }
 
 function deckpkgPathFromExportResult(result: CliRunResult | undefined): string | undefined {

@@ -78,6 +78,7 @@ import type {
   QaIssue,
   SlideSummary
 } from "../model";
+import type { DesktopPresenterDisplay } from "../desktop-api";
 
 interface WorkspaceProps {
   activeStageIndex: number;
@@ -108,6 +109,7 @@ interface WorkspaceProps {
   onToolbarAction: (action: "generate" | "check" | "export" | "present") => void;
   onViewDiff?: () => void;
   loadPresenterDeck?: () => Promise<PresenterDeck | null>;
+  listPresenterDisplays?: () => Promise<DesktopPresenterDisplay[]>;
 }
 
 export interface AgentDiffReview {
@@ -205,6 +207,7 @@ export function Workspace({
   onCommandSubmit,
   onInspectorTabChange,
   loadPresenterDeck,
+  listPresenterDisplays,
   onQaFilterChange,
   onRevertDiff,
   onRunAction,
@@ -370,6 +373,7 @@ export function Workspace({
           onExit={() => setPresenterState(null)}
           onSessionChange={handlePresenterSessionChange}
           project={project}
+          listPresenterDisplays={listPresenterDisplays}
           session={presenterState.session}
           slides={slides}
           source={presenterState.source}
@@ -382,6 +386,7 @@ export function Workspace({
 interface PresenterModeProps {
   deck: PresenterDeck;
   project: ProjectSummary;
+  listPresenterDisplays?: () => Promise<DesktopPresenterDisplay[]>;
   session: PresenterSessionState;
   slides: SlideSummary[];
   source: PresenterSource;
@@ -391,6 +396,7 @@ interface PresenterModeProps {
 
 function PresenterMode({
   deck,
+  listPresenterDisplays,
   onExit,
   onSessionChange,
   project,
@@ -400,11 +406,52 @@ function PresenterMode({
 }: PresenterModeProps): ReactNode {
   const shellRef = useRef<HTMLElement | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [presenterDisplays, setPresenterDisplays] = useState<DesktopPresenterDisplay[]>([]);
+  const [selectedDisplayId, setSelectedDisplayId] = useState<number | undefined>();
+  const [displayError, setDisplayError] = useState<string | undefined>();
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!listPresenterDisplays) {
+      setPresenterDisplays([]);
+      setSelectedDisplayId(undefined);
+      setDisplayError(undefined);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    listPresenterDisplays()
+      .then((displays) => {
+        if (cancelled) {
+          return;
+        }
+        setPresenterDisplays(displays);
+        setDisplayError(undefined);
+        const preferredDisplay =
+          displays.find((display) => !display.internal && !display.primary) ??
+          displays.find((display) => display.primary) ??
+          displays[0];
+        setSelectedDisplayId(preferredDisplay?.id);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) {
+          return;
+        }
+        setPresenterDisplays([]);
+        setSelectedDisplayId(undefined);
+        setDisplayError(error instanceof Error ? error.message : String(error));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [listPresenterDisplays]);
 
   const view = useMemo(
     () => getPresenterSessionView(deck, session, nowMs),
@@ -523,6 +570,13 @@ function PresenterMode({
 
         <aside className="presenter-console">
           <PresenterTimerPanel view={view} />
+
+          <PresenterDisplayPanel
+            displayError={displayError}
+            displays={presenterDisplays}
+            onSelectedDisplayIdChange={setSelectedDisplayId}
+            selectedDisplayId={selectedDisplayId}
+          />
 
           <section className="presenter-panel">
             <PanelHeader
@@ -669,6 +723,69 @@ function PresenterTimerPanel({ view }: { view: PresenterSessionView }): ReactNod
   );
 }
 
+function PresenterDisplayPanel({
+  displayError,
+  displays,
+  onSelectedDisplayIdChange,
+  selectedDisplayId
+}: {
+  displayError?: string;
+  displays: DesktopPresenterDisplay[];
+  selectedDisplayId?: number;
+  onSelectedDisplayIdChange: (displayId: number | undefined) => void;
+}): ReactNode {
+  const selectedDisplay = displays.find((display) => display.id === selectedDisplayId) ?? displays[0];
+  const displayCountLabel =
+    displayError
+      ? "Unavailable"
+      : displays.length === 0
+        ? "No displays"
+        : displays.length === 1
+          ? "Single display"
+          : `${displays.length} displays`;
+
+  return (
+    <section className="presenter-panel presenter-display-panel">
+      <PanelHeader
+        eyebrow={displayCountLabel}
+        title="Presenter Display"
+      />
+      {displays.length > 0 ? (
+        <>
+          <label className="field-row">
+            <span>Target display</span>
+            <select
+              aria-label="Presenter target display"
+              onChange={(event) => onSelectedDisplayIdChange(Number(event.currentTarget.value))}
+              value={selectedDisplay?.id ?? ""}
+            >
+              {displays.map((display) => (
+                <option
+                  key={display.id}
+                  value={display.id}
+                >
+                  {display.label}{display.primary ? " (primary)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          {selectedDisplay ? (
+            <div className="presenter-display-meta">
+              <span>{selectedDisplay.internal ? "Internal" : "External"}</span>
+              <span>{formatDisplayBounds(selectedDisplay.bounds)}</span>
+              <span>{selectedDisplay.scaleFactor}x</span>
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <p className="presenter-display-empty">
+          {displayError ?? "Display data unavailable."}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function PresenterSlidePreview({
   presenterSlide,
   slide,
@@ -752,6 +869,10 @@ function formatPresenterClock(ms: number): string {
   }
 
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatDisplayBounds(bounds: DesktopPresenterDisplay["bounds"]): string {
+  return `${bounds.width} x ${bounds.height}`;
 }
 
 function isTextInputTarget(target: EventTarget | null): boolean {

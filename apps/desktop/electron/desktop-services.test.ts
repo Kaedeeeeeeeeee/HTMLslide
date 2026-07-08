@@ -8,6 +8,7 @@ import {
   findCliRuntime,
   getDesktopCliIntegration,
   installDesktopCliIntegration,
+  listDesktopPresenterDisplays,
   loadDesktopPresenterDeck,
   loadProjectPreview,
   readDesktopLibrary,
@@ -1766,5 +1767,57 @@ function requireArg(args, name) {
       source: "invalid"
     });
     expect(calls).toEqual([["export", projectPath, "--json"]]);
+  });
+
+  it("normalizes presenter display targets with the primary display first", () => {
+    const displays = listDesktopPresenterDisplays({
+      getPrimaryDisplay: () => ({
+        id: 20,
+        internal: false,
+        label: "",
+        scaleFactor: 2,
+        bounds: { x: 1920.4, y: 0, width: 2560.6, height: 1440.2 },
+        workArea: { x: 1920, y: 24, width: 2560, height: 1416 }
+      }),
+      getAllDisplays: () => [
+        {
+          id: 10,
+          internal: true,
+          label: "Built-in Display",
+          scaleFactor: 2,
+          bounds: { x: 0, y: 0, width: 1728, height: 1117 },
+          workArea: { x: 0, y: 37, width: 1728, height: 1080 }
+        },
+        {
+          id: 20,
+          internal: false,
+          label: "",
+          scaleFactor: 2,
+          bounds: { x: 1920.4, y: 0, width: 2560.6, height: 1440.2 },
+          workArea: { x: 1920, y: 24, width: 2560, height: 1416 }
+        }
+      ]
+    });
+
+    expect(displays).toEqual([
+      {
+        id: 20,
+        label: "Primary display",
+        primary: true,
+        internal: false,
+        scaleFactor: 2,
+        bounds: { x: 1920, y: 0, width: 2561, height: 1440 },
+        workArea: { x: 1920, y: 24, width: 2560, height: 1416 }
+      },
+      {
+        id: 10,
+        label: "Built-in Display",
+        primary: false,
+        internal: true,
+        scaleFactor: 2,
+        bounds: { x: 0, y: 0, width: 1728, height: 1117 },
+        workArea: { x: 0, y: 37, width: 1728, height: 1080 }
+      }
+    ]);
   });
 });

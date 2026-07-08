@@ -88,6 +88,10 @@ from the Electron main process, validates the returned package through `@htmlsli
 order, timing, and notes into the renderer session. If package preparation fails, the app keeps the source-preview
 rehearsal fallback so authors can still rehearse while fixing export issues.
 
+The desktop Presenter console also reads Electron display metadata and exposes a target-display selector with primary,
+internal/external, scale, and resolution details. This is display discovery for the presenter workflow; separate audience
+window placement and dual-screen synchronization remain future integration work.
+
 ## Keyboard Controls
 
 Presenter keyboard actions are exposed through `PRESENTER_KEYBOARD_CONTROLS`, `getPresenterKeyboardAction(input)`, and `applyPresenterKeyboardAction(deckPackage, state, action, options)`.
@@ -113,4 +117,4 @@ Dual-screen presenter mode is a desktop integration layer over the same package/
 
 - audience view renders `deck.pdf` pages or `deck.html` slides full screen with no chrome.
 - presenter console renders current/next previews, notes, timer, progress, and controls.
-- display detection, window placement, fullscreen transitions, screen swap, and reconnect behavior remain outside `@htmlslide/presenter`.
+- window placement, fullscreen transitions, screen swap, and reconnect behavior remain outside `@htmlslide/presenter`.

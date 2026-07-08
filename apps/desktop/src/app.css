@@ -2072,6 +2072,56 @@ svg {
   background: #9bc8e0;
 }
 
+.presenter-display-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.presenter-display-panel .field-row {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(221, 228, 238, 0.12);
+  border-radius: var(--hs-radius-sm);
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 0.92fr);
+  padding: 10px;
+}
+
+.presenter-display-panel .field-row span {
+  color: #9ba7b8;
+}
+
+.presenter-display-panel select {
+  background: #10151e;
+  border-color: rgba(221, 228, 238, 0.22);
+  color: #f4f7fb;
+  min-width: 0;
+}
+
+.presenter-display-meta {
+  color: #c8d2df;
+  display: grid;
+  font-size: 11px;
+  gap: 6px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.presenter-display-meta span,
+.presenter-display-empty {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(221, 228, 238, 0.12);
+  border-radius: var(--hs-radius-sm);
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  padding: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.presenter-display-empty {
+  color: #9ba7b8;
+}
+
 .presenter-notes {
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(221, 228, 238, 0.12);

@@ -248,6 +248,23 @@ export type DesktopPresenterDeckResult =
       }>;
     };
 
+export type DesktopDisplayBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type DesktopPresenterDisplay = {
+  id: number;
+  label: string;
+  primary: boolean;
+  internal: boolean;
+  scaleFactor: number;
+  bounds: DesktopDisplayBounds;
+  workArea: DesktopDisplayBounds;
+};
+
 export type DesktopAiEngineSettingsSaveRequest = {
   settings: AiEngineSettings;
   apiKeyInput?: string;
@@ -274,6 +291,7 @@ export type HtmlslideDesktopApi = {
   checkProject(projectPath: string): Promise<DesktopCliResult>;
   exportProject(projectPath: string): Promise<DesktopCliResult>;
   loadPresenterDeck(projectPath: string): Promise<DesktopPresenterDeckResult>;
+  listPresenterDisplays(): Promise<DesktopPresenterDisplay[]>;
   runMockAgent(request: DesktopMockAgentRunRequest): Promise<DesktopMockAgentRunResult>;
   runByokAgent(request: DesktopByokAgentRunRequest): Promise<DesktopByokAgentRunResult>;
   runExternalAgent(request: DesktopExternalAgentRunRequest): Promise<DesktopExternalAgentRunResult>;

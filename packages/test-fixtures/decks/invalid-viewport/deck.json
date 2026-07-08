@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "0.1.0",
+  "id": "deck_invalid_viewport",
+  "title": "Invalid Viewport",
+  "language": "en-US",
+  "aspectRatio": "16:9",
+  "viewport": {
+    "width": 0,
+    "height": 1080
+  },
+  "slides": [
+    {
+      "id": "001-title",
+      "title": "Invalid viewport",
+      "source": "slides/001-title.html",
+      "notes": "notes/001-title.md"
+    }
+  ]
+}

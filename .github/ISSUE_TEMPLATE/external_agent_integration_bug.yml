@@ -1,0 +1,44 @@
+name: External agent integration bug
+description: Report issues with Claude, Codex, fake adapters, or MCP boundaries.
+title: "[External Agent]: "
+labels:
+  - external-agent
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What integration failed?
+    validations:
+      required: true
+  - type: dropdown
+    id: adapter
+    attributes:
+      label: Adapter
+      options:
+        - fake adapter
+        - Claude Code
+        - Codex
+        - Other external agent
+        - MCP server
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include commands or UI path. Remove credentials and private project data.
+    validations:
+      required: true
+  - type: textarea
+    id: boundary
+    attributes:
+      label: Project boundary or file-write behavior
+      description: Note whether the agent tried to read or write outside the selected project.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Remove API keys, tokens, private deck content, and personal data.
+      render: text

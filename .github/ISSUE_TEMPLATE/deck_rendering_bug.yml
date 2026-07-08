@@ -1,0 +1,44 @@
+name: Deck rendering bug
+description: Report HTML/PDF/PNG output differences or visual regressions.
+title: "[Rendering]: "
+labels:
+  - rendering
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Rendering issue
+      description: Describe the visible problem and where it appears.
+    validations:
+      required: true
+  - type: dropdown
+    id: output
+    attributes:
+      label: Output affected
+      options:
+        - Preview
+        - PDF
+        - PNG thumbnail
+        - deckpkg
+        - Presenter
+        - Multiple outputs
+    validations:
+      required: true
+  - type: textarea
+    id: deck
+    attributes:
+      label: Minimal deck fixture
+      description: Attach or link a minimal fixture with private content removed.
+    validations:
+      required: true
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or diffs
+      description: Include before, after, and diff images when available.
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: macOS version, Chromium/Electron version if known

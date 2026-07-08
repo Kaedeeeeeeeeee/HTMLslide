@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.base.json",
+  "files": [],
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./packages/shared-ui" },
+    { "path": "./packages/renderer" },
+    { "path": "./packages/linter" },
+    { "path": "./packages/agent" },
+    { "path": "./packages/compiler" },
+    { "path": "./packages/mcp-server" },
+    { "path": "./packages/cli" }
+  ]
+}

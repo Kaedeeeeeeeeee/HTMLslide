@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "0.2.0",
+  "id": "deck_unsupported_schema",
+  "title": "Unsupported Schema",
+  "language": "en-US",
+  "aspectRatio": "16:9",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "slides": [
+    {
+      "id": "001-title",
+      "title": "Unsupported schema",
+      "source": "slides/001-title.html",
+      "notes": "notes/001-title.md"
+    }
+  ]
+}

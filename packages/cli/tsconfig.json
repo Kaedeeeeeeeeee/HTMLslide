@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../agent" },
+    { "path": "../compiler" },
+    { "path": "../core" },
+    { "path": "../linter" }
+  ]
+}

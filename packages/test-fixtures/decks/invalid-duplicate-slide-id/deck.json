@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "0.1.0",
+  "id": "deck_duplicate_slide_id",
+  "title": "Duplicate Slide ID",
+  "language": "en-US",
+  "aspectRatio": "16:9",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "slides": [
+    {
+      "id": "001-repeat",
+      "title": "First repeat",
+      "source": "slides/001-repeat.html",
+      "notes": "notes/001-repeat.md"
+    },
+    {
+      "id": "001-repeat",
+      "title": "Second repeat",
+      "source": "slides/002-repeat.html",
+      "notes": "notes/002-repeat.md"
+    }
+  ]
+}

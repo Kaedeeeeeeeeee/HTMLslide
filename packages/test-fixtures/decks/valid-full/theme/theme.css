@@ -1,0 +1,11 @@
+:root {
+  --htmlslide-bg: #ffffff;
+  --htmlslide-fg: #111111;
+  --htmlslide-accent: #0f766e;
+}
+
+.slide {
+  background: var(--htmlslide-bg);
+  color: var(--htmlslide-fg);
+  font-family: Inter, Arial, sans-serif;
+}

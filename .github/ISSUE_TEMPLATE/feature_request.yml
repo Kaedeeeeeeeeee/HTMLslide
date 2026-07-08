@@ -1,0 +1,42 @@
+name: Feature request
+description: Suggest a product or developer workflow improvement.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user workflow is blocked or inefficient?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the smallest useful version.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Core/project format
+        - CLI
+        - Renderer/compiler
+        - Linter/QA
+        - Electron app
+        - Presenter
+        - Agent orchestration
+        - External agent integration
+        - MCP
+        - Packaging/release
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

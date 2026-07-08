@@ -1,0 +1,40 @@
+{
+  "schemaVersion": "0.1.0",
+  "fixtures": [
+    {
+      "name": "valid-minimal",
+      "kind": "valid",
+      "expectedSlideCount": 1
+    },
+    {
+      "name": "valid-full",
+      "kind": "valid",
+      "expectedSlideCount": 2
+    },
+    {
+      "name": "invalid-missing-slide-source",
+      "kind": "project-invalid",
+      "expectedIssueType": "missing-file"
+    },
+    {
+      "name": "invalid-duplicate-slide-id",
+      "kind": "schema-invalid",
+      "expectedIssuePath": "slides.1.id"
+    },
+    {
+      "name": "invalid-viewport",
+      "kind": "schema-invalid",
+      "expectedIssuePath": "viewport.width"
+    },
+    {
+      "name": "invalid-safe-area",
+      "kind": "schema-invalid",
+      "expectedIssuePath": "safeArea"
+    },
+    {
+      "name": "invalid-unsupported-schema",
+      "kind": "schema-invalid",
+      "expectedIssuePath": "schemaVersion"
+    }
+  ]
+}

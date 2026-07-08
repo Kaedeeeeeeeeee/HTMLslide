@@ -1,0 +1,46 @@
+name: Bug report
+description: Report a reproducible HTMLslide bug.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include commands, files, or UI path.
+      placeholder: |
+        1. Run ...
+        2. Open ...
+        3. See ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v0.1.0-alpha or commit SHA
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: macOS version, CPU architecture, Node version
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or artifacts
+      description: Remove API keys, provider tokens, private deck content, and personal data.
+      render: text

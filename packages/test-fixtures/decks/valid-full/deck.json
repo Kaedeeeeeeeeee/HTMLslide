@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "0.1.0",
+  "appVersion": "0.1.0",
+  "id": "deck_valid_full",
+  "title": "Valid Full Deck",
+  "language": "zh-CN",
+  "aspectRatio": "16:9",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "safeArea": {
+    "top": 72,
+    "right": 96,
+    "bottom": 72,
+    "left": 96
+  },
+  "theme": {
+    "css": "theme/theme.css",
+    "tokens": "theme/tokens.json"
+  },
+  "slides": [
+    {
+      "id": "001-title",
+      "title": "HTML as source",
+      "source": "slides/001-title.html",
+      "notes": "notes/001-title.md",
+      "durationSec": 60,
+      "kind": "title",
+      "status": "draft"
+    },
+    {
+      "id": "002-structure",
+      "title": "Project structure",
+      "source": "slides/002-structure.html",
+      "notes": "notes/002-structure.md",
+      "durationSec": 90,
+      "kind": "content",
+      "status": "ready"
+    }
+  ],
+  "export": {
+    "pdf": true,
+    "html": true,
+    "deckpkg": true,
+    "thumbnails": true,
+    "speakerNotes": true
+  },
+  "agent": {
+    "preferredEngine": "htmlslide-byok",
+    "lastRunId": null
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "0.1.0",
+  "id": "deck_invalid_safe_area",
+  "title": "Invalid Safe Area",
+  "language": "en-US",
+  "aspectRatio": "16:9",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "safeArea": {
+    "top": 72,
+    "right": 1000,
+    "bottom": 72,
+    "left": 1000
+  },
+  "slides": [
+    {
+      "id": "001-title",
+      "title": "Invalid safe area",
+      "source": "slides/001-title.html",
+      "notes": "notes/001-title.md"
+    }
+  ]
+}

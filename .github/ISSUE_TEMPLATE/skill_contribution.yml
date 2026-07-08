@@ -1,0 +1,39 @@
+name: Skill contribution
+description: Propose an official or registry-listed HTMLslide skill.
+title: "[Skill]: "
+labels:
+  - skill
+body:
+  - type: input
+    id: skill_name
+    attributes:
+      label: Skill name
+    validations:
+      required: true
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case
+      description: What deck workflow does this skill support?
+    validations:
+      required: true
+  - type: input
+    id: license
+    attributes:
+      label: License
+      description: Official bundled skills must use a compatible license such as Apache-2.0 or MIT.
+      placeholder: Apache-2.0
+    validations:
+      required: true
+  - type: textarea
+    id: scripts
+    attributes:
+      label: Scripts and network access
+      description: List any scripts, binaries, package installs, external network access, or remote assets.
+    validations:
+      required: true
+  - type: textarea
+    id: fixtures
+    attributes:
+      label: Fixtures or examples
+      description: Link or describe deterministic examples that can run without secrets.

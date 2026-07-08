@@ -1,0 +1,37 @@
+{
+  "name": "htmlslide",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first desktop workbench and CLI for AI-agent-native HTML/PDF slide decks.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @htmlslide/desktop dev",
+    "build": "pnpm -r --if-present build",
+    "build:packages": "pnpm -r --filter './packages/**' --if-present build",
+    "typecheck": "tsc -b --pretty false && pnpm --filter @htmlslide/desktop typecheck",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "package:alpha": "node scripts/release/package-alpha.mjs",
+    "cli": "pnpm --filter @htmlslide/cli htmlslide",
+    "doctor": "pnpm --filter @htmlslide/cli htmlslide doctor"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.32.0",
+    "@types/node": "^24.0.10",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "eslint": "^9.32.0",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.35.1",
+    "vite": "^7.0.2",
+    "vitest": "^3.2.4"
+  }
+}

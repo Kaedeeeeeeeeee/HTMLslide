@@ -184,6 +184,21 @@ export type CheckpointFile = {
 
 export type CheckpointStrategy = "metadata-only" | "git-diff" | "file-copy";
 
+export type CheckpointTextDiffLine = {
+  type: "context" | "added" | "removed" | "omitted";
+  text: string;
+  oldLine?: number;
+  newLine?: number;
+};
+
+export type CheckpointTextDiff = {
+  path: string;
+  status: Extract<CheckpointFileStatus, "added" | "modified" | "deleted">;
+  language: "html" | "css" | "json" | "markdown" | "text";
+  lines: CheckpointTextDiffLine[];
+  truncated: boolean;
+};
+
 export type CheckpointMetadata = {
   id: string;
   runId: string;
@@ -226,6 +241,7 @@ export type FileCopyCheckpointDiff = {
   added: CheckpointFile[];
   deleted: CheckpointFile[];
   unchanged: CheckpointFile[];
+  textDiffs: CheckpointTextDiff[];
   summary: {
     changed: number;
     added: number;

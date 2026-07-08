@@ -81,8 +81,9 @@ test.describe("HTMLslide desktop smoke", () => {
 
     await page.locator(".library-main").getByRole("button", { name: "Open Folder", exact: true }).click();
 
-    await expect(page.getByText("Project loaded")).toBeVisible();
-    await expect(page.getByText("Valid Full Deck")).toBeVisible();
+    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible({
+      timeout: 30_000
+    });
     await expect(page.getByRole("heading", { name: "Slides" })).toBeVisible();
     await expect(page.getByLabel("HTML as source slide preview")).toBeVisible();
     await expect(page.getByText("PDF and deckpkg remain deterministic artifacts.")).toBeVisible();
@@ -92,11 +93,35 @@ test.describe("HTMLslide desktop smoke", () => {
 
     await expect(page.getByText("Mock agent completed check and export")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByRole("heading", { name: "Mock HTMLslide Deck" })).toBeVisible();
-    await expect(page.getByText("Reviewable outputs")).toBeVisible();
+    await expect(page.getByRole("button", { name: /Reviewable outputs/ })).toBeVisible();
     await expect(page.getByText("generate: Mock generation complete")).toBeVisible();
     await expect(page.getByText(/check: Check passed/)).toBeVisible();
     await expect(page.getByText(/export: [1-9][0-9]* artifacts/)).toBeVisible();
     await expect(page.getByText("review: Ready for review")).toBeVisible();
+
+    await expect(page.getByRole("heading", { name: "Review changes" })).toBeVisible();
+    const diffReview = page.locator(".agent-diff-review");
+    await expect(diffReview.getByText("Files changed")).toBeVisible();
+    await expect(diffReview.getByText("Slides changed")).toBeVisible();
+    await expect(diffReview.getByText("Text/CSS diff")).toBeVisible();
+    await expect(
+      diffReview.locator(".agent-diff-file-list").filter({ hasText: "Files changed" }).getByText("slides/003-review.html")
+    ).toBeVisible();
+    await expect(diffReview.locator(".agent-text-diff__title").getByText("slides/003-review.html")).toBeVisible();
+
+    await diffReview.getByRole("button", { name: "Close diff review", exact: true }).click();
+    await expect(diffReview).toBeHidden();
+    await page.locator(".command-bar__controls").getByRole("button", { name: "View diff", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Review changes" })).toBeVisible();
+
+    page.once("dialog", async (dialog) => {
+      await dialog.accept();
+    });
+    await page.getByRole("button", { name: "Revert changes", exact: true }).click();
+    await expect(page.getByText("Checkpoint reverted")).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible();
+    await expect(page.getByLabel("HTML as source slide preview")).toBeVisible();
+
     await expectNoFrameworkOverlay(page);
     expect(browserErrors).toEqual([]);
   });

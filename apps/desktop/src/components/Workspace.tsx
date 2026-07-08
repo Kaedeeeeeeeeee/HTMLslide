@@ -92,15 +92,55 @@ interface WorkspaceProps {
   agentRunEvents: AgentRunEventLike[];
   agentRunLogs: AgentRunLogLike[];
   commandActionStatuses: CommandActionStatuses;
+  diffReview?: AgentDiffReview;
   operationStatus: OperationStatus;
+  onAcceptDiff?: () => void;
+  onCloseDiff?: () => void;
   onCommandChange: (value: string) => void;
   onCommandSubmit: () => void;
   onInspectorTabChange: (tab: InspectorTab) => void;
   onQaFilterChange: (filter: QaFilter) => void;
+  onRevertDiff?: () => void;
   onRunAction: (action: "start" | "pause" | "cancel" | "retry") => void;
   onSelectSlide: (slideId: string) => void;
   onSettingsOpen: () => void;
   onToolbarAction: (action: "generate" | "check" | "export" | "present") => void;
+  onViewDiff?: () => void;
+}
+
+export interface AgentDiffReview {
+  open: boolean;
+  runId?: string;
+  checkpointId?: string;
+  summary?: {
+    changed: number;
+    added: number;
+    deleted: number;
+    unchanged: number;
+  };
+  changedFiles: readonly string[];
+  addedFiles: readonly string[];
+  deletedFiles: readonly string[];
+  unchangedFiles: readonly string[];
+  textDiffs: readonly AgentTextDiff[];
+  canRevert: boolean;
+  statusMessage?: string;
+  reverting?: boolean;
+}
+
+export interface AgentTextDiff {
+  path: string;
+  status: "added" | "modified" | "deleted";
+  language: "html" | "css" | "json" | "markdown" | "text";
+  lines: readonly AgentTextDiffLine[];
+  truncated: boolean;
+}
+
+export interface AgentTextDiffLine {
+  type: "context" | "added" | "removed" | "omitted";
+  text: string;
+  oldLine?: number;
+  newLine?: number;
 }
 
 const inspectorTabs: Array<{ id: InspectorTab; label: string }> = [
@@ -147,15 +187,20 @@ export function Workspace({
   agentRunLogs,
   commandValue,
   commandActionStatuses,
+  diffReview,
   inspectorTab,
+  onAcceptDiff,
+  onCloseDiff,
   onCommandChange,
   onCommandSubmit,
   onInspectorTabChange,
   onQaFilterChange,
+  onRevertDiff,
   onRunAction,
   onSelectSlide,
   onSettingsOpen,
   onToolbarAction,
+  onViewDiff,
   operationStatus,
   project,
   qaFilter,
@@ -249,7 +294,7 @@ export function Workspace({
   );
 
   return (
-    <main className="workspace-shell">
+    <main className={diffReview?.open ? "workspace-shell workspace-shell--with-diff" : "workspace-shell"}>
       <Toolbar
         issueCounts={issueCounts}
         onInspectorTabChange={onInspectorTabChange}
@@ -289,9 +334,14 @@ export function Workspace({
 
       <AgentRunConsole
         commandValue={commandValue}
+        diffReview={diffReview}
+        onAcceptDiff={onAcceptDiff}
+        onCloseDiff={onCloseDiff}
         onCommandChange={onCommandChange}
         onCommandSubmit={onCommandSubmit}
+        onRevertDiff={onRevertDiff}
         onRunAction={onRunAction}
+        onViewDiff={onViewDiff}
         running={running}
         statuses={commandActionStatuses}
         stages={runtimeStages}
@@ -1196,19 +1246,29 @@ function ExportPanel({
 
 interface AgentRunConsoleProps {
   commandValue: string;
+  diffReview?: AgentDiffReview;
   running: boolean;
   stages: ReturnType<typeof buildRuntimeStages>;
   statuses: CommandActionStatuses;
+  onAcceptDiff?: () => void;
+  onCloseDiff?: () => void;
   onCommandChange: (value: string) => void;
   onCommandSubmit: () => void;
+  onRevertDiff?: () => void;
   onRunAction: (action: "start" | "pause" | "cancel" | "retry") => void;
+  onViewDiff?: () => void;
 }
 
 function AgentRunConsole({
   commandValue,
+  diffReview,
+  onAcceptDiff,
+  onCloseDiff,
   onCommandChange,
   onCommandSubmit,
+  onRevertDiff,
   onRunAction,
+  onViewDiff,
   running,
   statuses,
   stages
@@ -1219,7 +1279,7 @@ function AgentRunConsole({
   };
 
   return (
-    <footer className="agent-console">
+    <footer className={diffReview?.open ? "agent-console agent-console--with-diff" : "agent-console"}>
       <section className="agent-console__timeline">
         {stages.map((stage) => (
           <article
@@ -1249,6 +1309,16 @@ function AgentRunConsole({
         ))}
       </section>
 
+      {diffReview?.open ? (
+        <DiffReviewPanel
+          review={diffReview}
+          onAccept={onAcceptDiff}
+          onClose={onCloseDiff}
+          onRevert={onRevertDiff}
+          onView={onViewDiff}
+        />
+      ) : null}
+
       <section className="command-bar">
         <div className="command-bar__controls">
           <Button
@@ -1269,8 +1339,11 @@ function AgentRunConsole({
             onClick={() => onRunAction("retry")}
           />
           <IconButton
+            disabled={!onViewDiff}
             icon={<FileText />}
             label="View diff"
+            onClick={onViewDiff}
+            selected={Boolean(diffReview?.open)}
           />
           <IconButton
             icon={<TerminalSquare />}
@@ -1307,5 +1380,209 @@ function AgentRunConsole({
         </form>
       </section>
     </footer>
+  );
+}
+
+function DiffReviewPanel({
+  onAccept,
+  onClose,
+  onRevert,
+  onView,
+  review
+}: {
+  review: AgentDiffReview;
+  onAccept?: () => void;
+  onClose?: () => void;
+  onRevert?: () => void;
+  onView?: () => void;
+}): ReactNode {
+  const hasChangedFiles = review.changedFiles.length + review.addedFiles.length + review.deletedFiles.length > 0;
+  const changedSourceFiles = [...review.changedFiles, ...review.addedFiles, ...review.deletedFiles];
+  const changedSlideFiles = changedSourceFiles.filter((file) => file.startsWith("slides/"));
+  const summary = {
+    added: review.summary?.added ?? review.addedFiles.length,
+    changed: review.summary?.changed ?? review.changedFiles.length,
+    deleted: review.summary?.deleted ?? review.deletedFiles.length,
+    unchanged: review.summary?.unchanged ?? review.unchangedFiles.length
+  };
+  const checkpointLabel = review.checkpointId ?? "No checkpoint";
+  const runLabel = review.runId ?? "No run id";
+
+  return (
+    <section
+      aria-label="Agent diff review"
+      className="agent-diff-review"
+    >
+      <PanelHeader
+        actions={
+          <>
+            <Button
+              disabled={!onView}
+              icon={<FileText />}
+              onClick={onView}
+              size="sm"
+              variant="secondary"
+            >
+              View diff
+            </Button>
+            <Button
+              disabled={!onAccept || review.reverting}
+              icon={<CheckCircle2 />}
+              onClick={onAccept}
+              size="sm"
+              variant="primary"
+            >
+              Accept changes
+            </Button>
+            <Button
+              disabled={!review.canRevert || !onRevert || review.reverting}
+              icon={<RotateCcw />}
+              onClick={onRevert}
+              size="sm"
+              variant="danger"
+            >
+              {review.reverting ? "Reverting" : "Revert changes"}
+            </Button>
+            <IconButton
+              disabled={!onClose}
+              icon={<X />}
+              label="Close diff review"
+              onClick={onClose}
+            />
+          </>
+        }
+        eyebrow="Agent checkpoint"
+        title="Review changes"
+      />
+      <div className="agent-diff-review__meta">
+        <span>
+          Run <code title={runLabel}>{runLabel}</code>
+        </span>
+        <span>
+          Checkpoint <code title={checkpointLabel}>{checkpointLabel}</code>
+        </span>
+      </div>
+
+      <div className="agent-diff-review__body">
+        <div className="agent-diff-review__summary">
+          <DiffCount label="Changed" value={summary.changed} />
+          <DiffCount label="Added" value={summary.added} />
+          <DiffCount label="Deleted" value={summary.deleted} />
+          <DiffCount label="Unchanged" value={summary.unchanged} />
+        </div>
+
+        <div className="agent-diff-review__lists">
+          <DiffFileList
+            files={changedSourceFiles}
+            label="Files changed"
+          />
+          <DiffFileList
+            files={changedSlideFiles}
+            label="Slides changed"
+          />
+          <DiffFileList
+            files={review.addedFiles}
+            label="Added"
+          />
+          <DiffFileList
+            files={review.deletedFiles}
+            label="Deleted"
+          />
+        </div>
+
+        <div className="agent-diff-review__qa">
+          <strong>{hasChangedFiles ? "QA delta available after check" : "No source changes detected"}</strong>
+          <span>{review.statusMessage ?? "Review changed source files, then accept or revert this checkpoint."}</span>
+          {review.checkpointId ? <code>{review.checkpointId}</code> : null}
+        </div>
+
+        <DiffTextPanel textDiffs={review.textDiffs} />
+      </div>
+    </section>
+  );
+}
+
+function DiffCount({
+  label,
+  value
+}: {
+  label: string;
+  value: number;
+}): ReactNode {
+  return (
+    <span className="agent-diff-count">
+      <strong>{value}</strong>
+      <small>{label}</small>
+    </span>
+  );
+}
+
+function DiffFileList({
+  files,
+  label
+}: {
+  label: string;
+  files: readonly string[];
+}): ReactNode {
+  return (
+    <section className="agent-diff-file-list">
+      <strong>{label}</strong>
+      {files.length > 0 ? (
+        <ul>
+          {files.map((file) => (
+            <li key={file}>
+              <code title={file}>{file}</code>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <span>No files</span>
+      )}
+    </section>
+  );
+}
+
+function DiffTextPanel({
+  textDiffs
+}: {
+  textDiffs: readonly AgentTextDiff[];
+}): ReactNode {
+  return (
+    <section className="agent-text-diff-panel">
+      <div className="agent-text-diff-panel__header">
+        <strong>Text/CSS diff</strong>
+        <span>{textDiffs.length > 0 ? `${textDiffs.length} readable files` : "No readable text changes"}</span>
+      </div>
+      {textDiffs.length > 0 ? (
+        <div className="agent-text-diff-panel__files">
+          {textDiffs.map((textDiff) => (
+            <article
+              className="agent-text-diff"
+              key={textDiff.path}
+            >
+              <div className="agent-text-diff__title">
+                <code title={textDiff.path}>{textDiff.path}</code>
+                <span>{textDiff.status}</span>
+              </div>
+              <div className="agent-text-diff__lines">
+                {textDiff.lines.map((line, index) => (
+                  <div
+                    className={`agent-text-diff__line is-${line.type}`}
+                    key={`${textDiff.path}-${index}`}
+                  >
+                    <span>{line.oldLine ?? ""}</span>
+                    <span>{line.newLine ?? ""}</span>
+                    <code>{line.text}</code>
+                  </div>
+                ))}
+              </div>
+              {textDiff.truncated ? <small>Diff output truncated for review.</small> : null}
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p>No readable text changes.</p>
+      )}
+    </section>
   );
 }

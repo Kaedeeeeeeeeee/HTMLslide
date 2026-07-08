@@ -5,6 +5,7 @@ import type {
   CheckpointFile,
   CheckpointMetadata,
   CheckpointReferenceInput,
+  CheckpointTextDiff,
   CreateFileCopyCheckpointInput,
   FileCopyCheckpointDiff,
   FileCopyCheckpointRevertResult,
@@ -17,6 +18,10 @@ const snapshotDirectoryName = "snapshot";
 
 const sourceRoots = ["deck.json", "slides/", "notes/", "theme/", "assets/"] as const;
 const scopedDirectories = ["slides", "notes", "theme", "assets"] as const;
+const maxTextDiffFiles = 8;
+const maxTextDiffInputLines = 600;
+const maxTextDiffOutputLines = 160;
+const textDiffContextLines = 2;
 
 export const createFileCopyCheckpoint = async (
   input: CreateFileCopyCheckpointInput
@@ -133,6 +138,7 @@ export const diffFileCopyCheckpoint = async (
 ): Promise<FileCopyCheckpointDiff> => {
   const projectRoot = path.resolve(input.projectRoot);
   const checkpoint = await readCheckpointManifest(input);
+  const checkpointRoot = checkpointRootFor(projectRoot, checkpoint.runId);
   const currentFiles = await currentSourceDigests(projectRoot);
   const originalFiles = checkpoint.files.filter((file) => file.origin !== "agent" && file.snapshotPath !== undefined);
   const originalByPath = new Map(originalFiles.map((file) => [file.path, file]));
@@ -197,6 +203,7 @@ export const diffFileCopyCheckpoint = async (
     added,
     deleted,
     unchanged,
+    textDiffs: await buildTextDiffs(projectRoot, checkpointRoot, [...changed, ...added, ...deleted]),
     summary: {
       changed: changed.length,
       added: added.length,
@@ -378,6 +385,290 @@ const digestExistingFile = async (absolutePath: string): Promise<string | undefi
 
 const digestFile = async (absolutePath: string): Promise<string> =>
   createHash("sha256").update(await readFile(absolutePath)).digest("hex");
+
+const buildTextDiffs = async (
+  projectRoot: string,
+  checkpointRoot: string,
+  files: CheckpointFile[]
+): Promise<CheckpointTextDiff[]> => {
+  const diffs: CheckpointTextDiff[] = [];
+
+  for (const file of files.sort((left, right) => compareSourcePaths(left.path, right.path))) {
+    if (diffs.length >= maxTextDiffFiles || !isDiffableStatus(file.status)) {
+      continue;
+    }
+
+    const language = textDiffLanguage(file.path);
+    if (language === undefined) {
+      continue;
+    }
+
+    const originalText =
+      file.status === "added" || file.snapshotPath === undefined
+        ? ""
+        : await readDiffableText(resolveCheckpointPath(checkpointRoot, file.snapshotPath));
+    const currentText =
+      file.status === "deleted"
+        ? ""
+        : await readDiffableText(resolveProjectPath(projectRoot, file.path));
+
+    if (originalText === undefined || currentText === undefined) {
+      continue;
+    }
+
+    const diff = compactTextDiff(buildLineTextDiff(originalText, currentText));
+    diffs.push({
+      path: file.path,
+      status: file.status,
+      language,
+      lines: diff.lines,
+      truncated: diff.truncated
+    });
+  }
+
+  return diffs;
+};
+
+const isDiffableStatus = (status: CheckpointFile["status"]): status is CheckpointTextDiff["status"] =>
+  status === "added" || status === "modified" || status === "deleted";
+
+const textDiffLanguage = (filePath: string): CheckpointTextDiff["language"] | undefined => {
+  if (filePath === "deck.json" || filePath.endsWith(".json")) {
+    return "json";
+  }
+
+  if (filePath.endsWith(".html")) {
+    return "html";
+  }
+
+  if (filePath.endsWith(".css")) {
+    return "css";
+  }
+
+  if (filePath.endsWith(".md")) {
+    return "markdown";
+  }
+
+  if (filePath.endsWith(".txt")) {
+    return "text";
+  }
+
+  return undefined;
+};
+
+const readDiffableText = async (absolutePath: string): Promise<string | undefined> => {
+  try {
+    const text = await readFile(absolutePath, "utf8");
+    return text.includes("\0") ? undefined : text;
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      return "";
+    }
+    throw error;
+  }
+};
+
+const buildLineTextDiff = (
+  originalText: string,
+  currentText: string
+): CheckpointTextDiff["lines"] => {
+  const originalLines = splitTextLines(originalText);
+  const currentLines = splitTextLines(currentText);
+
+  if (originalLines.length > maxTextDiffInputLines || currentLines.length > maxTextDiffInputLines) {
+    return summarizeLargeTextDiff(originalLines, currentLines);
+  }
+
+  const lcsLengths = Array.from({ length: originalLines.length + 1 }, () =>
+    Array.from({ length: currentLines.length + 1 }, () => 0)
+  );
+
+  for (let oldIndex = originalLines.length - 1; oldIndex >= 0; oldIndex -= 1) {
+    const row = lcsLengths[oldIndex];
+    if (row === undefined) {
+      continue;
+    }
+
+    for (let newIndex = currentLines.length - 1; newIndex >= 0; newIndex -= 1) {
+      row[newIndex] =
+        originalLines[oldIndex] === currentLines[newIndex]
+          ? lcsValue(lcsLengths, oldIndex + 1, newIndex + 1) + 1
+          : Math.max(lcsValue(lcsLengths, oldIndex + 1, newIndex), lcsValue(lcsLengths, oldIndex, newIndex + 1));
+    }
+  }
+
+  const lines: CheckpointTextDiff["lines"] = [];
+  let oldIndex = 0;
+  let newIndex = 0;
+
+  while (oldIndex < originalLines.length && newIndex < currentLines.length) {
+    const originalLine = originalLines[oldIndex];
+    const currentLine = currentLines[newIndex];
+    if (originalLine === undefined || currentLine === undefined) {
+      break;
+    }
+
+    if (originalLine === currentLine) {
+      lines.push({
+        type: "context",
+        text: originalLine,
+        oldLine: oldIndex + 1,
+        newLine: newIndex + 1
+      });
+      oldIndex += 1;
+      newIndex += 1;
+    } else if (lcsValue(lcsLengths, oldIndex + 1, newIndex) >= lcsValue(lcsLengths, oldIndex, newIndex + 1)) {
+      lines.push({
+        type: "removed",
+        text: originalLine,
+        oldLine: oldIndex + 1
+      });
+      oldIndex += 1;
+    } else {
+      lines.push({
+        type: "added",
+        text: currentLine,
+        newLine: newIndex + 1
+      });
+      newIndex += 1;
+    }
+  }
+
+  while (oldIndex < originalLines.length) {
+    const originalLine = originalLines[oldIndex];
+    if (originalLine === undefined) {
+      break;
+    }
+
+    lines.push({
+      type: "removed",
+      text: originalLine,
+      oldLine: oldIndex + 1
+    });
+    oldIndex += 1;
+  }
+
+  while (newIndex < currentLines.length) {
+    const currentLine = currentLines[newIndex];
+    if (currentLine === undefined) {
+      break;
+    }
+
+    lines.push({
+      type: "added",
+      text: currentLine,
+      newLine: newIndex + 1
+    });
+    newIndex += 1;
+  }
+
+  return lines;
+};
+
+const lcsValue = (matrix: number[][], oldIndex: number, newIndex: number): number =>
+  matrix[oldIndex]?.[newIndex] ?? 0;
+
+const splitTextLines = (text: string): string[] => {
+  if (text.length === 0) {
+    return [];
+  }
+
+  const normalizedText = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const trimmedText = normalizedText.endsWith("\n") ? normalizedText.slice(0, -1) : normalizedText;
+  return trimmedText.length === 0 ? [] : trimmedText.split("\n");
+};
+
+const summarizeLargeTextDiff = (
+  originalLines: string[],
+  currentLines: string[]
+): CheckpointTextDiff["lines"] => [
+  {
+    type: "omitted",
+    text: `Large text diff omitted (${originalLines.length} original lines, ${currentLines.length} current lines).`
+  }
+];
+
+const compactTextDiff = (
+  lines: CheckpointTextDiff["lines"]
+): {
+  lines: CheckpointTextDiff["lines"];
+  truncated: boolean;
+} => {
+  if (lines.length <= maxTextDiffOutputLines && lines.every((line) => line.type !== "context")) {
+    return {
+      lines,
+      truncated: lines.some((line) => line.type === "omitted")
+    };
+  }
+
+  const changedIndexes = lines
+    .map((line, index) => (line.type === "context" ? -1 : index))
+    .filter((index) => index >= 0);
+
+  if (changedIndexes.length === 0) {
+    return {
+      lines: lines.slice(0, maxTextDiffOutputLines),
+      truncated: lines.length > maxTextDiffOutputLines
+    };
+  }
+
+  const keepIndexes = new Set<number>();
+  for (const index of changedIndexes) {
+    const start = Math.max(0, index - textDiffContextLines);
+    const end = Math.min(lines.length - 1, index + textDiffContextLines);
+    for (let keepIndex = start; keepIndex <= end; keepIndex += 1) {
+      keepIndexes.add(keepIndex);
+    }
+  }
+
+  const compacted: CheckpointTextDiff["lines"] = [];
+  let omitted = 0;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!keepIndexes.has(index)) {
+      omitted += 1;
+      continue;
+    }
+
+    if (omitted > 0) {
+      compacted.push({
+        type: "omitted",
+        text: `${omitted} unchanged ${omitted === 1 ? "line" : "lines"} omitted.`
+      });
+      omitted = 0;
+    }
+
+    const line = lines[index];
+    if (line !== undefined) {
+      compacted.push(line);
+    }
+  }
+
+  if (omitted > 0) {
+    compacted.push({
+      type: "omitted",
+      text: `${omitted} unchanged ${omitted === 1 ? "line" : "lines"} omitted.`
+    });
+  }
+
+  if (compacted.length <= maxTextDiffOutputLines) {
+    return {
+      lines: compacted,
+      truncated: compacted.length !== lines.length
+    };
+  }
+
+  return {
+    lines: [
+      ...compacted.slice(0, maxTextDiffOutputLines - 1),
+      {
+        type: "omitted",
+        text: `${compacted.length - maxTextDiffOutputLines + 1} diff lines omitted.`
+      }
+    ],
+    truncated: true
+  };
+};
 
 const isRegularFile = async (absolutePath: string): Promise<boolean> => {
   try {

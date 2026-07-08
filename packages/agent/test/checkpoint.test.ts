@@ -151,6 +151,31 @@ describe("file-copy checkpoints", () => {
       deleted: 1,
       unchanged: 3
     });
+    expect(diff.textDiffs.map((textDiff) => textDiff.path)).toEqual([
+      "deck.json",
+      "slides/generated.html",
+      "notes/001-title.md",
+      "assets/safe-added.txt",
+      "assets/user-edited-after.txt",
+      "assets/user-later.txt"
+    ]);
+    expect(diff.textDiffs.find((textDiff) => textDiff.path === "deck.json")).toMatchObject({
+      status: "modified",
+      language: "json",
+      lines: [
+        { type: "removed", text: "original deck", oldLine: 1 },
+        { type: "added", text: "agent deck", newLine: 1 }
+      ],
+      truncated: false
+    });
+    expect(diff.textDiffs.find((textDiff) => textDiff.path === "slides/generated.html")).toMatchObject({
+      status: "added",
+      lines: [{ type: "added", text: "agent generated slide", newLine: 1 }]
+    });
+    expect(diff.textDiffs.find((textDiff) => textDiff.path === "notes/001-title.md")).toMatchObject({
+      status: "deleted",
+      lines: [{ type: "removed", text: "original notes", oldLine: 1 }]
+    });
 
     const reverted = await revertFileCopyCheckpoint({
       projectRoot: projectPath,

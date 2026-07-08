@@ -5,7 +5,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Onboarding } from "./components/Onboarding";
 import { ProjectLibrary } from "./components/ProjectLibrary";
-import { Workspace } from "./components/Workspace";
+import { Workspace, type AgentDiffReview } from "./components/Workspace";
 import {
   getDesktopApi,
   type DesktopCheckReport,
@@ -39,6 +39,7 @@ import {
   type AiEngineSettingsDraft,
   type ExternalAgentStatus
 } from "./settings-model";
+import type { FileCopyCheckpointDiff } from "@htmlslide/agent";
 import {
   agentStages,
   onboardingSteps,
@@ -93,6 +94,30 @@ function projectPreviewToState(preview: DesktopProjectPreview): {
   };
 }
 
+function checkpointDiffToReview(
+  diff: FileCopyCheckpointDiff,
+  options: {
+    open: boolean;
+    reverting?: boolean;
+    statusMessage?: string;
+  }
+): AgentDiffReview {
+  return {
+    open: options.open,
+    runId: diff.checkpoint.runId,
+    checkpointId: diff.checkpoint.id,
+    summary: diff.summary,
+    changedFiles: diff.changed.map((file) => file.path),
+    addedFiles: diff.added.map((file) => file.path),
+    deletedFiles: diff.deleted.map((file) => file.path),
+    unchangedFiles: diff.unchanged.map((file) => file.path),
+    textDiffs: diff.textDiffs,
+    canRevert: diff.checkpoint.restore.canRevert,
+    reverting: options.reverting,
+    statusMessage: options.statusMessage
+  };
+}
+
 function App(): React.ReactNode {
   const [view, setView] = useState<AppView>("onboarding");
   const [librarySection, setLibrarySection] = useState<LibrarySection>("recent");
@@ -113,6 +138,7 @@ function App(): React.ReactNode {
   const [commandActionStatuses, setCommandActionStatuses] = useState<CommandActionStatuses>(() =>
     defaultCommandActionStatuses()
   );
+  const [diffReview, setDiffReview] = useState<AgentDiffReview | undefined>();
   const [agentRunEvents, setAgentRunEvents] = useState<AgentRunEventLike[]>([]);
   const [agentRunLogs, setAgentRunLogs] = useState<AgentRunLogLike[]>([]);
   const [aiEngineSettings, setAiEngineSettings] = useState<AiEngineSettings>(() => createDefaultAiEngineSettings());
@@ -265,6 +291,16 @@ function App(): React.ReactNode {
       setAgentRunEvents(result.events);
       setAgentRunLogs(result.logs);
       setQaIssues(reportToIssues(checkReport));
+      setDiffReview(
+        result.checkpointDiff
+          ? checkpointDiffToReview(result.checkpointDiff, {
+              open: result.ok,
+              statusMessage: result.ok
+                ? "Generated source changes are ready for review or checkpoint revert."
+                : "Generated source changes need review before export."
+            })
+          : undefined
+      );
       setRunning(false);
       setOperationStatus({
         kind: result.ok ? "success" : "failed",
@@ -327,6 +363,7 @@ function App(): React.ReactNode {
     setActiveSlides(next.slides);
     setSelectedSlideId(next.slides[0]?.id ?? "");
     setQaIssues([]);
+    setDiffReview(undefined);
     setOperationStatus({
       kind: "success",
       message: "Project loaded"
@@ -563,8 +600,129 @@ function App(): React.ReactNode {
           message
         });
         updateCommandActionStatus("export", { kind: "failed", message });
-      });
+    });
   }, [activeProject, desktopApi, updateCommandActionStatus]);
+
+  const handleViewDiff = useCallback((): void => {
+    if (!diffReview?.runId && !diffReview?.checkpointId) {
+      setOperationStatus({ kind: "failed", message: "No agent checkpoint is available" });
+      return;
+    }
+
+    if (!desktopApi || !activeProject || activeProject.path.startsWith("~")) {
+      setDiffReview((current) => current ? { ...current, open: true } : current);
+      return;
+    }
+
+    setOperationStatus({ kind: "running", message: "Loading checkpoint diff" });
+    desktopApi.diffCheckpoint({
+      projectPath: activeProject.path,
+      runId: diffReview.runId,
+      checkpointId: diffReview.checkpointId
+    })
+      .then((diff) => {
+        setDiffReview(checkpointDiffToReview(diff, {
+          open: true,
+          statusMessage: "Checkpoint diff refreshed from project files."
+        }));
+        setOperationStatus({ kind: "success", message: "Checkpoint diff loaded" });
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        setDiffReview((current) =>
+          current
+            ? {
+                ...current,
+                open: true,
+                statusMessage: message
+              }
+            : current
+        );
+        setOperationStatus({ kind: "failed", message });
+      });
+  }, [activeProject, desktopApi, diffReview]);
+
+  const handleCloseDiff = useCallback((): void => {
+    setDiffReview((current) => current ? { ...current, open: false } : current);
+  }, []);
+
+  const handleAcceptDiff = useCallback((): void => {
+    setDiffReview((current) =>
+      current
+        ? {
+            ...current,
+            open: false,
+            statusMessage: "Changes accepted for this workspace session."
+          }
+        : current
+    );
+    setOperationStatus({ kind: "success", message: "Agent changes accepted" });
+    updateCommandActionStatus("review", { kind: "success", message: "Changes accepted" });
+  }, [updateCommandActionStatus]);
+
+  const handleRevertDiff = useCallback((): void => {
+    if (!diffReview?.runId && !diffReview?.checkpointId) {
+      setOperationStatus({ kind: "failed", message: "No checkpoint to revert" });
+      return;
+    }
+
+    if (!desktopApi || !activeProject || activeProject.path.startsWith("~")) {
+      setOperationStatus({ kind: "failed", message: "Open a local deck project before reverting" });
+      return;
+    }
+
+    const confirmed = window.confirm("Revert this agent run to its checkpoint? Agent-added files may be removed.");
+    if (!confirmed) {
+      return;
+    }
+
+    setDiffReview((current) => current ? { ...current, reverting: true, statusMessage: "Reverting checkpoint..." } : current);
+    setOperationStatus({ kind: "running", message: "Reverting checkpoint" });
+    desktopApi.revertCheckpoint({
+      projectPath: activeProject.path,
+      runId: diffReview.runId,
+      checkpointId: diffReview.checkpointId,
+      confirmed: true
+    })
+      .then((result) => {
+        if (result.project) {
+          const revertedPreview = result.project;
+          const next = projectPreviewToState(revertedPreview);
+          setProjectPreviews((current) => ({
+            ...current,
+            [next.project.id]: revertedPreview
+          }));
+          setProjects((current) => {
+            const existing = current.filter((project) => project.id !== next.project.id);
+            return [next.project, ...existing];
+          });
+          setSelectedProjectId(next.project.id);
+          setActiveSlides(next.slides);
+          setSelectedSlideId(next.slides[0]?.id ?? "");
+        }
+        setQaIssues([]);
+        setDiffReview((current) =>
+          current
+            ? {
+                ...current,
+                open: false,
+                reverting: false,
+                canRevert: false,
+                statusMessage: `Reverted ${result.restored.length} files and deleted ${result.deleted.length} agent-added files.`
+              }
+            : current
+        );
+        setOperationStatus({ kind: "success", message: "Checkpoint reverted" });
+        updateCommandActionStatus("generate", { kind: "idle", message: "Reverted" });
+        updateCommandActionStatus("check", { kind: "idle", message: "Run check again" });
+        updateCommandActionStatus("review", { kind: "success", message: "Reverted to checkpoint" });
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        setDiffReview((current) => current ? { ...current, reverting: false, statusMessage: message } : current);
+        setOperationStatus({ kind: "failed", message });
+      });
+  }, [activeProject, desktopApi, diffReview, updateCommandActionStatus]);
 
   const runMockGeneration = useCallback(
     (brief: string, action: "generate" | "retry" = "generate"): void => {
@@ -576,6 +734,7 @@ function App(): React.ReactNode {
       setInspectorTab("qa");
       setAgentRunEvents([]);
       setAgentRunLogs([]);
+      setDiffReview(undefined);
       setCommandActionStatuses({
         ...defaultCommandActionStatuses(),
         generate: {
@@ -664,7 +823,10 @@ function App(): React.ReactNode {
     <Workspace
       activeStageIndex={activeStageIndex}
       commandValue={commandValue}
+      diffReview={diffReview}
       inspectorTab={inspectorTab}
+      onAcceptDiff={handleAcceptDiff}
+      onCloseDiff={handleCloseDiff}
       onCommandChange={setCommandValue}
       onCommandSubmit={() => {
         const command = commandValue.trim();
@@ -676,6 +838,7 @@ function App(): React.ReactNode {
       }}
       onInspectorTabChange={setInspectorTab}
       onQaFilterChange={setQaFilter}
+      onRevertDiff={handleRevertDiff}
       onRunAction={(action) => {
         if (action === "start" || action === "retry") {
           runMockGeneration(commandValue.trim(), action === "retry" ? "retry" : "generate");
@@ -708,6 +871,7 @@ function App(): React.ReactNode {
           runMockGeneration(commandValue.trim());
         }
       }}
+      onViewDiff={handleViewDiff}
       agentRunEvents={agentRunEvents}
       agentRunLogs={agentRunLogs}
       commandActionStatuses={commandActionStatuses}

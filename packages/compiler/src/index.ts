@@ -761,8 +761,10 @@ export const exportDeck = async (
   options: ExportOptions = DEFAULT_OPTIONS
 ): Promise<ExportResult> => {
   const resolvedOptions = {
-    ...DEFAULT_OPTIONS,
-    ...options,
+    pdf: options.pdf ?? DEFAULT_OPTIONS.pdf,
+    html: options.html ?? DEFAULT_OPTIONS.html,
+    deckpkg: options.deckpkg ?? DEFAULT_OPTIONS.deckpkg,
+    thumbnails: options.thumbnails ?? DEFAULT_OPTIONS.thumbnails,
     thumbnailSize: options.thumbnailSize ?? DEFAULT_THUMBNAIL_SIZE
   };
   const exportsPath = path.join(project.projectPath, "exports");

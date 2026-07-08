@@ -140,6 +140,35 @@ describe("CLI project helpers", () => {
     }
   });
 
+  it("defaults the export command to all primary artifacts", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
+    try {
+      const project = await createProject(path.join(root, "demo"), "demo");
+      const { stdout } = await runCli(["export", project.projectPath, "--json"]);
+      const exported = JSON.parse(stdout) as {
+        artifacts: {
+          deckpkg?: string;
+          html?: string;
+          notes?: string;
+          pdf?: string;
+          thumbnails?: string[];
+        };
+      };
+
+      expect(exported.artifacts.pdf).toBe(path.join(project.projectPath, "exports", "demo.pdf"));
+      expect(exported.artifacts.html).toBe(path.join(project.projectPath, "exports", "demo.html"));
+      expect(exported.artifacts.deckpkg).toBe(path.join(project.projectPath, "exports", "demo.deckpkg"));
+      expect(exported.artifacts.notes).toBe(path.join(project.projectPath, "exports", "notes.json"));
+      expect(exported.artifacts.thumbnails).toHaveLength(2);
+      await expect(access(exported.artifacts.pdf!)).resolves.toBeUndefined();
+      await expect(access(exported.artifacts.html!)).resolves.toBeUndefined();
+      await expect(access(exported.artifacts.deckpkg!)).resolves.toBeUndefined();
+      await expect(access(exported.artifacts.thumbnails![0]!)).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("installs a managed CLI shim to an explicit target dir and uses the fallback CLI path", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
     try {

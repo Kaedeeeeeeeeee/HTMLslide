@@ -416,10 +416,12 @@ function App(): React.ReactNode {
     [applyMockAgentResult, desktopApi, seedMockAgentRun, updateCommandActionStatus]
   );
 
-  const activeProject = useMemo(
-    () => projects.find((project) => project.id === selectedProjectId) ?? projects[0] ?? sampleProjects[0],
-    [projects, selectedProjectId]
-  );
+  const activeProject = useMemo(() => {
+    const selectedPreview = projectPreviews[selectedProjectId];
+    return selectedPreview
+      ? projectRecordToSummary(selectedPreview.project)
+      : projects.find((project) => project.id === selectedProjectId) ?? projects[0] ?? sampleProjects[0];
+  }, [projectPreviews, projects, selectedProjectId]);
 
   const openPreview = useCallback((preview: DesktopProjectPreview): void => {
     const next = projectPreviewToState(preview);

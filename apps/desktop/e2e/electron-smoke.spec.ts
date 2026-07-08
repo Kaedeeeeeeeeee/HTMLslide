@@ -247,6 +247,102 @@ test.describe("HTMLslide desktop smoke", () => {
     expect(browserErrors).toEqual([]);
   });
 
+  test("checks, exports, and presents an opened deck", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
+    const homeDir = path.join(tempRoot, "home");
+    const userDataDir = path.join(tempRoot, "user-data");
+    const workspaceDir = path.join(tempRoot, "workspace");
+    const projectPath = path.join(tempRoot, "valid-full");
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(userDataDir, { recursive: true });
+    await mkdir(workspaceDir, { recursive: true });
+    await cp(sampleProjectPath, projectPath, { recursive: true });
+
+    electronApp = await electron.launch({
+      executablePath: electronExecutable,
+      args: [electronMain],
+      env: {
+        ...process.env,
+        ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+        HOME: homeDir,
+        HTMLSLIDE_USER_DATA_DIR: userDataDir,
+        HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir,
+        HTMLSLIDE_E2E_OPEN_PROJECT_PATH: projectPath
+      }
+    });
+
+    const page = await electronApp.firstWindow();
+    const browserErrors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") {
+        browserErrors.push(message.text());
+      }
+    });
+    page.on("pageerror", (error) => {
+      browserErrors.push(error.message);
+    });
+
+    await page.waitForLoadState("domcontentloaded");
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await page.locator(".library-main").getByRole("button", { name: "Open Folder", exact: true }).first().click();
+    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible({
+      timeout: 30_000
+    });
+
+    await page.locator(".workspace-toolbar").getByRole("button", { name: "Check", exact: true }).click();
+    await expect(page.getByText(/check: Check passed/)).toBeVisible({ timeout: 30_000 });
+
+    await page.locator(".workspace-toolbar").getByRole("button", { name: "Export", exact: true }).click();
+    await expect(page.locator(".toolbar-status").getByText("export: Export complete")).toBeVisible({ timeout: 30_000 });
+    await expect(access(path.join(projectPath, "exports", "valid-full-deck.pdf"))).resolves.toBeUndefined();
+    await expect(access(path.join(projectPath, "exports", "valid-full-deck.html"))).resolves.toBeUndefined();
+    await expect(access(path.join(projectPath, "exports", "valid-full-deck.deckpkg"))).resolves.toBeUndefined();
+    await expect(access(path.join(projectPath, "exports", "notes.json"))).resolves.toBeUndefined();
+    await expect(access(path.join(projectPath, "exports", "thumbnails", "001-title.png"))).resolves.toBeUndefined();
+
+    await page.locator(".workspace-toolbar").getByRole("button", { name: "Present", exact: true }).click();
+
+    const presenter = page.getByLabel("Presenter rehearsal mode");
+    const currentSlideHeading = presenter.locator(".presenter-current .hs-panel-header h2");
+    const screenCover = presenter.locator(".presenter-screen-cover");
+    await expect(presenter).toBeVisible();
+    await expect(presenter.getByText("Windowed Presenter / Rehearsal Mode")).toBeVisible();
+    await expect(presenter.getByText("1 / 2")).toBeVisible();
+    await expect(currentSlideHeading).toHaveText("HTML as source");
+    await expect(presenter.getByRole("heading", { name: "Speaker Notes" })).toBeVisible();
+
+    await page.keyboard.press("ArrowRight");
+    await expect(presenter.getByText("2 / 2")).toBeVisible();
+    await expect(currentSlideHeading).toHaveText("Project structure");
+
+    await page.keyboard.press("ArrowLeft");
+    await expect(presenter.getByText("1 / 2")).toBeVisible();
+    await expect(currentSlideHeading).toHaveText("HTML as source");
+
+    await page.keyboard.press("T");
+    await expect(presenter.getByText("paused")).toBeVisible();
+
+    await page.keyboard.press("B");
+    await expect(screenCover).toHaveText("Black screen");
+    await page.keyboard.press("B");
+    await expect(screenCover).toBeHidden();
+
+    await page.keyboard.press("W");
+    await expect(screenCover).toHaveText("White screen");
+    await page.keyboard.press("W");
+    await expect(screenCover).toBeHidden();
+
+    await expect(presenter.getByLabel("Jump to slide")).toBeVisible();
+
+    await presenter.locator(".presenter-current").click();
+    await page.keyboard.press("Escape");
+    await expect(presenter).toBeHidden();
+    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible();
+
+    await expectNoFrameworkOverlay(page);
+    expect(browserErrors).toEqual([]);
+  });
+
   test("manages CLI integration from settings", async () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
     const homeDir = path.join(tempRoot, "home");

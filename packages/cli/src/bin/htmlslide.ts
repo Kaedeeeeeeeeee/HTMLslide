@@ -37,7 +37,10 @@ type SetupCommandOptions = JsonOption & {
   targetDir?: string;
   targetPath?: string;
   appPath?: string;
+  appVersion?: string;
+  bundleId?: string;
   fallbackCliPath?: string;
+  updatedAt?: string;
 };
 
 type AgentRunCommandOptions = JsonOption & {
@@ -207,16 +210,22 @@ setupCommand
   .option("--target-dir <dir>", "directory where the htmlslide shim should be written")
   .option("--target-path <path>", "complete path where the htmlslide shim should be written")
   .option("--app-path <path>", "HTMLslide.app path to record in ~/.htmlslide/app-path.json")
+  .option("--app-version <version>", "HTMLslide.app version to record in ~/.htmlslide/app-path.json")
+  .option("--bundle-id <id>", "HTMLslide bundle identifier to record in ~/.htmlslide/app-path.json")
   .option("--fallback-cli-path <path>", "development CLI entrypoint used when no app path is configured")
+  .option("--updated-at <iso>", "timestamp to record in ~/.htmlslide/app-path.json")
   .description("Install or update the local htmlslide command shim.")
   .action(async (options: SetupCommandOptions) => {
     const json = Boolean(options.json ?? program.opts<JsonOption>().json);
     try {
       const result = await installCliShim({
+        appVersion: options.appVersion,
         targetDir: options.targetDir,
         targetPath: options.targetPath,
         appPath: options.appPath,
-        fallbackCliPath: options.fallbackCliPath
+        bundleId: options.bundleId,
+        fallbackCliPath: options.fallbackCliPath,
+        updatedAt: options.updatedAt
       });
       writeResult(result, json);
     } catch (error) {

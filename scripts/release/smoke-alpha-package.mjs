@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { cp, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -103,6 +103,8 @@ async function launchAppOnce(appPath, smokeRoot) {
   const executableName = plistValue(plistPath, "CFBundleExecutable");
   const executablePath = path.join(appPath, "Contents", "MacOS", executableName);
   const smokeReadyFile = path.join(smokeRoot, "startup", "ready.json");
+  const firstRunCliTargetDir = path.join(smokeRoot, "first-run-bin");
+  const firstRunHtmlslideHome = path.join(smokeRoot, "first-run-home");
 
   if (!existsSync(executablePath)) {
     fail(`Packaged app executable is missing: ${executablePath}`);
@@ -120,7 +122,9 @@ async function launchAppOnce(appPath, smokeRoot) {
       ...process.env,
       ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
       HOME: path.join(smokeRoot, "home"),
+      HTMLSLIDE_CLI_TARGET_DIR: firstRunCliTargetDir,
       HTMLSLIDE_DEFAULT_WORKSPACE: path.join(smokeRoot, "workspace"),
+      HTMLSLIDE_HOME: firstRunHtmlslideHome,
       HTMLSLIDE_SMOKE_QUIT_AFTER_READY: "1",
       HTMLSLIDE_SMOKE_READY_FILE: smokeReadyFile,
       HTMLSLIDE_USER_DATA_DIR: path.join(smokeRoot, "user-data")
@@ -166,6 +170,32 @@ async function launchAppOnce(appPath, smokeRoot) {
   const marker = JSON.parse(await readFile(smokeReadyFile, "utf8"));
   if (marker.status !== "passed") {
     fail(`Packaged app startup smoke marker did not pass: ${JSON.stringify(marker)}`);
+  }
+
+  await smokeFirstRunCliProvisioning(appPath, firstRunCliTargetDir, firstRunHtmlslideHome);
+}
+
+async function smokeFirstRunCliProvisioning(appPath, targetDir, htmlslideHome) {
+  const shimPath = path.join(targetDir, "htmlslide");
+  const appPathJson = path.join(htmlslideHome, "app-path.json");
+  if (!existsSync(shimPath)) {
+    fail(`Packaged app first-run setup did not install CLI shim: ${shimPath}`);
+  }
+
+  const shimSource = await readFile(shimPath, "utf8");
+  if (!shimSource.includes("HTMLslide managed CLI shim v1")) {
+    fail(`First-run CLI shim is not HTMLslide-managed: ${shimPath}`);
+  }
+
+  const appConfig = JSON.parse(await readFile(appPathJson, "utf8"));
+  const expectedAppPath = await realpath(appPath);
+  const actualAppPath = await realpath(String(appConfig.appPath));
+  if (actualAppPath !== expectedAppPath) {
+    fail(
+      `First-run app-path.json does not point at the installed app: ${appPathJson}\n` +
+      `expected: ${expectedAppPath}\n` +
+      `actual: ${actualAppPath}`
+    );
   }
 }
 

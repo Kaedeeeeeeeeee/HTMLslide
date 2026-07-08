@@ -340,6 +340,7 @@ svg {
   justify-content: flex-end;
 }
 
+.settings-layout,
 .ai-settings {
   display: grid;
   gap: 18px;
@@ -361,6 +362,7 @@ svg {
 
 .ai-mode-card,
 .ai-settings-card,
+.cli-settings-card,
 .external-agent-item {
   background: var(--hs-surface-raised);
   border: 1px solid var(--hs-line);
@@ -407,10 +409,90 @@ svg {
   line-height: 1.4;
 }
 
-.ai-settings-card {
+.ai-settings-card,
+.cli-settings-card {
   display: grid;
   gap: 14px;
   padding: 16px;
+}
+
+.cli-settings-summary {
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 42px minmax(0, 1fr);
+  min-width: 0;
+}
+
+.cli-settings-summary__icon {
+  align-items: center;
+  background: #fff;
+  border: 1px solid var(--hs-line);
+  border-radius: var(--hs-radius-sm);
+  color: var(--hs-accent);
+  display: inline-flex;
+  height: 42px;
+  justify-content: center;
+  width: 42px;
+}
+
+.cli-settings-summary__icon svg {
+  height: 18px;
+  width: 18px;
+}
+
+.cli-settings-summary strong,
+.cli-settings-summary small {
+  display: block;
+}
+
+.cli-settings-summary strong {
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.cli-settings-summary small {
+  color: var(--hs-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  margin-top: 3px;
+}
+
+.cli-settings-details {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+.cli-settings-details div {
+  background: var(--hs-surface);
+  border: 1px solid var(--hs-line);
+  border-radius: var(--hs-radius-sm);
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+}
+
+.cli-settings-details dt {
+  color: var(--hs-text-muted);
+  font-size: 11px;
+}
+
+.cli-settings-details dd {
+  color: var(--hs-text);
+  font-size: 12px;
+  margin: 0;
+  min-width: 0;
+}
+
+.cli-settings-details code {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-form,
@@ -447,6 +529,10 @@ svg {
 
 .settings-note {
   margin: -2px 0 0;
+}
+
+.settings-note.is-danger {
+  color: var(--hs-danger);
 }
 
 .settings-actions {
@@ -2000,6 +2086,10 @@ svg {
 
   .library-main .hs-panel-header__actions {
     flex-wrap: wrap;
+  }
+
+  .cli-settings-details {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .new-deck-panel {

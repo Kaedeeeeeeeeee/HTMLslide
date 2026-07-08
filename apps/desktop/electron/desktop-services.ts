@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { constants as fsConstants, existsSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -103,6 +103,44 @@ export type CliRunnerOptions = {
 };
 
 export type DesktopCliRunner = (args: string[], options: CliRunnerOptions) => Promise<CliRunResult>;
+
+export type DesktopCliIntegrationTarget = {
+  targetDir: string;
+  targetPath: string;
+  htmlslideHomeDir: string;
+  source: "env" | "homebrew" | "usr-local" | "user-home";
+};
+
+export type DesktopCliIntegrationState = {
+  available: boolean;
+  mode: CliRuntime["mode"] | "missing";
+  status: "passed" | "info" | "warning" | "failed";
+  installed: boolean;
+  managed: boolean;
+  onPath: boolean;
+  targetPath: string;
+  targetDir: string;
+  htmlslideHomeDir: string;
+  cliPath?: string;
+  appPath?: string;
+  action?: "installed" | "updated" | "removed" | "unchanged";
+  message: string;
+  suggestedFix?: string;
+  manualInstallCommand: string;
+  manualUninstallCommand: string;
+  updatedAt: string;
+};
+
+export type DesktopCliIntegrationOptions = {
+  appPath?: string;
+  appVersion?: string;
+  bundleId?: string;
+  cliRuntime?: CliRuntime;
+  cliRunner?: DesktopCliRunner;
+  env?: NodeJS.ProcessEnv;
+  nodeExecutable?: string;
+  now?: string;
+};
 
 export type DesktopMockAgentRunRequest = {
   projectPath: string;
@@ -660,6 +698,103 @@ export async function runHtmlslideCli(args: string[], options: CliRunnerOptions)
   });
 }
 
+export async function resolveDesktopCliIntegrationTarget(
+  env: NodeJS.ProcessEnv = process.env
+): Promise<DesktopCliIntegrationTarget> {
+  const htmlslideHomeDir = path.resolve(env.HTMLSLIDE_HOME ?? path.join(os.homedir(), ".htmlslide"));
+  const explicitTargetPath = env.HTMLSLIDE_CLI_TARGET_PATH;
+  if (explicitTargetPath && explicitTargetPath.trim().length > 0) {
+    const targetPath = path.resolve(explicitTargetPath);
+    return {
+      targetDir: path.dirname(targetPath),
+      targetPath,
+      htmlslideHomeDir,
+      source: "env"
+    };
+  }
+
+  const explicitTargetDir = env.HTMLSLIDE_CLI_TARGET_DIR;
+  if (explicitTargetDir && explicitTargetDir.trim().length > 0) {
+    const targetDir = path.resolve(explicitTargetDir);
+    return {
+      targetDir,
+      targetPath: path.join(targetDir, "htmlslide"),
+      htmlslideHomeDir,
+      source: "env"
+    };
+  }
+
+  const preferredTargets = [
+    { dir: "/opt/homebrew/bin", source: "homebrew" as const },
+    { dir: "/usr/local/bin", source: "usr-local" as const }
+  ];
+
+  for (const candidate of preferredTargets) {
+    if (await isWritableExistingDirectory(candidate.dir)) {
+      return {
+        targetDir: candidate.dir,
+        targetPath: path.join(candidate.dir, "htmlslide"),
+        htmlslideHomeDir,
+        source: candidate.source
+      };
+    }
+  }
+
+  const targetDir = path.join(htmlslideHomeDir, "bin");
+  return {
+    targetDir,
+    targetPath: path.join(targetDir, "htmlslide"),
+    htmlslideHomeDir,
+    source: "user-home"
+  };
+}
+
+export async function getDesktopCliIntegration(
+  options: DesktopCliIntegrationOptions = {}
+): Promise<DesktopCliIntegrationState> {
+  const cliRuntime = options.cliRuntime;
+  const target = await resolveDesktopCliIntegrationTarget(options.env);
+  const base = cliIntegrationBaseState(target, options);
+
+  if (!cliRuntime) {
+    return {
+      ...base,
+      available: false,
+      mode: "missing",
+      status: "failed",
+      installed: false,
+      managed: false,
+      onPath: false,
+      message: "HTMLslide CLI runtime is not available. Rebuild the app or reinstall HTMLslide.",
+      suggestedFix: "Rebuild the desktop app so the CLI runtime is available."
+    };
+  }
+
+  const runner = options.cliRunner ?? runHtmlslideCli;
+  const result = await runner(["setup", "status", "--target-path", target.targetPath, "--json"], {
+    cliPath: cliRuntime.cliPath,
+    cwd: cliRuntime.cwd,
+    env: {
+      HTMLSLIDE_HOME: target.htmlslideHomeDir
+    },
+    rootPath: cliRuntime.rootPath
+  });
+
+  return cliIntegrationStateFromCliResult(result, base, cliRuntime, options.appPath);
+}
+
+export async function installDesktopCliIntegration(
+  options: DesktopCliIntegrationOptions = {}
+): Promise<DesktopCliIntegrationState> {
+  return runDesktopCliIntegrationAction("install", options);
+}
+
+export async function uninstallDesktopCliIntegration(
+  options: DesktopCliIntegrationOptions = {}
+): Promise<DesktopCliIntegrationState> {
+  return runDesktopCliIntegrationAction("uninstall", options);
+}
+
 export async function runDesktopMockAgent(
   request: DesktopMockAgentRunRequest,
   options: DesktopMockAgentRunnerOptions = {}
@@ -1109,6 +1244,221 @@ function parseJsonOutput(stdout: string): unknown {
   } catch {
     return undefined;
   }
+}
+
+async function isWritableExistingDirectory(dir: string): Promise<boolean> {
+  try {
+    const stats = await fs.stat(dir);
+    if (!stats.isDirectory()) {
+      return false;
+    }
+    await fs.access(dir, fsConstants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function cliIntegrationBaseState(
+  target: DesktopCliIntegrationTarget,
+  options: DesktopCliIntegrationOptions
+): DesktopCliIntegrationState {
+  return {
+    appPath: options.appPath,
+    available: Boolean(options.cliRuntime),
+    cliPath: options.cliRuntime?.cliPath,
+    htmlslideHomeDir: target.htmlslideHomeDir,
+    installed: false,
+    managed: false,
+    manualInstallCommand: buildCliIntegrationManualCommand("install", target, options),
+    manualUninstallCommand: buildCliIntegrationManualCommand("uninstall", target, options),
+    message: "HTMLslide CLI integration has not been checked yet.",
+    mode: options.cliRuntime?.mode ?? "missing",
+    onPath: false,
+    status: "info",
+    targetDir: target.targetDir,
+    targetPath: target.targetPath,
+    updatedAt: options.now ?? new Date().toISOString()
+  };
+}
+
+function buildCliIntegrationManualCommand(
+  action: "install" | "uninstall",
+  target: DesktopCliIntegrationTarget,
+  options: DesktopCliIntegrationOptions
+): string {
+  const cliPath = options.cliRuntime?.cliPath ?? "<HTMLslide CLI path>";
+  const executable = options.nodeExecutable ?? process.execPath;
+  const envPrefix = process.versions.electron ? "ELECTRON_RUN_AS_NODE=1 " : "";
+  const args =
+    action === "install"
+      ? [
+          executable,
+          cliPath,
+          "setup",
+          "install-cli",
+          "--target-path",
+          target.targetPath,
+          ...(options.appPath ? ["--app-path", options.appPath] : []),
+          ...(options.appVersion ? ["--app-version", options.appVersion] : []),
+          ...(options.bundleId ? ["--bundle-id", options.bundleId] : []),
+          "--fallback-cli-path",
+          cliPath
+        ]
+      : [
+          executable,
+          cliPath,
+          "setup",
+          "uninstall-cli",
+          "--target-path",
+          target.targetPath
+        ];
+
+  return `${envPrefix}HTMLSLIDE_HOME=${shellQuote(target.htmlslideHomeDir)} ${args.map(shellQuote).join(" ")}`;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+async function runDesktopCliIntegrationAction(
+  action: "install" | "uninstall",
+  options: DesktopCliIntegrationOptions
+): Promise<DesktopCliIntegrationState> {
+  const cliRuntime = options.cliRuntime;
+  const target = await resolveDesktopCliIntegrationTarget(options.env);
+  const base = cliIntegrationBaseState(target, options);
+
+  if (!cliRuntime) {
+    return {
+      ...base,
+      available: false,
+      mode: "missing",
+      status: "failed",
+      message: "HTMLslide CLI runtime is not available. Rebuild the app or reinstall HTMLslide.",
+      suggestedFix: "Rebuild the desktop app so the CLI runtime is available."
+    };
+  }
+
+  const runner = options.cliRunner ?? runHtmlslideCli;
+  const args =
+    action === "install"
+      ? [
+          "setup",
+          "install-cli",
+          "--target-path",
+          target.targetPath,
+          ...(options.appPath ? ["--app-path", options.appPath] : []),
+          ...(options.appVersion ? ["--app-version", options.appVersion] : []),
+          ...(options.bundleId ? ["--bundle-id", options.bundleId] : []),
+          "--fallback-cli-path",
+          cliRuntime.cliPath,
+          "--json"
+        ]
+      : ["setup", "uninstall-cli", "--target-path", target.targetPath, "--json"];
+  const result = await runner(args, {
+    cliPath: cliRuntime.cliPath,
+    cwd: cliRuntime.cwd,
+    env: {
+      HTMLSLIDE_HOME: target.htmlslideHomeDir
+    },
+    rootPath: cliRuntime.rootPath
+  });
+  const state = cliIntegrationStateFromCliResult(result, base, cliRuntime, options.appPath);
+
+  if (!result.ok) {
+    return state;
+  }
+
+  return getDesktopCliIntegration({
+    ...options,
+    cliRuntime,
+    cliRunner: runner,
+    now: state.updatedAt
+  }).then((nextState) => ({
+    ...nextState,
+    action: state.action,
+    message: state.message
+  }));
+}
+
+function cliIntegrationStateFromCliResult(
+  result: CliRunResult,
+  base: DesktopCliIntegrationState,
+  cliRuntime: CliRuntime,
+  appPath?: string
+): DesktopCliIntegrationState {
+  const payload = isRecord(result.json) ? result.json : undefined;
+
+  if (!result.ok) {
+    const targetPath = payload && typeof payload.targetPath === "string" ? payload.targetPath : base.targetPath;
+    const targetDir = payload && typeof payload.targetDir === "string" ? payload.targetDir : path.dirname(targetPath);
+    const message =
+      payload && typeof payload.error === "string"
+        ? payload.error
+        : payload && typeof payload.message === "string"
+          ? payload.message
+          : result.error ?? (result.stderr.trim() || `htmlslide setup exited with ${result.exitCode}.`);
+
+    return {
+      ...base,
+      available: true,
+      cliPath: cliRuntime.cliPath,
+      mode: cliRuntime.mode,
+      status: "failed",
+      message,
+      suggestedFix:
+        payload && typeof payload.suggestedFix === "string"
+          ? payload.suggestedFix
+          : "Review CLI integration details or copy the manual install command.",
+      targetDir,
+      targetPath
+    };
+  }
+
+  if (!payload) {
+    return {
+      ...base,
+      available: true,
+      cliPath: cliRuntime.cliPath,
+      mode: cliRuntime.mode,
+      status: "failed",
+      message: result.error ?? (result.stderr.trim() || `htmlslide setup exited with ${result.exitCode}.`),
+      suggestedFix: "Review CLI integration details or copy the manual install command."
+    };
+  }
+
+  const status = normalizeCliIntegrationStatus(payload.status);
+  const action = normalizeCliIntegrationAction(payload.action);
+  const targetPath = typeof payload.targetPath === "string" ? payload.targetPath : base.targetPath;
+  const targetDir = typeof payload.targetDir === "string" ? payload.targetDir : base.targetDir;
+  const htmlslideHomeDir = typeof payload.htmlslideHomeDir === "string" ? payload.htmlslideHomeDir : base.htmlslideHomeDir;
+
+  return {
+    ...base,
+    action,
+    appPath,
+    available: true,
+    cliPath: cliRuntime.cliPath,
+    htmlslideHomeDir,
+    installed: payload.installed === true || action === "installed" || action === "updated",
+    managed: payload.managed === true || action === "installed" || action === "updated",
+    message: typeof payload.message === "string" ? payload.message : base.message,
+    mode: cliRuntime.mode,
+    onPath: payload.onPath === true,
+    status,
+    suggestedFix: typeof payload.suggestedFix === "string" ? payload.suggestedFix : undefined,
+    targetDir,
+    targetPath
+  };
+}
+
+function normalizeCliIntegrationStatus(value: unknown): DesktopCliIntegrationState["status"] {
+  return value === "passed" || value === "info" || value === "warning" || value === "failed" ? value : "failed";
+}
+
+function normalizeCliIntegrationAction(value: unknown): DesktopCliIntegrationState["action"] {
+  return value === "installed" || value === "updated" || value === "removed" || value === "unchanged" ? value : undefined;
 }
 
 async function runDesktopAgentCliStep(

@@ -73,7 +73,10 @@ export type CliShimTargetOptions = {
 
 export type CliShimInstallOptions = CliShimTargetOptions & {
   appPath?: string;
+  appVersion?: string;
+  bundleId?: string;
   fallbackCliPath?: string;
+  updatedAt?: string;
 };
 
 export type CliShimResult = {
@@ -336,7 +339,20 @@ export const installCliShim = async (options: CliShimInstallOptions = {}): Promi
     const appPath = path.resolve(options.appPath);
     appPathJson = appPathConfigPath(target.htmlslideHomeDir);
     await mkdir(path.dirname(appPathJson), { recursive: true });
-    await writeFile(appPathJson, `${JSON.stringify({ schemaVersion: 1, appPath }, null, 2)}\n`);
+    await writeFile(
+      appPathJson,
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          appPath,
+          bundleId: options.bundleId,
+          version: options.appVersion,
+          updatedAt: options.updatedAt ?? new Date().toISOString()
+        },
+        null,
+        2
+      )}\n`
+    );
   }
 
   const fallbackCliPath = options.fallbackCliPath ? path.resolve(options.fallbackCliPath) : defaultFallbackCliPath();

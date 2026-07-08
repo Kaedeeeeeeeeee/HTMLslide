@@ -1,7 +1,7 @@
 import { _electron as electron, expect, test } from "@playwright/test";
 import type { ElectronApplication, Page } from "@playwright/test";
 import { createRequire } from "node:module";
-import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -175,5 +175,54 @@ test.describe("HTMLslide desktop smoke", () => {
 
     await expectNoFrameworkOverlay(page);
     expect(browserErrors).toEqual([]);
+  });
+
+  test("manages CLI integration from settings", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
+    const homeDir = path.join(tempRoot, "home");
+    const userDataDir = path.join(tempRoot, "user-data");
+    const workspaceDir = path.join(tempRoot, "workspace");
+    const cliTargetDir = path.join(tempRoot, "cli-bin");
+    const htmlslideHomeDir = path.join(tempRoot, "htmlslide-state");
+    const shimPath = path.join(cliTargetDir, "htmlslide");
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(userDataDir, { recursive: true });
+    await mkdir(workspaceDir, { recursive: true });
+
+    electronApp = await electron.launch({
+      executablePath: electronExecutable,
+      args: [electronMain],
+      env: {
+        ...process.env,
+        ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+        HOME: homeDir,
+        HTMLSLIDE_CLI_TARGET_DIR: cliTargetDir,
+        HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir,
+        HTMLSLIDE_HOME: htmlslideHomeDir,
+        HTMLSLIDE_USER_DATA_DIR: userDataDir
+      }
+    });
+
+    const page = await electronApp.firstWindow();
+    await page.waitForLoadState("domcontentloaded");
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "CLI Integration", exact: true })).toBeVisible();
+    await expect(page.locator(".cli-settings-details code", { hasText: shimPath })).toBeVisible();
+
+    await page.getByRole("button", { name: "Reinstall CLI", exact: true }).click();
+    await expect(page.locator(".settings-note", { hasText: /Installed HTMLslide CLI shim/ })).toBeVisible({ timeout: 30_000 });
+    await expect(access(shimPath)).resolves.toBeUndefined();
+    expect(await readFile(shimPath, "utf8")).toContain("HTMLslide managed CLI shim v1");
+
+    await page.getByRole("button", { name: "Copy Manual Install", exact: true }).click();
+    await expect(page.getByText("Manual install command copied")).toBeVisible();
+
+    await page.getByRole("button", { name: "Uninstall CLI", exact: true }).click();
+    await expect(page.locator(".settings-note", { hasText: /Removed HTMLslide CLI shim/ })).toBeVisible({ timeout: 30_000 });
+    await expect(access(shimPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expectNoFrameworkOverlay(page);
   });
 });

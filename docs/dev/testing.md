@@ -47,9 +47,9 @@ For local debugging with the app window visible:
 pnpm e2e:desktop:headed
 ```
 
-The smoke test builds `@htmlslide/desktop`, launches the built Electron main process with Playwright, verifies the app loads without a Vite/framework error overlay, skips onboarding into No AI mode, reaches the project library, mocks the native folder picker, and opens `packages/test-fixtures/decks/valid-full`.
+The smoke test builds `@htmlslide/desktop`, launches the built Electron main process with Playwright, verifies the app loads without a Vite/framework error overlay, skips onboarding into No AI mode, reaches the project library, mocks the native folder picker, opens `packages/test-fixtures/decks/valid-full`, and verifies Settings can reinstall/copy/uninstall the CLI shim in an isolated target directory.
 
-Artifacts are written under `tmp/playwright/` so they stay out of release artifacts and normal source diffs. This is a foundation smoke, not full coverage for first-run setup, BYOK providers, presenter mode, or native packaging install flows.
+Artifacts are written under `tmp/playwright/` so they stay out of release artifacts and normal source diffs. This is a foundation smoke, not full coverage for BYOK providers, presenter mode, or native packaging install flows.
 
 ## Packaging Verification
 
@@ -67,7 +67,7 @@ After an alpha package already exists, run the smoke directly with:
 pnpm smoke:package:alpha
 ```
 
-The smoke mounts the generated DMG, verifies the packaged app and `Applications` symlink, copies the app to a temporary install directory, launches it with isolated app data, installs a temporary CLI shim against the packaged CLI runtime, verifies `htmlslide doctor --json`, and uninstalls the shim.
+The smoke mounts the generated DMG, verifies the packaged app and `Applications` symlink, copies the app to a temporary install directory, launches it with isolated app data, verifies packaged first-run CLI provisioning into an isolated target directory, installs a temporary CLI shim against the packaged CLI runtime, verifies `htmlslide doctor --json`, and uninstalls the shim.
 
 The `Alpha Package` GitHub Actions workflow remains the CI packaging verifier for scheduled, tagged, and manual runs. Do not add provider credentials or local machine state to this path.
 

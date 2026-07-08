@@ -205,11 +205,22 @@ describe("CLI project helpers", () => {
       await writeExecutable(appCliPath, fakeCliSource("app"));
       await writeExecutable(fallbackCliPath, fakeCliSource("fallback"));
 
-      const installed = await installCliShim({ targetDir: binDir, htmlslideHomeDir: homeDir, appPath, fallbackCliPath });
+      const installed = await installCliShim({
+        appPath,
+        appVersion: "0.1.0-test",
+        bundleId: "app.htmlslide.test",
+        fallbackCliPath,
+        htmlslideHomeDir: homeDir,
+        targetDir: binDir,
+        updatedAt: "2026-07-08T00:00:00.000Z"
+      });
       expect(installed.appPathJson).toBe(path.join(homeDir, "app-path.json"));
       expect(JSON.parse(await readFile(path.join(homeDir, "app-path.json"), "utf8"))).toEqual({
         schemaVersion: 1,
-        appPath
+        appPath,
+        bundleId: "app.htmlslide.test",
+        version: "0.1.0-test",
+        updatedAt: "2026-07-08T00:00:00.000Z"
       });
 
       const executed = await execFileAsync(installed.targetPath, ["doctor"], {

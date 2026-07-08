@@ -11,17 +11,25 @@ import {
 } from "lucide-react";
 import { useState, type FormEvent, type ReactNode } from "react";
 import type { AiEngineSettingsDraft, AiEngineSettings, ExternalAgentStatus } from "../settings-model";
+import type { DesktopCliIntegrationState } from "../desktop-api";
 import type { LibrarySection, NewDeckDraft, OperationStatus, ProjectSummary } from "../model";
 import { AiEngineSettingsPanel } from "./AiEngineSettings";
+import { CliIntegrationSettingsPanel } from "./CliIntegrationSettings";
 
 interface ProjectLibraryProps {
   activeSection: LibrarySection;
   aiEngineSettings: AiEngineSettings;
   aiEngineStatus: OperationStatus;
+  cliIntegration?: DesktopCliIntegrationState;
+  cliIntegrationStatus: OperationStatus;
   externalAgentStatuses: ExternalAgentStatus[];
   operationStatus: OperationStatus;
   projects: ProjectSummary[];
   workspacePath?: string;
+  onCliIntegrationCopyManualCommand: () => void;
+  onCliIntegrationInstall: () => void;
+  onCliIntegrationRefresh: () => void;
+  onCliIntegrationUninstall: () => void;
   onLibrarySectionChange: (section: LibrarySection) => void;
   onRefreshExternalAgents: () => void;
   onSaveAiEngineSettings: (draft: AiEngineSettingsDraft) => void;
@@ -59,8 +67,14 @@ export function ProjectLibrary({
   activeSection,
   aiEngineSettings,
   aiEngineStatus,
+  cliIntegration,
+  cliIntegrationStatus,
   externalAgentStatuses,
   operationStatus,
+  onCliIntegrationCopyManualCommand,
+  onCliIntegrationInstall,
+  onCliIntegrationRefresh,
+  onCliIntegrationUninstall,
   onLibrarySectionChange,
   onRefreshExternalAgents,
   onSaveAiEngineSettings,
@@ -109,7 +123,7 @@ export function ProjectLibrary({
           />
         ) : null}
 
-        {activeSection === "ai-engines" || activeSection === "settings" ? (
+        {activeSection === "ai-engines" ? (
           <AiEngineSettingsPanel
             onRefreshExternalAgents={onRefreshExternalAgents}
             onSaveSettings={onSaveAiEngineSettings}
@@ -117,6 +131,26 @@ export function ProjectLibrary({
             settings={aiEngineSettings}
             statuses={externalAgentStatuses}
           />
+        ) : null}
+
+        {activeSection === "settings" ? (
+          <section className="settings-layout">
+            <CliIntegrationSettingsPanel
+              onCopyManualCommand={onCliIntegrationCopyManualCommand}
+              onInstall={onCliIntegrationInstall}
+              onRefresh={onCliIntegrationRefresh}
+              onUninstall={onCliIntegrationUninstall}
+              operationStatus={cliIntegrationStatus}
+              state={cliIntegration}
+            />
+            <AiEngineSettingsPanel
+              onRefreshExternalAgents={onRefreshExternalAgents}
+              onSaveSettings={onSaveAiEngineSettings}
+              operationStatus={aiEngineStatus}
+              settings={aiEngineSettings}
+              statuses={externalAgentStatuses}
+            />
+          </section>
         ) : null}
 
         {activeSection === "templates" || activeSection === "skills" ? (

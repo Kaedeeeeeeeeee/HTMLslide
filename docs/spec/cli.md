@@ -49,8 +49,22 @@ Safety rules:
 App integration:
 
 - `htmlslide setup install-cli --app-path <HTMLslide.app>` records `~/.htmlslide/app-path.json`.
+- `--bundle-id`, `--app-version`, and `--updated-at` add app metadata used by the desktop app to detect stale or moved installs.
 - The shim reads `~/.htmlslide/app-path.json` at runtime and prefers the app-packaged CLI entry when present.
 - If no app CLI is available, the shim falls back to the development/package CLI path recorded when the shim was installed.
+- The desktop app chooses a writable target in this order: `HTMLSLIDE_CLI_TARGET_PATH`/`HTMLSLIDE_CLI_TARGET_DIR` overrides, `/opt/homebrew/bin`, `/usr/local/bin`, then `~/.htmlslide/bin`.
+
+`app-path.json` records the app the shim should prefer:
+
+```json
+{
+  "schemaVersion": 1,
+  "appPath": "/Applications/HTMLslide.app",
+  "bundleId": "app.htmlslide.alpha",
+  "version": "0.1.0",
+  "updatedAt": "2026-07-08T10:00:00.000Z"
+}
+```
 
 Setup commands support `--json`. Successful install output includes:
 

@@ -23,6 +23,27 @@ export type DesktopSetupState = {
     rootPath?: string;
     cliPath?: string;
   };
+  cliIntegration: DesktopCliIntegrationState;
+};
+
+export type DesktopCliIntegrationState = {
+  available: boolean;
+  mode: "development" | "packaged" | "missing";
+  status: "passed" | "info" | "warning" | "failed";
+  installed: boolean;
+  managed: boolean;
+  onPath: boolean;
+  targetPath: string;
+  targetDir: string;
+  htmlslideHomeDir: string;
+  cliPath?: string;
+  appPath?: string;
+  action?: "installed" | "updated" | "removed" | "unchanged";
+  message: string;
+  suggestedFix?: string;
+  manualInstallCommand: string;
+  manualUninstallCommand: string;
+  updatedAt: string;
 };
 
 export type DesktopProjectRecord = Omit<ProjectSummary, "lastOpened"> & {
@@ -127,6 +148,10 @@ export type HtmlslideDesktopApi = {
   platform: string;
   shell: "electron";
   getSetup(): Promise<DesktopSetupState>;
+  getCliIntegration(): Promise<DesktopCliIntegrationState>;
+  installCliIntegration(): Promise<DesktopCliIntegrationState>;
+  uninstallCliIntegration(): Promise<DesktopCliIntegrationState>;
+  copyCliManualInstallCommand(): Promise<{ copied: boolean; command: string }>;
   listProjects(): Promise<DesktopProjectRecord[]>;
   getAiEngineSettings(): Promise<AiEngineSettings>;
   saveAiEngineSettings(settings: AiEngineSettings): Promise<AiEngineSettings>;

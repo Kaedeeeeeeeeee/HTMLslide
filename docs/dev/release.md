@@ -39,7 +39,7 @@ After packaging, run the package smoke:
 pnpm smoke:package:alpha
 ```
 
-The smoke mounts the DMG, copies `HTMLslide.app` into a temporary install directory, launches the packaged app with isolated user data, installs a temporary HTMLslide-managed CLI shim, verifies `htmlslide doctor --json` through that shim, and uninstalls it. It never writes to real `/Applications` or the user's real `~/.htmlslide`.
+The smoke mounts the DMG, copies `HTMLslide.app` into a temporary install directory, launches the packaged app with isolated user data, verifies packaged first-run CLI provisioning into an isolated target directory, installs a temporary HTMLslide-managed CLI shim, verifies `htmlslide doctor --json` through that shim, and uninstalls it. It never writes to real `/Applications` or the user's real `~/.htmlslide`.
 
 ## Alpha Checklist
 

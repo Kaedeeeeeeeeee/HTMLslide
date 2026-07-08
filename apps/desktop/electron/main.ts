@@ -1,6 +1,6 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron";
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import {
@@ -8,6 +8,8 @@ import {
   detectExternalAgentStatuses,
   diffDesktopCheckpoint,
   findCliRuntime,
+  getDesktopCliIntegration,
+  installDesktopCliIntegration,
   loadProjectPreview,
   readAiEngineSettings,
   readDesktopLibrary,
@@ -16,9 +18,11 @@ import {
   runDesktopMockAgent,
   runHtmlslideCli,
   summarizeDeckProject,
+  uninstallDesktopCliIntegration,
   upsertRecentProject,
   writeAiEngineSettings,
   writeDesktopLibrary,
+  type DesktopCliIntegrationOptions,
   type DesktopAiEngineSettings,
   type DesktopCreateProjectRequest,
   type DesktopProjectRecord
@@ -58,6 +62,27 @@ const configuredWorkspacePath = (): string =>
   process.env.HTMLSLIDE_DEFAULT_WORKSPACE
     ? resolve(process.env.HTMLSLIDE_DEFAULT_WORKSPACE)
     : defaultWorkspacePath();
+const currentDarwinAppBundlePath = (): string | undefined => {
+  if (process.platform !== "darwin") {
+    return undefined;
+  }
+
+  const bundlePath = resolve(dirname(process.execPath), "..", "..");
+  return bundlePath.endsWith(".app") ? bundlePath : undefined;
+};
+const appBundlePath = (): string | undefined => {
+  const bundlePath = currentDarwinAppBundlePath();
+  return bundlePath && basename(bundlePath) === "HTMLslide.app" ? bundlePath : undefined;
+};
+const appBundleId = (): string =>
+  process.env.HTMLSLIDE_BUNDLE_ID ?? (app.isPackaged ? "app.htmlslide.alpha" : "app.htmlslide.development");
+const cliIntegrationOptions = (): DesktopCliIntegrationOptions => ({
+  appPath: appBundlePath(),
+  appVersion: app.getVersion(),
+  bundleId: appBundleId(),
+  cliRuntime,
+  env: process.env
+});
 
 const invokeCli = async (args: string[]) => {
   if (!cliRuntime) {
@@ -80,6 +105,7 @@ const invokeCli = async (args: string[]) => {
 function registerIpcHandlers(): void {
   ipcMain.handle("htmlslide:get-setup", async () => {
     const library = await readDesktopLibrary(libraryPath(), configuredWorkspacePath());
+    const cliIntegration = await getDesktopCliIntegration(cliIntegrationOptions());
     return {
       appName: "HTMLslide",
       version: app.getVersion(),
@@ -91,7 +117,29 @@ function registerIpcHandlers(): void {
         mode: cliRuntime?.mode ?? "missing",
         rootPath: cliRuntime?.rootPath,
         cliPath: cliRuntime?.cliPath
-      }
+      },
+      cliIntegration
+    };
+  });
+
+  ipcMain.handle("htmlslide:get-cli-integration", async () =>
+    getDesktopCliIntegration(cliIntegrationOptions())
+  );
+
+  ipcMain.handle("htmlslide:install-cli-integration", async () =>
+    installDesktopCliIntegration(cliIntegrationOptions())
+  );
+
+  ipcMain.handle("htmlslide:uninstall-cli-integration", async () =>
+    uninstallDesktopCliIntegration(cliIntegrationOptions())
+  );
+
+  ipcMain.handle("htmlslide:copy-cli-manual-install-command", async () => {
+    const status = await getDesktopCliIntegration(cliIntegrationOptions());
+    clipboard.writeText(status.manualInstallCommand);
+    return {
+      command: status.manualInstallCommand,
+      copied: true
     };
   });
 
@@ -287,8 +335,14 @@ function createWindow(): void {
   void completeSmokeStartup(mainWindow.loadFile(join(currentDir, "../renderer/index.html")));
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   registerIpcHandlers();
+  if (
+    process.env.HTMLSLIDE_DISABLE_AUTO_CLI_PROVISIONING !== "1" &&
+    (appBundlePath() || process.env.HTMLSLIDE_AUTO_INSTALL_CLI === "1")
+  ) {
+    await installDesktopCliIntegration(cliIntegrationOptions()).catch(() => undefined);
+  }
   createWindow();
 
   app.on("activate", () => {

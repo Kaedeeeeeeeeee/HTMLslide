@@ -9,6 +9,7 @@ import { Workspace, type AgentDiffReview } from "./components/Workspace";
 import {
   getDesktopApi,
   type DesktopCheckReport,
+  type DesktopCliIntegrationState,
   type DesktopMockAgentRunResult,
   type DesktopProjectPreview,
   type DesktopProjectRecord
@@ -143,6 +144,11 @@ function App(): React.ReactNode {
   const [agentRunEvents, setAgentRunEvents] = useState<AgentRunEventLike[]>([]);
   const [agentRunLogs, setAgentRunLogs] = useState<AgentRunLogLike[]>([]);
   const [aiEngineSettings, setAiEngineSettings] = useState<AiEngineSettings>(() => createDefaultAiEngineSettings());
+  const [cliIntegration, setCliIntegration] = useState<DesktopCliIntegrationState | undefined>();
+  const [cliIntegrationStatus, setCliIntegrationStatus] = useState<OperationStatus>({
+    kind: "idle",
+    message: "CLI integration not checked"
+  });
   const [externalAgentStatuses, setExternalAgentStatuses] = useState<ExternalAgentStatus[]>(() =>
     createDefaultExternalAgentStatuses()
   );
@@ -166,6 +172,11 @@ function App(): React.ReactNode {
         setWorkspacePath(setup.workspacePath);
         setProjects(records.map(projectRecordToSummary));
         setAiEngineSettings(normalizeAiEngineSettings(settings));
+        setCliIntegration(setup.cliIntegration);
+        setCliIntegrationStatus({
+          kind: setup.cliIntegration.status === "failed" ? "failed" : setup.cliIntegration.installed ? "success" : "idle",
+          message: setup.cliIntegration.message
+        });
         setOperationStatus({
           kind: setup.cli.available ? "success" : "failed",
           message: setup.cli.available ? "CLI available" : "CLI unavailable"
@@ -191,6 +202,10 @@ function App(): React.ReactNode {
           message: error instanceof Error ? error.message : String(error)
         });
         setAiEngineStatus({
+          kind: "failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+        setCliIntegrationStatus({
           kind: "failed",
           message: error instanceof Error ? error.message : String(error)
         });
@@ -523,6 +538,93 @@ function App(): React.ReactNode {
       });
   }, [desktopApi]);
 
+  const handleRefreshCliIntegration = useCallback((): void => {
+    if (!desktopApi) {
+      setCliIntegrationStatus({ kind: "failed", message: "Desktop API unavailable" });
+      return;
+    }
+
+    setCliIntegrationStatus({ kind: "running", message: "Checking CLI integration" });
+    desktopApi.getCliIntegration()
+      .then((status) => {
+        setCliIntegration(status);
+        setCliIntegrationStatus({
+          kind: status.status === "failed" ? "failed" : status.installed ? "success" : "idle",
+          message: status.message
+        });
+      })
+      .catch((error: unknown) => {
+        setCliIntegrationStatus({
+          kind: "failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
+  }, [desktopApi]);
+
+  const handleInstallCliIntegration = useCallback((): void => {
+    if (!desktopApi) {
+      setCliIntegrationStatus({ kind: "failed", message: "Desktop API unavailable" });
+      return;
+    }
+
+    setCliIntegrationStatus({ kind: "running", message: "Installing CLI integration" });
+    desktopApi.installCliIntegration()
+      .then((status) => {
+        setCliIntegration(status);
+        setCliIntegrationStatus({
+          kind: status.status === "failed" ? "failed" : "success",
+          message: status.message
+        });
+      })
+      .catch((error: unknown) => {
+        setCliIntegrationStatus({
+          kind: "failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
+  }, [desktopApi]);
+
+  const handleUninstallCliIntegration = useCallback((): void => {
+    if (!desktopApi) {
+      setCliIntegrationStatus({ kind: "failed", message: "Desktop API unavailable" });
+      return;
+    }
+
+    setCliIntegrationStatus({ kind: "running", message: "Uninstalling CLI integration" });
+    desktopApi.uninstallCliIntegration()
+      .then((status) => {
+        setCliIntegration(status);
+        setCliIntegrationStatus({
+          kind: status.status === "failed" ? "failed" : "success",
+          message: status.message
+        });
+      })
+      .catch((error: unknown) => {
+        setCliIntegrationStatus({
+          kind: "failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
+  }, [desktopApi]);
+
+  const handleCopyCliManualCommand = useCallback((): void => {
+    if (!desktopApi) {
+      setCliIntegrationStatus({ kind: "failed", message: "Desktop API unavailable" });
+      return;
+    }
+
+    desktopApi.copyCliManualInstallCommand()
+      .then(() => {
+        setCliIntegrationStatus({ kind: "success", message: "Manual install command copied" });
+      })
+      .catch((error: unknown) => {
+        setCliIntegrationStatus({
+          kind: "failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
+  }, [desktopApi]);
+
   const runCheck = useCallback((): void => {
     if (!desktopApi || !activeProject || activeProject.path.startsWith("~")) {
       setInspectorTab("qa");
@@ -783,6 +885,9 @@ function App(): React.ReactNode {
       <Onboarding
         activeStepIndex={activeStepIndex}
         onContinue={() => {
+          if (onboardingSteps[activeStepIndex]?.id === "cli") {
+            handleInstallCliIntegration();
+          }
           if (activeStepIndex >= onboardingSteps.length - 1) {
             setView("library");
             return;
@@ -801,7 +906,13 @@ function App(): React.ReactNode {
         activeSection={librarySection}
         aiEngineSettings={aiEngineSettings}
         aiEngineStatus={aiEngineStatus}
+        cliIntegration={cliIntegration}
+        cliIntegrationStatus={cliIntegrationStatus}
         externalAgentStatuses={externalAgentStatuses}
+        onCliIntegrationCopyManualCommand={handleCopyCliManualCommand}
+        onCliIntegrationInstall={handleInstallCliIntegration}
+        onCliIntegrationRefresh={handleRefreshCliIntegration}
+        onCliIntegrationUninstall={handleUninstallCliIntegration}
         onChooseWorkspace={handleChooseWorkspace}
         onLibrarySectionChange={setLibrarySection}
         onNewDeck={handleNewDeck}
@@ -850,7 +961,7 @@ function App(): React.ReactNode {
       }}
       onSelectSlide={setSelectedSlideId}
       onSettingsOpen={() => {
-        setLibrarySection("ai-engines");
+        setLibrarySection("settings");
         setView("library");
       }}
       onToolbarAction={(action) => {

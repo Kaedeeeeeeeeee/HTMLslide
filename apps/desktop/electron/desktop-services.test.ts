@@ -5,14 +5,19 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   diffDesktopCheckpoint,
   findCliRuntime,
+  getDesktopCliIntegration,
+  installDesktopCliIntegration,
   loadProjectPreview,
   readDesktopLibrary,
+  resolveDesktopCliIntegrationTarget,
   resolveCreateProjectRequest,
   revertDesktopCheckpoint,
   runDesktopMockAgent,
   summarizeDeckProject,
+  uninstallDesktopCliIntegration,
   upsertRecentProject,
   writeDesktopLibrary,
+  type CliRunResult,
   type DesktopCliRunner,
   type DesktopProjectRecord
 } from "./desktop-services.js";
@@ -194,6 +199,155 @@ describe("desktop services", () => {
       cwd: root,
       rootPath: root
     });
+  });
+
+  it("resolves the app-managed CLI target from environment overrides", async () => {
+    const root = await tempDir();
+    const target = await resolveDesktopCliIntegrationTarget({
+      HTMLSLIDE_CLI_TARGET_DIR: path.join(root, "bin"),
+      HTMLSLIDE_HOME: path.join(root, "state")
+    });
+
+    expect(target).toEqual({
+      htmlslideHomeDir: path.join(root, "state"),
+      source: "env",
+      targetDir: path.join(root, "bin"),
+      targetPath: path.join(root, "bin", "htmlslide")
+    });
+  });
+
+  it("checks, installs, and uninstalls the app-managed CLI shim through the embedded CLI", async () => {
+    const root = await tempDir();
+    const targetDir = path.join(root, "bin");
+    const homeDir = path.join(root, "state");
+    const cliRuntime = {
+      cliPath: path.join(root, "cli-runtime", "htmlslide.js"),
+      cwd: path.join(root, "cli-runtime"),
+      mode: "development" as const,
+      rootPath: root
+    };
+    const calls: string[][] = [];
+    const resultFor = (args: string[]): CliRunResult => {
+      if (args[0] === "setup" && args[1] === "status") {
+        return {
+          exitCode: 0,
+          json: {
+            command: "setup status",
+            htmlslideHomeDir: homeDir,
+            installed: false,
+            managed: false,
+            message: `HTMLslide CLI shim is not installed at ${path.join(targetDir, "htmlslide")}.`,
+            onPath: false,
+            status: "info",
+            targetDir,
+            targetPath: path.join(targetDir, "htmlslide")
+          },
+          ok: true,
+          stderr: "",
+          stdout: ""
+        };
+      }
+
+      if (args[0] === "setup" && args[1] === "install-cli") {
+        return {
+          exitCode: 0,
+          json: {
+            action: "installed",
+            command: "setup install-cli",
+            htmlslideHomeDir: homeDir,
+            message: `Installed HTMLslide CLI shim at ${path.join(targetDir, "htmlslide")}.`,
+            status: "passed",
+            targetDir,
+            targetPath: path.join(targetDir, "htmlslide")
+          },
+          ok: true,
+          stderr: "",
+          stdout: ""
+        };
+      }
+
+      if (args[0] === "setup" && args[1] === "uninstall-cli") {
+        return {
+          exitCode: 0,
+          json: {
+            action: "removed",
+            command: "setup uninstall-cli",
+            htmlslideHomeDir: homeDir,
+            message: `Removed HTMLslide CLI shim from ${path.join(targetDir, "htmlslide")}.`,
+            status: "passed",
+            targetDir,
+            targetPath: path.join(targetDir, "htmlslide")
+          },
+          ok: true,
+          stderr: "",
+          stdout: ""
+        };
+      }
+
+      throw new Error(`Unexpected CLI integration call: ${args.join(" ")}`);
+    };
+    const runner: DesktopCliRunner = async (args) => {
+      calls.push(args);
+      return resultFor(args);
+    };
+    const options = {
+      appPath: path.join(root, "HTMLslide.app"),
+      appVersion: "0.1.0-test",
+      bundleId: "app.htmlslide.test",
+      cliRuntime,
+      cliRunner: runner,
+      env: {
+        HTMLSLIDE_CLI_TARGET_DIR: targetDir,
+        HTMLSLIDE_HOME: homeDir
+      },
+      now: "2026-07-08T00:00:00.000Z"
+    };
+
+    const status = await getDesktopCliIntegration(options);
+    expect(status).toMatchObject({
+      available: true,
+      installed: false,
+      manualInstallCommand: expect.stringContaining("setup"),
+      mode: "development",
+      status: "info",
+      targetPath: path.join(targetDir, "htmlslide")
+    });
+
+    const installed = await installDesktopCliIntegration(options);
+    expect(installed).toMatchObject({
+      action: "installed",
+      available: true,
+      message: `Installed HTMLslide CLI shim at ${path.join(targetDir, "htmlslide")}.`,
+      targetPath: path.join(targetDir, "htmlslide")
+    });
+
+    const uninstalled = await uninstallDesktopCliIntegration(options);
+    expect(uninstalled).toMatchObject({
+      action: "removed",
+      message: `Removed HTMLslide CLI shim from ${path.join(targetDir, "htmlslide")}.`
+    });
+
+    expect(calls).toEqual([
+      ["setup", "status", "--target-path", path.join(targetDir, "htmlslide"), "--json"],
+      [
+        "setup",
+        "install-cli",
+        "--target-path",
+        path.join(targetDir, "htmlslide"),
+        "--app-path",
+        path.join(root, "HTMLslide.app"),
+        "--app-version",
+        "0.1.0-test",
+        "--bundle-id",
+        "app.htmlslide.test",
+        "--fallback-cli-path",
+        cliRuntime.cliPath,
+        "--json"
+      ],
+      ["setup", "status", "--target-path", path.join(targetDir, "htmlslide"), "--json"],
+      ["setup", "uninstall-cli", "--target-path", path.join(targetDir, "htmlslide"), "--json"],
+      ["setup", "status", "--target-path", path.join(targetDir, "htmlslide"), "--json"]
+    ]);
   });
 
   it("runs the mock agent and then real project check/export through the CLI runner", async () => {

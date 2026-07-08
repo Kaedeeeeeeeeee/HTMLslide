@@ -1,5 +1,8 @@
-import { access, mkdir, writeFile } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { access, chmod, lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { mockEngines } from "@htmlslide/agent";
 import { exportDeck, type CompilerProjectInput, type ExportOptions } from "@htmlslide/compiler";
 import { loadDeckProject, parseDeck, ProjectLoadError, type Deck, type LoadedDeckProject } from "@htmlslide/core";
@@ -33,6 +36,43 @@ export type ProjectLoadResult =
       report: CheckReport;
     };
 
+export type CliShimTargetOptions = {
+  targetDir?: string;
+  targetPath?: string;
+  htmlslideHomeDir?: string;
+};
+
+export type CliShimInstallOptions = CliShimTargetOptions & {
+  appPath?: string;
+  fallbackCliPath?: string;
+};
+
+export type CliShimResult = {
+  status: "passed";
+  command: "setup install-cli" | "setup uninstall-cli";
+  action: "installed" | "updated" | "removed" | "unchanged";
+  targetPath: string;
+  targetDir: string;
+  htmlslideHomeDir: string;
+  appPathJson?: string;
+  message: string;
+};
+
+export type CliShimStatus = {
+  status: "passed" | "info" | "warning" | "failed";
+  installed: boolean;
+  managed: boolean;
+  targetPath: string;
+  targetDir: string;
+  htmlslideHomeDir: string;
+  onPath: boolean;
+  message: string;
+  suggestedFix?: string;
+};
+
+const HTMLSLIDE_SHIM_MARKER = "HTMLslide managed CLI shim v1";
+const HTMLSLIDE_HOME_ENV = "HTMLSLIDE_HOME";
+
 const exists = async (filePath: string): Promise<boolean> => {
   try {
     await access(filePath);
@@ -40,6 +80,290 @@ const exists = async (filePath: string): Promise<boolean> => {
   } catch {
     return false;
   }
+};
+
+const setupError = (
+  code: string,
+  message: string,
+  exitCode: number,
+  suggestedFix: string,
+  extra?: Record<string, unknown>
+): Error =>
+  Object.assign(new Error(message), {
+    code,
+    exitCode,
+    suggestedFix,
+    ...extra
+  });
+
+const resolveHtmlslideHomeDir = (htmlslideHomeDir?: string): string =>
+  path.resolve(htmlslideHomeDir ?? process.env[HTMLSLIDE_HOME_ENV] ?? path.join(os.homedir(), ".htmlslide"));
+
+const resolveCliShimTarget = (options: CliShimTargetOptions = {}) => {
+  if (options.targetDir && options.targetPath) {
+    throw setupError(
+      "CLI_TARGET_AMBIGUOUS",
+      "Pass either --target-dir or --target-path, not both.",
+      EXIT_CODES.generic,
+      "Choose a target directory for htmlslide or a complete target path."
+    );
+  }
+
+  const htmlslideHomeDir = resolveHtmlslideHomeDir(options.htmlslideHomeDir);
+  const targetPath = options.targetPath
+    ? path.resolve(options.targetPath)
+    : path.join(options.targetDir ? path.resolve(options.targetDir) : path.join(htmlslideHomeDir, "bin"), "htmlslide");
+
+  return {
+    targetPath,
+    targetDir: path.dirname(targetPath),
+    htmlslideHomeDir,
+    explicit: Boolean(options.targetDir || options.targetPath)
+  };
+};
+
+const defaultFallbackCliPath = (): string => {
+  const modulePath = fileURLToPath(import.meta.url);
+  const moduleDir = path.dirname(modulePath);
+  const packageRoot = ["src", "dist"].includes(path.basename(moduleDir)) ? path.dirname(moduleDir) : moduleDir;
+  return path.join(packageRoot, "dist", "bin", "htmlslide.js");
+};
+
+const appPathConfigPath = (htmlslideHomeDir: string): string => path.join(htmlslideHomeDir, "app-path.json");
+
+const readExistingShim = async (
+  targetPath: string
+): Promise<{ exists: false } | { exists: true; managed: boolean; kind: "file" | "directory" | "symlink" | "other" }> => {
+  try {
+    const stats = await lstat(targetPath);
+    if (!stats.isFile()) {
+      return {
+        exists: true,
+        managed: false,
+        kind: stats.isDirectory() ? "directory" : stats.isSymbolicLink() ? "symlink" : "other"
+      };
+    }
+
+    const content = await readFile(targetPath, "utf8");
+    return {
+      exists: true,
+      managed: content.includes(HTMLSLIDE_SHIM_MARKER),
+      kind: "file"
+    };
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+      return { exists: false };
+    }
+    throw error;
+  }
+};
+
+const escapeShimString = (value: string): string => JSON.stringify(value);
+
+const cliShimScript = (fallbackCliPath: string): string => `#!/usr/bin/env node
+// ${HTMLSLIDE_SHIM_MARKER}
+const { spawnSync } = require("node:child_process");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+
+const fallbackCliPath = ${escapeShimString(path.resolve(fallbackCliPath))};
+
+const unique = (values) => [...new Set(values.filter(Boolean).map((value) => path.resolve(String(value))))];
+
+const readAppPathConfig = () => {
+  const htmlslideHomeDir = process.env.HTMLSLIDE_HOME || path.join(os.homedir(), ".htmlslide");
+  const configPath = path.join(htmlslideHomeDir, "app-path.json");
+  if (!fs.existsSync(configPath)) {
+    return {};
+  }
+  try {
+    return JSON.parse(fs.readFileSync(configPath, "utf8"));
+  } catch (error) {
+    console.error("HTMLslide CLI shim could not parse " + configPath + ": " + error.message);
+    process.exit(4);
+  }
+};
+
+const appCliCandidates = (config) => {
+  const appPath = config && config.appPath ? String(config.appPath) : "";
+  return unique([
+    config && config.cliPath,
+    config && config.cliEntry,
+    config && config.appCliPath,
+    appPath && path.join(appPath, "Contents", "Resources", "app", "packages", "cli", "dist", "bin", "htmlslide.js"),
+    appPath && path.join(appPath, "Contents", "Resources", "app.asar", "packages", "cli", "dist", "bin", "htmlslide.js"),
+    appPath && path.join(appPath, "Contents", "Resources", "htmlslide", "cli", "htmlslide.js")
+  ]);
+};
+
+const candidates = unique([...appCliCandidates(readAppPathConfig()), fallbackCliPath]);
+const cliPath = candidates.find((candidate) => fs.existsSync(candidate));
+
+if (!cliPath) {
+  console.error("HTMLslide CLI shim could not locate the CLI entrypoint.");
+  console.error("Run htmlslide setup install-cli from the HTMLslide app, or reinstall the CLI shim.");
+  process.exit(4);
+}
+
+if (path.resolve(cliPath) === path.resolve(process.argv[1])) {
+  console.error("HTMLslide CLI shim resolved to itself. Reinstall the CLI shim with a valid app or development CLI path.");
+  process.exit(4);
+}
+
+const result = spawnSync(process.execPath, [cliPath, ...process.argv.slice(2)], { stdio: "inherit" });
+if (result.error) {
+  console.error("HTMLslide CLI shim failed to start: " + result.error.message);
+  process.exit(4);
+}
+if (result.signal) {
+  process.kill(process.pid, result.signal);
+}
+process.exit(result.status ?? 1);
+`;
+
+const ensureWritableDir = async (targetDir: string): Promise<void> => {
+  try {
+    await mkdir(targetDir, { recursive: true });
+    await access(targetDir, fsConstants.W_OK);
+  } catch (error) {
+    throw setupError(
+      "CLI_TARGET_NOT_WRITABLE",
+      `Cannot write HTMLslide CLI shim to ${targetDir}.`,
+      EXIT_CODES.permissionDenied,
+      "Choose a writable target directory, for example ~/.htmlslide/bin, or fix directory permissions.",
+      { cause: error, targetDir }
+    );
+  }
+};
+
+export const getCliShimStatus = async (options: CliShimTargetOptions = {}): Promise<CliShimStatus> => {
+  const target = resolveCliShimTarget(options);
+  const existing = await readExistingShim(target.targetPath);
+  const pathEntries = (process.env.PATH ?? "").split(path.delimiter).map((entry) => path.resolve(entry || "."));
+  const onPath = pathEntries.includes(path.resolve(target.targetDir));
+
+  if (!existing.exists) {
+    return {
+      status: "info",
+      installed: false,
+      managed: false,
+      targetPath: target.targetPath,
+      targetDir: target.targetDir,
+      htmlslideHomeDir: target.htmlslideHomeDir,
+      onPath,
+      message: `HTMLslide CLI shim is not installed at ${target.targetPath}.`,
+      suggestedFix: "Run htmlslide setup install-cli."
+    };
+  }
+
+  if (!existing.managed) {
+    return {
+      status: "failed",
+      installed: true,
+      managed: false,
+      targetPath: target.targetPath,
+      targetDir: target.targetDir,
+      htmlslideHomeDir: target.htmlslideHomeDir,
+      onPath,
+      message: `${target.targetPath} exists but is not an HTMLslide-managed shim.`,
+      suggestedFix: "Choose another --target-path or remove the unrelated command manually."
+    };
+  }
+
+  return {
+    status: onPath ? "passed" : "warning",
+    installed: true,
+    managed: true,
+    targetPath: target.targetPath,
+    targetDir: target.targetDir,
+    htmlslideHomeDir: target.htmlslideHomeDir,
+    onPath,
+    message: onPath
+      ? `HTMLslide CLI shim is installed at ${target.targetPath}.`
+      : `HTMLslide CLI shim is installed at ${target.targetPath}, but ${target.targetDir} is not on PATH.`,
+    suggestedFix: onPath ? undefined : `Add ${target.targetDir} to PATH.`
+  };
+};
+
+export const installCliShim = async (options: CliShimInstallOptions = {}): Promise<CliShimResult> => {
+  const target = resolveCliShimTarget(options);
+  await ensureWritableDir(target.targetDir);
+
+  const existing = await readExistingShim(target.targetPath);
+  if (existing.exists && !existing.managed) {
+    throw setupError(
+      "CLI_SHIM_CONFLICT",
+      `Refusing to overwrite existing non-HTMLslide command at ${target.targetPath}.`,
+      EXIT_CODES.generic,
+      "Choose another --target-path or remove the unrelated command manually.",
+      { targetPath: target.targetPath }
+    );
+  }
+
+  let appPathJson: string | undefined;
+  if (options.appPath) {
+    const appPath = path.resolve(options.appPath);
+    appPathJson = appPathConfigPath(target.htmlslideHomeDir);
+    await mkdir(path.dirname(appPathJson), { recursive: true });
+    await writeFile(appPathJson, `${JSON.stringify({ schemaVersion: 1, appPath }, null, 2)}\n`);
+  }
+
+  const fallbackCliPath = options.fallbackCliPath ? path.resolve(options.fallbackCliPath) : defaultFallbackCliPath();
+  const temporaryPath = path.join(target.targetDir, `.htmlslide-${process.pid}-${Date.now()}.tmp`);
+  await writeFile(temporaryPath, cliShimScript(fallbackCliPath), { mode: 0o755 });
+  await chmod(temporaryPath, 0o755);
+  await rename(temporaryPath, target.targetPath);
+
+  const action = existing.exists ? "updated" : "installed";
+  return {
+    status: "passed",
+    command: "setup install-cli",
+    action,
+    targetPath: target.targetPath,
+    targetDir: target.targetDir,
+    htmlslideHomeDir: target.htmlslideHomeDir,
+    appPathJson,
+    message: `${action === "installed" ? "Installed" : "Updated"} HTMLslide CLI shim at ${target.targetPath}.`
+  };
+};
+
+export const uninstallCliShim = async (options: CliShimTargetOptions = {}): Promise<CliShimResult> => {
+  const target = resolveCliShimTarget(options);
+  const existing = await readExistingShim(target.targetPath);
+
+  if (!existing.exists) {
+    return {
+      status: "passed",
+      command: "setup uninstall-cli",
+      action: "unchanged",
+      targetPath: target.targetPath,
+      targetDir: target.targetDir,
+      htmlslideHomeDir: target.htmlslideHomeDir,
+      message: `No HTMLslide CLI shim was installed at ${target.targetPath}.`
+    };
+  }
+
+  if (!existing.managed) {
+    throw setupError(
+      "CLI_SHIM_CONFLICT",
+      `Refusing to remove existing non-HTMLslide command at ${target.targetPath}.`,
+      EXIT_CODES.generic,
+      "Choose the correct --target-path or remove the unrelated command manually.",
+      { targetPath: target.targetPath }
+    );
+  }
+
+  await rm(target.targetPath);
+  return {
+    status: "passed",
+    command: "setup uninstall-cli",
+    action: "removed",
+    targetPath: target.targetPath,
+    targetDir: target.targetDir,
+    htmlslideHomeDir: target.htmlslideHomeDir,
+    message: `Removed HTMLslide CLI shim from ${target.targetPath}.`
+  };
 };
 
 const slug = (value: string): string =>
@@ -376,27 +700,38 @@ export const checkLoadedProject = async (project: LoadedProject): Promise<CheckR
 export const exportLoadedProject = async (project: LoadedProject, options?: ExportOptions) =>
   exportDeck(toCompilerInput(project), options);
 
-export const doctor = () => ({
-  status: "passed" as const,
-  app: "HTMLslide",
-  version: "0.1.0",
-  checks: [
-    {
-      id: "node",
-      status: "passed",
-      message: `Node.js ${process.version}`
-    },
-    {
-      id: "filesystem",
-      status: "passed",
-      message: "Local filesystem access available"
-    },
-    {
-      id: "ai",
-      status: "info",
-      message: "No AI provider is required for No AI mode"
-    }
-  ]
-});
+export const doctor = async (options: CliShimTargetOptions = {}) => {
+  const cliShim = await getCliShimStatus(options);
+
+  return {
+    status: "passed" as const,
+    app: "HTMLslide",
+    version: "0.1.0",
+    checks: [
+      {
+        id: "node",
+        status: "passed",
+        message: `Node.js ${process.version}`
+      },
+      {
+        id: "filesystem",
+        status: "passed",
+        message: "Local filesystem access available"
+      },
+      {
+        id: "cli-shim",
+        status: cliShim.status,
+        message: cliShim.message,
+        targetPath: cliShim.targetPath,
+        suggestedFix: cliShim.suggestedFix
+      },
+      {
+        id: "ai",
+        status: "info",
+        message: "No AI provider is required for No AI mode"
+      }
+    ]
+  };
+};
 
 export const listAgentEngines = () => mockEngines;

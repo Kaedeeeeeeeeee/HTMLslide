@@ -1,11 +1,9 @@
 /// <reference types="vite/client" />
 
-interface HtmlslideDesktopBridge {
-  appName: string;
-  platform: string;
-  shell: "electron";
-}
+import type { HtmlslideDesktopApi } from "./desktop-api";
 
-interface Window {
-  htmlslideDesktop?: HtmlslideDesktopBridge;
+declare global {
+  interface Window {
+    htmlslideDesktop?: HtmlslideDesktopApi;
+  }
 }

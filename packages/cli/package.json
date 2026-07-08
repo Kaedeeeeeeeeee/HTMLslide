@@ -12,7 +12,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -b tsconfig.json --pretty false",
     "htmlslide": "tsx src/bin/htmlslide.ts",
-    "test": "vitest run --config ../../vitest.config.ts packages/cli"
+    "test": "vitest run --root ../.. --config vitest.config.ts packages/cli"
   },
   "dependencies": {
     "@htmlslide/agent": "workspace:*",

@@ -40,6 +40,7 @@ import {
 import type {
   AgentStage,
   InspectorTab,
+  OperationStatus,
   ProjectSummary,
   QaFilter,
   QaIssue,
@@ -57,12 +58,14 @@ interface WorkspaceProps {
   selectedSlideId: string;
   slides: SlideSummary[];
   stages: AgentStage[];
+  operationStatus: OperationStatus;
   onCommandChange: (value: string) => void;
   onCommandSubmit: () => void;
   onInspectorTabChange: (tab: InspectorTab) => void;
   onQaFilterChange: (filter: QaFilter) => void;
   onRunAction: (action: "start" | "pause" | "cancel" | "retry") => void;
   onSelectSlide: (slideId: string) => void;
+  onToolbarAction: (action: "generate" | "check" | "export" | "present") => void;
 }
 
 const inspectorTabs: Array<{ id: InspectorTab; label: string }> = [
@@ -113,6 +116,8 @@ export function Workspace({
   onQaFilterChange,
   onRunAction,
   onSelectSlide,
+  onToolbarAction,
+  operationStatus,
   project,
   qaFilter,
   qaIssues,
@@ -138,6 +143,8 @@ export function Workspace({
         issueCounts={issueCounts}
         onInspectorTabChange={onInspectorTabChange}
         onRunAction={onRunAction}
+        onToolbarAction={onToolbarAction}
+        operationStatus={operationStatus}
         project={project}
         running={running}
       />
@@ -161,6 +168,8 @@ export function Workspace({
           issueCounts={selectedIssueCounts}
           issues={selectedIssues}
           onQaFilterChange={onQaFilterChange}
+          onToolbarAction={onToolbarAction}
+          operationStatus={operationStatus}
           onTabChange={onInspectorTabChange}
           qaFilter={qaFilter}
         />
@@ -180,16 +189,20 @@ export function Workspace({
 
 interface ToolbarProps {
   issueCounts: Record<"error" | "warning" | "suggestion", number>;
+  operationStatus: OperationStatus;
   project: ProjectSummary;
   running: boolean;
   onInspectorTabChange: (tab: InspectorTab) => void;
   onRunAction: (action: "start" | "pause" | "cancel" | "retry") => void;
+  onToolbarAction: (action: "generate" | "check" | "export" | "present") => void;
 }
 
 function Toolbar({
   issueCounts,
   onInspectorTabChange,
   onRunAction,
+  onToolbarAction,
+  operationStatus,
   project,
   running
 }: ToolbarProps): ReactNode {
@@ -220,6 +233,8 @@ function Toolbar({
               if (action === "export") {
                 onInspectorTabChange("export");
               }
+
+              onToolbarAction(action);
             }}
             variant={action === "generate" ? "primary" : "secondary"}
           >
@@ -234,6 +249,9 @@ function Toolbar({
         </StatusPill>
         <StatusPill tone={issueCounts.error > 0 ? "danger" : "success"}>
           {issueCounts.error} blocking
+        </StatusPill>
+        <StatusPill tone={operationStatus.kind === "failed" ? "danger" : operationStatus.kind === "success" ? "success" : "info"}>
+          {operationStatus.message}
         </StatusPill>
         <IconButton
           icon={<Settings2 />}
@@ -302,6 +320,8 @@ interface PreviewCanvasProps {
 }
 
 function PreviewCanvas({ issueCount, slide }: PreviewCanvasProps): ReactNode {
+  const hasSourcePreview = Boolean(slide.html && slide.html.trim().length > 0);
+
   return (
     <section className="preview-stage">
       <div className="preview-topbar">
@@ -321,33 +341,49 @@ function PreviewCanvas({ issueCount, slide }: PreviewCanvasProps): ReactNode {
       <div className="slide-canvas-wrap">
         <article
           aria-label={`${slide.title} slide preview`}
-          className="slide-canvas"
+          className={hasSourcePreview ? "slide-canvas slide-canvas--source" : "slide-canvas"}
           style={{ "--slide-accent": slide.accent } as CSSProperties}
         >
-          <header>
-            <span>{slide.section}</span>
-            <strong>{slide.duration}</strong>
-          </header>
-          <section>
-            <h1>{slide.title}</h1>
-            <ul>
-              {slide.bullets.map((bullet) => (
-                <li key={bullet}>{bullet}</li>
-              ))}
-            </ul>
-          </section>
-          <div className="slide-visual">
-            <div className="slide-visual__bars">
-              <span />
-              <span />
-              <span />
-            </div>
-            <div className="slide-visual__card">
+          {hasSourcePreview ? (
+            <div
+              className="slide-fragment-preview"
+              dangerouslySetInnerHTML={{ __html: slide.html ?? "" }}
+            />
+          ) : (
+            <>
+              <header>
+                <span>{slide.section}</span>
+                <strong>{slide.duration}</strong>
+              </header>
+              <section>
+                <h1>{slide.title}</h1>
+                <ul>
+                  {slide.bullets.map((bullet) => (
+                    <li key={bullet}>{bullet}</li>
+                  ))}
+                </ul>
+              </section>
+              <div className="slide-visual">
+                <div className="slide-visual__bars">
+                  <span />
+                  <span />
+                  <span />
+                </div>
+                <div className="slide-visual__card">
+                  <Clock3 />
+                  <strong>{issueCount} QA notes</strong>
+                  <small>Current slide filter</small>
+                </div>
+              </div>
+            </>
+          )}
+          {hasSourcePreview ? (
+            <div className="slide-source-status">
               <Clock3 />
               <strong>{issueCount} QA notes</strong>
-              <small>Current slide filter</small>
+              <small>{slide.sourcePath}</small>
             </div>
-          </div>
+          ) : null}
         </article>
       </div>
     </section>
@@ -359,9 +395,11 @@ interface InspectorProps {
   currentSlide: SlideSummary;
   issueCounts: Record<"error" | "warning" | "suggestion", number>;
   issues: QaIssue[];
+  operationStatus: OperationStatus;
   qaFilter: QaFilter;
   onQaFilterChange: (filter: QaFilter) => void;
   onTabChange: (tab: InspectorTab) => void;
+  onToolbarAction: (action: "generate" | "check" | "export" | "present") => void;
 }
 
 function Inspector({
@@ -370,6 +408,8 @@ function Inspector({
   issueCounts,
   issues,
   onQaFilterChange,
+  onToolbarAction,
+  operationStatus,
   onTabChange,
   qaFilter
 }: InspectorProps): ReactNode {
@@ -393,7 +433,13 @@ function Inspector({
             qaFilter={qaFilter}
           />
         ) : null}
-        {activeTab === "export" ? <ExportPanel issueCounts={issueCounts} /> : null}
+        {activeTab === "export" ? (
+          <ExportPanel
+            issueCounts={issueCounts}
+            onExport={() => onToolbarAction("export")}
+            operationStatus={operationStatus}
+          />
+        ) : null}
       </div>
     </aside>
   );
@@ -558,9 +604,13 @@ function QaPanel({
 }
 
 function ExportPanel({
-  issueCounts
+  issueCounts,
+  onExport,
+  operationStatus
 }: {
   issueCounts: Record<"error" | "warning" | "suggestion", number>;
+  operationStatus: OperationStatus;
+  onExport: () => void;
 }): ReactNode {
   const blocked = issueCounts.error > 0;
 
@@ -591,6 +641,7 @@ function ExportPanel({
         <Button
           disabled={blocked}
           icon={<Download />}
+          onClick={onExport}
           variant="primary"
         >
           Export PDF
@@ -598,6 +649,7 @@ function ExportPanel({
         <StatusPill tone={blocked ? "danger" : "success"}>
           {blocked ? "Blocked by QA" : "Ready to export"}
         </StatusPill>
+        <p className="export-status">{operationStatus.message}</p>
       </div>
     </section>
   );

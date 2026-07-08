@@ -1,0 +1,66 @@
+# External Agents Spec v0.1
+
+HTMLslide can connect to user-owned external coding agents such as Claude Code, Codex CLI, or a custom command. Adapters must be local-first, deterministic in tests, and project-boundary aware.
+
+## Adapter Capabilities
+
+Adapters expose a shared capability map:
+
+- `detectInstalled`: check whether the external command is available.
+- `detectAuthenticated`: check whether the command can run under the user's logged-in account.
+- `headlessRun`: run without opening an interactive terminal.
+- `streamLogs`: surface raw logs to the app.
+- `installSkills`: install project-local HTMLslide skill guidance.
+- `configureMCP`: connect the HTMLslide MCP server.
+- `openExternal`: open a fallback terminal or external app.
+- `cancelRun`: cancel an in-flight run.
+- `readDiff`: inspect changed files after the run.
+
+Detection results use `ready`, `not-installed`, `not-authenticated`, or `unavailable` status plus a remediation-ready failure when the adapter cannot run.
+
+## Generic Command Templates
+
+Generic adapters render command templates into argv tokens without a shell. Placeholders use `{{name}}` syntax:
+
+```text
+my-agent --cwd "{{projectPath}}" --prompt-file "{{promptFile}}"
+```
+
+Each placeholder value renders as one argv token, even when it contains spaces. Path placeholders such as `projectPath`, `projectRoot`, `promptFile`, `scriptFile`, and `writeManifest` must resolve inside the HTMLslide project. `projectPath` and `projectRoot` must resolve exactly to the project root.
+
+Adapters must not execute generated shell text. Tests should use injected runners or controlled Node fake commands in temporary project directories.
+
+## Project Boundary
+
+External agents may edit source areas described by the project-structure spec, but they must not write outside the project root. Runs can provide a write manifest, and adapter code rejects any reported write whose resolved path escapes the project.
+
+Forbidden writes fail the run even when the command exits successfully. The app should then offer checkpoint revert and show the reported path.
+
+## Detector Helpers
+
+Claude and Codex detection is implemented as pure helper logic around an injected command runner. The helpers may call version and auth-status commands through the runner, but tests must not require real CLI installs, real login state, or provider network access.
+
+The default command names are:
+
+- Claude Code: `claude`
+- Codex CLI: `codex`
+
+Callers may override command names and detector args when a provider changes its CLI surface.
+
+## Failure Types
+
+Adapters use stable failure types:
+
+| Type | Meaning | Remediation |
+| --- | --- | --- |
+| `agent-not-installed` | CLI is missing or not on `PATH`. | Install the agent CLI, reopen HTMLslide, then detect again. |
+| `not-authenticated` | CLI exists but cannot access the user's account. | Log in with the CLI, then reconnect. |
+| `subscription-unavailable` | Account, subscription, or API access is unavailable. | Switch AI engine, use API key mode, or resolve provider access. |
+| `command-failed` | Agent command exited non-zero. | Open Developer Console, inspect logs, and copy a repair prompt if needed. |
+| `user-denied-permission` | User denied a permission request. | Review the requested access and rerun with project-scoped permission. |
+| `forbidden-file-write` | Agent reported a write outside the project. | Revert checkpoint, inspect the path, and rerun with stricter instructions. |
+| `check-still-failing` | Agent completed but `htmlslide check` still has errors. | Copy the check report into a repair prompt or switch engine. |
+| `run-timeout` | Agent exceeded the configured timeout. | Increase timeout, simplify the request, or retry a smaller task. |
+| `cancelled` | User or host cancelled the run. | Start a new run when ready. |
+| `project-boundary-violation` | Command template references a path outside the project. | Choose project-local prompt, manifest, or output paths. |
+| `template-render-error` | Command template is malformed or missing a variable. | Fix placeholders and retry the connection test. |

@@ -10,5 +10,5 @@
     "rootDir": ".",
     "types": ["node"]
   },
-  "include": ["*.ts"]
+  "include": ["main.ts", "preload.ts", "desktop-services.ts"]
 }

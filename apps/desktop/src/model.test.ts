@@ -3,6 +3,7 @@ import {
   buildRuntimeStages,
   countIssuesBySeverity,
   filterQaIssues,
+  formatProjectOpenedAt,
   getNextStageIndex
 } from "./model";
 import type { AgentStage, QaIssue } from "./model";
@@ -97,5 +98,10 @@ describe("desktop model helpers", () => {
     expect(getNextStageIndex(0, stages.length)).toBe(1);
     expect(getNextStageIndex(2, stages.length)).toBe(2);
     expect(getNextStageIndex(4, 0)).toBe(0);
+  });
+
+  it("formats project open timestamps with a fallback", () => {
+    expect(formatProjectOpenedAt("not-a-date")).toBe("Unknown");
+    expect(formatProjectOpenedAt("2026-07-08T00:00:00.000Z")).not.toBe("Unknown");
   });
 });

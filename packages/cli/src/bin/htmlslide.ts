@@ -7,9 +7,12 @@ import {
   doctor,
   EXIT_CODES,
   exportLoadedProject,
+  getCliShimStatus,
+  installCliShim,
   listAgentEngines,
   loadProject,
-  tryLoadProjectForCheck
+  tryLoadProjectForCheck,
+  uninstallCliShim
 } from "../index.js";
 
 type JsonOption = {
@@ -21,6 +24,21 @@ type ExportCommandOptions = JsonOption & {
   html?: boolean;
   deckpkg?: boolean;
   thumbnails?: boolean;
+};
+
+type SetupCommandOptions = JsonOption & {
+  targetDir?: string;
+  targetPath?: string;
+  appPath?: string;
+  fallbackCliPath?: string;
+};
+
+type CliError = Error & {
+  code?: string;
+  exitCode?: number;
+  suggestedFix?: string;
+  targetPath?: string;
+  targetDir?: string;
 };
 
 const writeResult = (payload: unknown, json = false): void => {
@@ -37,11 +55,20 @@ const writeResult = (payload: unknown, json = false): void => {
 
 const fail = (error: unknown, json = false): never => {
   const message = error instanceof Error ? error.message : String(error);
-  const exitCode =
-    typeof error === "object" && error !== null && "exitCode" in error && typeof error.exitCode === "number"
-      ? error.exitCode
-      : EXIT_CODES.generic;
-  writeResult({ status: "failed", error: message, exitCode }, json);
+  const details = error instanceof Error ? (error as CliError) : undefined;
+  const exitCode = typeof details?.exitCode === "number" ? details.exitCode : EXIT_CODES.generic;
+  writeResult(
+    {
+      status: "failed",
+      error: message,
+      code: details?.code,
+      exitCode,
+      suggestedFix: details?.suggestedFix,
+      targetPath: details?.targetPath,
+      targetDir: details?.targetDir
+    },
+    json
+  );
   process.exit(exitCode);
 };
 
@@ -140,13 +167,83 @@ program
     }
   });
 
+const setupCommand = program.command("setup").description("Install, inspect, or remove local HTMLslide setup helpers.");
+
+setupCommand
+  .command("install-cli")
+  .option("--json", "print machine-readable JSON")
+  .option("--target-dir <dir>", "directory where the htmlslide shim should be written")
+  .option("--target-path <path>", "complete path where the htmlslide shim should be written")
+  .option("--app-path <path>", "HTMLslide.app path to record in ~/.htmlslide/app-path.json")
+  .option("--fallback-cli-path <path>", "development CLI entrypoint used when no app path is configured")
+  .description("Install or update the local htmlslide command shim.")
+  .action(async (options: SetupCommandOptions) => {
+    const json = Boolean(options.json ?? program.opts<JsonOption>().json);
+    try {
+      const result = await installCliShim({
+        targetDir: options.targetDir,
+        targetPath: options.targetPath,
+        appPath: options.appPath,
+        fallbackCliPath: options.fallbackCliPath
+      });
+      writeResult(result, json);
+    } catch (error) {
+      fail(error, json);
+    }
+  });
+
+setupCommand
+  .command("uninstall-cli")
+  .option("--json", "print machine-readable JSON")
+  .option("--target-dir <dir>", "directory containing the htmlslide shim")
+  .option("--target-path <path>", "complete path to the htmlslide shim")
+  .description("Remove an HTMLslide-managed local htmlslide command shim.")
+  .action(async (options: SetupCommandOptions) => {
+    const json = Boolean(options.json ?? program.opts<JsonOption>().json);
+    try {
+      const result = await uninstallCliShim({
+        targetDir: options.targetDir,
+        targetPath: options.targetPath
+      });
+      writeResult(result, json);
+    } catch (error) {
+      fail(error, json);
+    }
+  });
+
+setupCommand
+  .command("status")
+  .option("--json", "print machine-readable JSON")
+  .option("--target-dir <dir>", "directory containing the htmlslide shim")
+  .option("--target-path <path>", "complete path to the htmlslide shim")
+  .description("Report HTMLslide CLI shim installation status.")
+  .action(async (options: SetupCommandOptions) => {
+    const json = Boolean(options.json ?? program.opts<JsonOption>().json);
+    try {
+      const result = await getCliShimStatus({
+        targetDir: options.targetDir,
+        targetPath: options.targetPath
+      });
+      writeResult({ command: "setup status", ...result }, json);
+      if (result.status === "failed") {
+        process.exit(EXIT_CODES.generic);
+      }
+    } catch (error) {
+      fail(error, json);
+    }
+  });
+
 program
   .command("doctor")
   .option("--json", "print machine-readable JSON")
   .description("Report local HTMLslide runtime health.")
-  .action((options: JsonOption) => {
+  .action(async (options: JsonOption) => {
     const json = Boolean(options.json ?? program.opts<JsonOption>().json);
-    writeResult(doctor(), json);
+    try {
+      writeResult(await doctor(), json);
+    } catch (error) {
+      fail(error, json);
+    }
   });
 
 program

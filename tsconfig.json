@@ -7,8 +7,11 @@
     { "path": "./packages/renderer" },
     { "path": "./packages/linter" },
     { "path": "./packages/agent" },
+    { "path": "./packages/agent-adapters" },
     { "path": "./packages/compiler" },
     { "path": "./packages/mcp-server" },
+    { "path": "./packages/presenter" },
+    { "path": "./packages/skills" },
     { "path": "./packages/cli" }
   ]
 }

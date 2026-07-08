@@ -84,6 +84,8 @@ importers:
 
   packages/agent: {}
 
+  packages/agent-adapters: {}
+
   packages/cli:
     dependencies:
       '@htmlslide/agent':
@@ -138,6 +140,15 @@ importers:
 
   packages/mcp-server: {}
 
+  packages/presenter:
+    dependencies:
+      '@htmlslide/core':
+        specifier: workspace:*
+        version: link:../core
+      jszip:
+        specifier: ^3.10.1
+        version: 3.10.1
+
   packages/renderer: {}
 
   packages/shared-ui:
@@ -151,6 +162,8 @@ importers:
       typescript:
         specifier: ^5.8.3
         version: 5.9.3
+
+  packages/skills: {}
 
 packages:
 

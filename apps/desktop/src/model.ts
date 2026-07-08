@@ -4,6 +4,12 @@ export type AppView = "onboarding" | "library" | "workspace";
 export type InspectorTab = InspectorTabId;
 export type QaSeverity = QaSeverityId;
 export type QaFilter = "all" | QaSeverity;
+export type OperationStatusKind = "idle" | "running" | "success" | "failed";
+
+export interface OperationStatus {
+  kind: OperationStatusKind;
+  message: string;
+}
 
 export interface OnboardingStep {
   id: string;
@@ -36,27 +42,16 @@ export interface SlideSummary {
   accent: string;
   speakerNotes: string;
   bullets: string[];
+  sourcePath?: string;
+  notesPath?: string;
+  html?: string;
 }
 
 export interface QaIssue {
   id: string;
   slideId: string;
   severity: QaSeverity;
-  type:
-    | "text-overflow"
-    | "safe-area-violation"
-    | "low-contrast"
-    | "font-missing"
-    | "remote-asset"
-    | "missing-asset"
-    | "image-too-large"
-    | "broken-link"
-    | "missing-notes"
-    | "title-too-long"
-    | "body-too-dense"
-    | "chart-label-too-small"
-    | "slide-id-mismatch"
-    | "export-outdated";
+  type: string;
   message: string;
   selector: string;
   measurement: string;
@@ -133,4 +128,18 @@ export function getNextStageIndex(currentIndex: number, stageCount: number): num
   }
 
   return Math.min(currentIndex + 1, stageCount - 1);
+}
+
+export function formatProjectOpenedAt(value: string): string {
+  const openedAt = new Date(value);
+  if (Number.isNaN(openedAt.getTime())) {
+    return "Unknown";
+  }
+
+  return openedAt.toLocaleString(undefined, {
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    month: "short"
+  });
 }

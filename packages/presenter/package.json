@@ -1,0 +1,27 @@
+{
+  "name": "@htmlslide/presenter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Presenter runtime data model, deckpkg reader, and session helpers for HTMLslide.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.json --pretty false",
+    "test": "vitest run --root ../.. --config vitest.config.ts packages/presenter",
+    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false"
+  },
+  "dependencies": {
+    "@htmlslide/core": "workspace:*",
+    "jszip": "^3.10.1"
+  }
+}

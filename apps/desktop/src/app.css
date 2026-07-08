@@ -214,6 +214,47 @@ svg {
   margin-top: 18px;
 }
 
+.library-empty {
+  align-content: center;
+  align-items: center;
+  border: 1px dashed var(--hs-line);
+  border-radius: var(--hs-radius-md);
+  color: var(--hs-text-muted);
+  display: grid;
+  justify-items: center;
+  margin-top: 18px;
+  min-height: 360px;
+  padding: 36px;
+  text-align: center;
+}
+
+.library-empty svg {
+  color: var(--hs-accent);
+  height: 30px;
+  margin-bottom: 14px;
+  width: 30px;
+}
+
+.library-empty h2 {
+  color: var(--hs-text);
+  font-size: 22px;
+  letter-spacing: 0;
+  margin: 0 0 8px;
+}
+
+.library-empty p {
+  line-height: 1.45;
+  margin: 0 0 18px;
+  max-width: 420px;
+}
+
+.library-empty div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
 .project-card {
   background: var(--hs-surface-raised);
   border: 1px solid var(--hs-line);
@@ -440,6 +481,70 @@ svg {
   width: min(100%, 1040px);
 }
 
+.slide-canvas--source {
+  background: #fff;
+  display: block;
+  padding: 0;
+  position: relative;
+}
+
+.slide-fragment-preview {
+  height: 100%;
+  overflow: hidden;
+  transform: scale(0.541666);
+  transform-origin: top left;
+  width: 184.62%;
+}
+
+.slide-fragment-preview > .slide,
+.slide-fragment-preview > section {
+  box-sizing: border-box;
+  height: 1080px;
+  margin: 0;
+  overflow: hidden;
+  width: 1920px;
+}
+
+.slide-source-status {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(23, 32, 51, 0.12);
+  border-radius: 8px;
+  bottom: 12px;
+  box-shadow: 0 12px 34px rgba(23, 32, 51, 0.12);
+  display: grid;
+  gap: 3px;
+  grid-template-columns: 20px minmax(0, 1fr);
+  left: 12px;
+  max-width: min(360px, calc(100% - 24px));
+  padding: 9px;
+  position: absolute;
+}
+
+.slide-source-status svg {
+  color: var(--slide-accent);
+  grid-row: span 2;
+  height: 16px;
+  width: 16px;
+}
+
+.slide-source-status strong,
+.slide-source-status small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slide-source-status strong {
+  font-size: 12px;
+}
+
+.slide-source-status small {
+  color: var(--hs-text-muted);
+  font-size: 11px;
+}
+
 .slide-canvas header {
   align-items: center;
   color: var(--slide-accent);
@@ -560,6 +665,13 @@ svg {
 .export-stack {
   display: grid;
   gap: 10px;
+}
+
+.export-status {
+  color: var(--hs-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 0;
 }
 
 .qa-issue-list {

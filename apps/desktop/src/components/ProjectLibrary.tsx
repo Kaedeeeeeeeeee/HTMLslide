@@ -14,6 +14,10 @@ import type { ProjectSummary } from "../model";
 
 interface ProjectLibraryProps {
   projects: ProjectSummary[];
+  workspacePath?: string;
+  onChooseWorkspace: () => void;
+  onNewDeck: () => void;
+  onOpenFolder: () => void;
   onOpenProject: (projectId: string) => void;
 }
 
@@ -41,7 +45,14 @@ function projectTone(status: ProjectSummary["status"]): "success" | "warning" | 
   return "warning";
 }
 
-export function ProjectLibrary({ onOpenProject, projects }: ProjectLibraryProps): ReactNode {
+export function ProjectLibrary({
+  onChooseWorkspace,
+  onNewDeck,
+  onOpenFolder,
+  onOpenProject,
+  projects,
+  workspacePath
+}: ProjectLibraryProps): ReactNode {
   return (
     <main className="library-shell">
       <aside className="library-nav">
@@ -72,21 +83,55 @@ export function ProjectLibrary({ onOpenProject, projects }: ProjectLibraryProps)
             <>
               <Button
                 icon={<Plus />}
-                onClick={() => onOpenProject(projects[0]?.id ?? "demo-alpha")}
+                onClick={onNewDeck}
                 variant="primary"
               >
                 New Deck
               </Button>
-              <Button icon={<FolderOpen />}>Open Folder</Button>
+              <Button
+                icon={<FolderOpen />}
+                onClick={onOpenFolder}
+              >
+                Open Folder
+              </Button>
               <Button icon={<Import />}>Import</Button>
             </>
           }
-          eyebrow="Recent workspaces"
+          eyebrow={workspacePath ? `Workspace: ${workspacePath}` : "Recent workspaces"}
           title="Projects"
         />
 
-        <div className="library-grid">
-          {projects.map((project) => (
+        {projects.length === 0 ? (
+          <section className="library-empty">
+            <FolderOpen />
+            <h2>No deck projects yet</h2>
+            <p>Create a local deck in the default workspace or open an existing folder with deck.json.</p>
+            <div>
+              <Button
+                icon={<Plus />}
+                onClick={onNewDeck}
+                variant="primary"
+              >
+                New Deck
+              </Button>
+              <Button
+                icon={<FolderOpen />}
+                onClick={onOpenFolder}
+              >
+                Open Folder
+              </Button>
+              <Button
+                icon={<Settings />}
+                onClick={onChooseWorkspace}
+                variant="ghost"
+              >
+                Change Workspace
+              </Button>
+            </div>
+          </section>
+        ) : (
+          <div className="library-grid">
+            {projects.map((project) => (
             <article
               className="project-card"
               key={project.id}
@@ -117,8 +162,9 @@ export function ProjectLibrary({ onOpenProject, projects }: ProjectLibraryProps)
                 </Button>
               </footer>
             </article>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </section>
     </main>
   );

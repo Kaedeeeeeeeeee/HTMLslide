@@ -7,12 +7,15 @@
     "baseUrl": ".",
     "paths": {
       "@htmlslide/agent": ["packages/agent/src/index.ts"],
+      "@htmlslide/agent-adapters": ["packages/agent-adapters/src/index.ts"],
       "@htmlslide/cli": ["packages/cli/src/index.ts"],
       "@htmlslide/compiler": ["packages/compiler/src/index.ts"],
       "@htmlslide/core": ["packages/core/src/index.ts"],
       "@htmlslide/linter": ["packages/linter/src/index.ts"],
       "@htmlslide/mcp-server": ["packages/mcp-server/src/index.ts"],
+      "@htmlslide/presenter": ["packages/presenter/src/index.ts"],
       "@htmlslide/renderer": ["packages/renderer/src/index.ts"],
+      "@htmlslide/skills": ["packages/skills/src/index.ts"],
       "@htmlslide/shared-ui": ["packages/shared-ui/src/index.ts"],
       "@htmlslide/shared-ui/styles.css": ["packages/shared-ui/src/styles.css"]
     },

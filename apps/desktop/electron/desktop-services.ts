@@ -312,6 +312,29 @@ export type DesktopAiEngineSettings = {
   updatedAt?: string;
 };
 
+export type DesktopAiEngineSettingsSaveRequest = {
+  settings: unknown;
+  apiKeyInput?: string;
+  clearKey?: boolean;
+};
+
+export type DesktopCredentialStatus = {
+  available: boolean;
+  hasStoredKey: boolean;
+  provider: DesktopApiKeyProvider;
+  service: string;
+  account: string;
+  message: string;
+};
+
+export type DesktopCredentialStore = {
+  available: boolean;
+  label: string;
+  getPassword(service: string, account: string): Promise<string | undefined>;
+  setPassword(service: string, account: string, password: string): Promise<void>;
+  deletePassword(service: string, account: string): Promise<void>;
+};
+
 export type DesktopExternalAgentStatus = {
   id: DesktopExternalAgentId;
   label: string;
@@ -410,6 +433,7 @@ const EXTERNAL_AGENT_SPECS = [
 const CLI_RUNTIME_ENTRY_PARTS = ["cli-runtime", "dist", "bin", "htmlslide.js"] as const;
 const DEFAULT_ACCENT = "#315fcb";
 const DEFAULT_ACCENTS = [DEFAULT_ACCENT, "#267a4f", "#9a6410", "#286a8d", "#7b4ab8", "#bc3a3a"];
+const AI_ENGINE_CREDENTIAL_SERVICE = "app.htmlslide.ai-key";
 
 export const defaultWorkspacePath = (): string => path.join(os.homedir(), "Documents", "HTMLslide");
 
@@ -511,6 +535,117 @@ export async function writeAiEngineSettings(
   await fs.mkdir(path.dirname(settingsPath), { recursive: true });
   await fs.writeFile(settingsPath, `${JSON.stringify(safeSettings, null, 2)}\n`);
   return safeSettings;
+}
+
+export async function saveAiEngineSettings(
+  settingsPath: string,
+  request: DesktopAiEngineSettingsSaveRequest,
+  credentialStore: DesktopCredentialStore = createDesktopCredentialStore()
+): Promise<DesktopAiEngineSettings> {
+  const previousSettings = await readAiEngineSettings(settingsPath);
+  const requestedSettings = sanitizeAiEngineSettings(request.settings);
+  const apiKeyInput = typeof request.apiKeyInput === "string" ? request.apiKeyInput.trim() : "";
+  const clearKey = request.clearKey === true;
+  const providerChanged = previousSettings.apiKey.provider !== requestedSettings.apiKey.provider;
+  let nextSettings: DesktopAiEngineSettings = {
+    ...requestedSettings,
+    apiKey: {
+      ...requestedSettings.apiKey,
+      hasKey: providerChanged ? false : requestedSettings.apiKey.hasKey
+    }
+  };
+
+  if (clearKey) {
+    await deleteAiEngineCredential(previousSettings.apiKey.provider, credentialStore);
+    if (providerChanged) {
+      await deleteAiEngineCredential(requestedSettings.apiKey.provider, credentialStore);
+    }
+    nextSettings = {
+      ...nextSettings,
+      apiKey: {
+        ...nextSettings.apiKey,
+        hasKey: false
+      }
+    };
+  } else if (apiKeyInput.length > 0) {
+    await saveAiEngineCredential(requestedSettings.apiKey.provider, apiKeyInput, credentialStore);
+    if (providerChanged) {
+      await deleteAiEngineCredential(previousSettings.apiKey.provider, credentialStore);
+    }
+    nextSettings = {
+      ...nextSettings,
+      apiKey: {
+        ...nextSettings.apiKey,
+        hasKey: true
+      }
+    };
+  } else if (providerChanged) {
+    await deleteAiEngineCredential(previousSettings.apiKey.provider, credentialStore);
+  }
+
+  await fs.mkdir(path.dirname(settingsPath), { recursive: true });
+  await fs.writeFile(settingsPath, `${JSON.stringify(nextSettings, null, 2)}\n`);
+  return nextSettings;
+}
+
+export async function readAiEngineCredentialStatus(
+  settingsPath: string,
+  credentialStore: DesktopCredentialStore = createDesktopCredentialStore()
+): Promise<DesktopCredentialStatus> {
+  const settings = await readAiEngineSettings(settingsPath);
+  const provider = settings.apiKey.provider;
+  const account = aiEngineCredentialAccount(provider);
+
+  if (!credentialStore.available) {
+    return {
+      account,
+      available: false,
+      hasStoredKey: false,
+      provider,
+      service: AI_ENGINE_CREDENTIAL_SERVICE,
+      message: `${credentialStore.label} is not available.`
+    };
+  }
+
+  const password = await credentialStore.getPassword(AI_ENGINE_CREDENTIAL_SERVICE, account);
+  return {
+    account,
+    available: true,
+    hasStoredKey: typeof password === "string" && password.length > 0,
+    provider,
+    service: AI_ENGINE_CREDENTIAL_SERVICE,
+    message: typeof password === "string" && password.length > 0
+      ? `${credentialStore.label} has a stored ${provider} key.`
+      : `${credentialStore.label} has no stored ${provider} key.`
+  };
+}
+
+export async function saveAiEngineCredential(
+  provider: DesktopApiKeyProvider,
+  apiKey: string,
+  credentialStore: DesktopCredentialStore = createDesktopCredentialStore()
+): Promise<void> {
+  const trimmedKey = apiKey.trim();
+  if (trimmedKey.length === 0) {
+    throw new Error("API key is required.");
+  }
+
+  if (!credentialStore.available) {
+    throw new Error(`${credentialStore.label} is not available for API key storage.`);
+  }
+
+  await credentialStore.setPassword(AI_ENGINE_CREDENTIAL_SERVICE, aiEngineCredentialAccount(provider), trimmedKey);
+}
+
+export async function deleteAiEngineCredential(
+  provider: DesktopApiKeyProvider,
+  credentialStore: DesktopCredentialStore = createDesktopCredentialStore()
+): Promise<void> {
+  if (!credentialStore.available) {
+    return;
+  }
+
+  await credentialStore.deletePassword(AI_ENGINE_CREDENTIAL_SERVICE, aiEngineCredentialAccount(provider));
 }
 
 export async function detectExternalAgentStatuses({
@@ -1501,6 +1636,45 @@ function runDetectorCommand(invocation: Parameters<ExternalAgentDetectorRunner>[
   });
 }
 
+function runSecurityCommand(args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn("/usr/bin/security", args, {
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.once("error", (error) => {
+      resolve({
+        exitCode: 1,
+        stdout,
+        stderr: error.message
+      });
+    });
+    child.once("exit", (code) => {
+      resolve({
+        exitCode: code ?? 1,
+        stdout,
+        stderr
+      });
+    });
+  });
+}
+
+function aiEngineCredentialAccount(provider: DesktopApiKeyProvider): string {
+  return `provider:${provider}`;
+}
+
+function isKeychainNotFound(stderr: string): boolean {
+  return /could not be found|The specified item could not be found|SecKeychainSearchCopyNext/u.test(stderr);
+}
+
 async function readDeckManifest(projectPath: string): Promise<DeckManifest> {
   const deckPath = path.join(projectPath, "deck.json");
   const contents = await fs.readFile(deckPath, "utf8");
@@ -1867,6 +2041,54 @@ function normalizeCliIntegrationStatus(value: unknown): DesktopCliIntegrationSta
 
 function normalizeCliIntegrationAction(value: unknown): DesktopCliIntegrationState["action"] {
   return value === "installed" || value === "updated" || value === "removed" || value === "unchanged" ? value : undefined;
+}
+
+export function createDesktopCredentialStore(platform: NodeJS.Platform = process.platform): DesktopCredentialStore {
+  if (platform !== "darwin") {
+    return {
+      available: false,
+      label: "macOS Keychain",
+      async getPassword() {
+        return undefined;
+      },
+      async setPassword() {
+        throw new Error("macOS Keychain is not available on this platform.");
+      },
+      async deletePassword() {
+        return undefined;
+      }
+    };
+  }
+
+  return {
+    available: true,
+    label: "macOS Keychain",
+    async getPassword(service, account) {
+      const result = await runSecurityCommand(["find-generic-password", "-s", service, "-a", account, "-w"]);
+      return result.exitCode === 0 && result.stdout.trim().length > 0 ? result.stdout.trim() : undefined;
+    },
+    async setPassword(service, account, password) {
+      const result = await runSecurityCommand([
+        "add-generic-password",
+        "-s",
+        service,
+        "-a",
+        account,
+        "-w",
+        password,
+        "-U"
+      ]);
+      if (result.exitCode !== 0) {
+        throw new Error(result.stderr || "Failed to store API key in macOS Keychain.");
+      }
+    },
+    async deletePassword(service, account) {
+      const result = await runSecurityCommand(["delete-generic-password", "-s", service, "-a", account]);
+      if (result.exitCode !== 0 && !isKeychainNotFound(result.stderr)) {
+        throw new Error(result.stderr || "Failed to delete API key from macOS Keychain.");
+      }
+    }
+  };
 }
 
 async function runDesktopAgentCliStep(

@@ -29,7 +29,7 @@ describe("AI engine settings model", () => {
       updatedAt: "2026-07-09T00:00:00.000Z"
     });
     expect(JSON.stringify(settings)).not.toContain("sk-test-secret");
-    expect(formatRedactedKeyStatus(settings)).toBe("OpenAI key marked present");
+    expect(formatRedactedKeyStatus(settings)).toBe("OpenAI key saved");
   });
 
   it("clears key metadata when provider changes without a new key", () => {

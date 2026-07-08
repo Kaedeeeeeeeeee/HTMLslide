@@ -215,11 +215,11 @@ export function normalizeAiEngineSettings(value: unknown): AiEngineSettings {
 
 export function formatRedactedKeyStatus(settings: AiEngineSettings): string {
   if (!settings.apiKey.hasKey) {
-    return "No key metadata saved";
+    return "No provider key saved";
   }
 
   const provider = apiKeyProviders.find((item) => item.id === settings.apiKey.provider)?.label ?? "Provider";
-  return `${provider} key marked present`;
+  return `${provider} key saved`;
 }
 
 export function selectedExternalAgentStatus(

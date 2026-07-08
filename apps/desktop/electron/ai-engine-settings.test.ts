@@ -5,7 +5,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   detectExternalAgentStatuses,
   readAiEngineSettings,
+  readAiEngineCredentialStatus,
+  saveAiEngineSettings,
   writeAiEngineSettings,
+  type DesktopCredentialStore,
   type ExternalAgentDetectorRunner
 } from "./desktop-services.js";
 
@@ -20,6 +23,24 @@ async function tempDir(): Promise<string> {
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
+
+function createFakeCredentialStore(): DesktopCredentialStore & { entries: Map<string, string> } {
+  const entries = new Map<string, string>();
+  return {
+    available: true,
+    entries,
+    label: "Fake Keychain",
+    async getPassword(service, account) {
+      return entries.get(`${service}:${account}`);
+    },
+    async setPassword(service, account, password) {
+      entries.set(`${service}:${account}`, password);
+    },
+    async deletePassword(service, account) {
+      entries.delete(`${service}:${account}`);
+    }
+  };
+}
 
 describe("AI engine settings persistence", () => {
   it("returns No AI defaults when no settings file exists", async () => {
@@ -79,6 +100,144 @@ describe("AI engine settings persistence", () => {
     expect(raw).not.toContain("sk-test-secret");
     expect(raw).not.toContain("sk-another-secret");
     expect(raw).not.toContain("bearer-secret");
+  });
+
+  it("stores raw API keys in the credential store while keeping settings JSON secret-free", async () => {
+    const root = await tempDir();
+    const settingsPath = path.join(root, "ai-engine-settings.json");
+    const credentialStore = createFakeCredentialStore();
+
+    const saved = await saveAiEngineSettings(
+      settingsPath,
+      {
+        apiKeyInput: "sk-test-secret",
+        settings: {
+          apiKey: {
+            apiKeyInput: "sk-should-not-survive",
+            hasKey: true,
+            model: "gpt-5.1",
+            provider: "openai",
+            rawKey: "sk-another-secret"
+          },
+          externalAgent: {
+            customCommand: "",
+            selectedId: "codex-cli"
+          },
+          mode: "htmlslide-agent",
+          token: "bearer-secret"
+        }
+      },
+      credentialStore
+    );
+
+    expect(saved).toMatchObject({
+      apiKey: {
+        hasKey: true,
+        model: "gpt-5.1",
+        provider: "openai"
+      },
+      mode: "htmlslide-agent"
+    });
+    expect(credentialStore.entries.get("app.htmlslide.ai-key:provider:openai")).toBe("sk-test-secret");
+
+    const raw = await readFile(settingsPath, "utf8");
+    expect(raw).not.toContain("sk-test-secret");
+    expect(raw).not.toContain("sk-should-not-survive");
+    expect(raw).not.toContain("sk-another-secret");
+    expect(raw).not.toContain("bearer-secret");
+
+    await expect(readAiEngineCredentialStatus(settingsPath, credentialStore)).resolves.toMatchObject({
+      available: true,
+      hasStoredKey: true,
+      provider: "openai"
+    });
+  });
+
+  it("clears stored credentials and key metadata on request", async () => {
+    const root = await tempDir();
+    const settingsPath = path.join(root, "ai-engine-settings.json");
+    const credentialStore = createFakeCredentialStore();
+
+    await saveAiEngineSettings(
+      settingsPath,
+      {
+        apiKeyInput: "sk-test-secret",
+        settings: {
+          apiKey: {
+            hasKey: true,
+            model: "gpt-5.1",
+            provider: "openai"
+          },
+          mode: "htmlslide-agent"
+        }
+      },
+      credentialStore
+    );
+
+    const cleared = await saveAiEngineSettings(
+      settingsPath,
+      {
+        clearKey: true,
+        settings: {
+          apiKey: {
+            hasKey: false,
+            model: "gpt-5.1",
+            provider: "openai"
+          },
+          mode: "htmlslide-agent"
+        }
+      },
+      credentialStore
+    );
+
+    expect(cleared.apiKey.hasKey).toBe(false);
+    expect(credentialStore.entries.has("app.htmlslide.ai-key:provider:openai")).toBe(false);
+  });
+
+  it("removes stale provider credentials when provider changes without a new key", async () => {
+    const root = await tempDir();
+    const settingsPath = path.join(root, "ai-engine-settings.json");
+    const credentialStore = createFakeCredentialStore();
+
+    await saveAiEngineSettings(
+      settingsPath,
+      {
+        apiKeyInput: "sk-openai-secret",
+        settings: {
+          apiKey: {
+            hasKey: true,
+            model: "gpt-5.1",
+            provider: "openai"
+          },
+          mode: "htmlslide-agent"
+        }
+      },
+      credentialStore
+    );
+
+    const changed = await saveAiEngineSettings(
+      settingsPath,
+      {
+        settings: {
+          apiKey: {
+            hasKey: false,
+            model: "claude-sonnet-4.5",
+            provider: "anthropic"
+          },
+          mode: "htmlslide-agent"
+        }
+      },
+      credentialStore
+    );
+
+    expect(changed).toMatchObject({
+      apiKey: {
+        hasKey: false,
+        provider: "anthropic"
+      }
+    });
+    expect(credentialStore.entries.has("app.htmlslide.ai-key:provider:openai")).toBe(false);
+    expect(credentialStore.entries.has("app.htmlslide.ai-key:provider:anthropic")).toBe(false);
   });
 });
 

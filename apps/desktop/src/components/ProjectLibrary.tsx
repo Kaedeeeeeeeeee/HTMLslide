@@ -714,10 +714,10 @@ function buildNewDeckEngineOptions({
     {
       id: "htmlslide-agent",
       label: "HTMLslide Agent",
-      description: "Use provider metadata saved in AI Engines settings.",
+      description: "Use a provider API key saved from AI Engines settings.",
       detail: hasApiKey
-        ? "API key metadata is present; provider-backed generation is still queued for the next agent milestone."
-        : "Save API key metadata in AI Engines before provider-backed generation is enabled.",
+        ? "A provider key is saved; provider-backed generation is still queued for the next agent milestone."
+        : "Save a provider API key in AI Engines before provider-backed generation is enabled.",
       icon: <Bot />,
       status: hasApiKey ? "Key ready" : "Needs key",
       tone: hasApiKey ? "success" : "warning"

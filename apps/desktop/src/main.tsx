@@ -602,10 +602,14 @@ function App(): React.ReactNode {
         return;
       }
 
-      desktopApi.saveAiEngineSettings(nextSettings)
+      desktopApi.saveAiEngineSettings({
+        settings: nextSettings,
+        apiKeyInput: draft.apiKeyInput,
+        clearKey: draft.clearKey
+      })
         .then((savedSettings) => {
           setAiEngineSettings(normalizeAiEngineSettings(savedSettings));
-          setAiEngineStatus({ kind: "success", message: "AI engine metadata saved" });
+          setAiEngineStatus({ kind: "success", message: draft.apiKeyInput?.trim() ? "AI engine key saved" : "AI engine settings saved" });
         })
         .catch((error: unknown) => {
           setAiEngineStatus({

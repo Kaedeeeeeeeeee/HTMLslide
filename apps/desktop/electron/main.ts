@@ -16,16 +16,16 @@ import {
   readDesktopLibrary,
   resolveCreateProjectRequest,
   revertDesktopCheckpoint,
+  saveAiEngineSettings,
   runDesktopExternalAgent,
   runDesktopMockAgent,
   runHtmlslideCli,
   summarizeDeckProject,
   uninstallDesktopCliIntegration,
   upsertRecentProject,
-  writeAiEngineSettings,
   writeDesktopLibrary,
   type DesktopCliIntegrationOptions,
-  type DesktopAiEngineSettings,
+  type DesktopAiEngineSettingsSaveRequest,
   type DesktopCreateProjectRequest,
   type DesktopProjectRecord
 } from "./desktop-services.js";
@@ -152,8 +152,8 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle("htmlslide:get-ai-engine-settings", async () => readAiEngineSettings(aiEngineSettingsPath()));
 
-  ipcMain.handle("htmlslide:save-ai-engine-settings", async (_event, settings: DesktopAiEngineSettings) =>
-    writeAiEngineSettings(aiEngineSettingsPath(), settings)
+  ipcMain.handle("htmlslide:save-ai-engine-settings", async (_event, request: DesktopAiEngineSettingsSaveRequest) =>
+    saveAiEngineSettings(aiEngineSettingsPath(), request)
   );
 
   ipcMain.handle("htmlslide:detect-external-agents", async () => detectExternalAgentStatuses());

@@ -205,6 +205,12 @@ export type DesktopPresenterDeckResult =
       }>;
     };
 
+export type DesktopAiEngineSettingsSaveRequest = {
+  settings: AiEngineSettings;
+  apiKeyInput?: string;
+  clearKey?: boolean;
+};
+
 export type HtmlslideDesktopApi = {
   appName: string;
   platform: string;
@@ -216,7 +222,7 @@ export type HtmlslideDesktopApi = {
   copyCliManualInstallCommand(): Promise<{ copied: boolean; command: string }>;
   listProjects(): Promise<DesktopProjectRecord[]>;
   getAiEngineSettings(): Promise<AiEngineSettings>;
-  saveAiEngineSettings(settings: AiEngineSettings): Promise<AiEngineSettings>;
+  saveAiEngineSettings(request: DesktopAiEngineSettingsSaveRequest): Promise<AiEngineSettings>;
   detectExternalAgents(): Promise<ExternalAgentStatus[]>;
   chooseWorkspace(): Promise<string | undefined>;
   openProjectDialog(): Promise<DesktopProjectPreview | undefined>;

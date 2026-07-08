@@ -14,7 +14,8 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
   copyCliManualInstallCommand: () => ipcRenderer.invoke("htmlslide:copy-cli-manual-install-command"),
   listProjects: () => ipcRenderer.invoke("htmlslide:list-projects"),
   getAiEngineSettings: () => ipcRenderer.invoke("htmlslide:get-ai-engine-settings"),
-  saveAiEngineSettings: (settings: unknown) => ipcRenderer.invoke("htmlslide:save-ai-engine-settings", settings),
+  saveAiEngineSettings: (request: { settings: unknown; apiKeyInput?: string; clearKey?: boolean }) =>
+    ipcRenderer.invoke("htmlslide:save-ai-engine-settings", request),
   detectExternalAgents: () => ipcRenderer.invoke("htmlslide:detect-external-agents"),
   chooseWorkspace: () => ipcRenderer.invoke("htmlslide:choose-workspace"),
   openProjectDialog: () => ipcRenderer.invoke("htmlslide:open-project-dialog"),

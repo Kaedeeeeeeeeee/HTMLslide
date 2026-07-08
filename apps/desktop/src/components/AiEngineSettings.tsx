@@ -146,13 +146,13 @@ export function AiEngineSettingsPanel({
               <input
                 autoComplete="off"
                 onChange={(event) => setApiKeyInput(event.currentTarget.value)}
-                placeholder={settings.apiKey.hasKey ? "******** metadata saved" : "Paste to mark present"}
+                placeholder={settings.apiKey.hasKey ? "******** key saved" : "Paste provider API key"}
                 type="password"
                 value={apiKeyInput}
               />
             </label>
 
-            <p className="settings-note">Raw key text is discarded after Save Metadata.</p>
+            <p className="settings-note">Raw key text is sent only to Electron credential storage; project settings keep metadata.</p>
 
             <div className="settings-actions">
               <Button
@@ -160,7 +160,7 @@ export function AiEngineSettingsPanel({
                 onClick={() => save(false)}
                 variant="primary"
               >
-                Save Metadata
+                {apiKeyInput.trim().length > 0 ? "Save Key" : "Save Settings"}
               </Button>
               <Button
                 icon={<Trash2 />}

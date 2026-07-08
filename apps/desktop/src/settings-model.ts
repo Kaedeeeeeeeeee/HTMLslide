@@ -227,6 +227,27 @@ export function selectedExternalAgentStatus(
   statuses: readonly ExternalAgentStatus[]
 ): ExternalAgentStatus {
   const defaultStatuses = createDefaultExternalAgentStatuses();
+  if (
+    settings.externalAgent.selectedId === "generic" &&
+    settings.externalAgent.customCommand.trim().length > 0
+  ) {
+    const genericDefault = defaultStatuses.find((status) => status.id === "generic") ?? defaultStatuses[2]!;
+    return {
+      ...genericDefault,
+      authenticated: true,
+      capabilities: {
+        ...genericDefault.capabilities,
+        headlessRun: true,
+        readDiff: true,
+        streamLogs: true
+      },
+      command: settings.externalAgent.customCommand,
+      installed: true,
+      status: "ready",
+      summary: "Generic command template saved"
+    };
+  }
+
   return (
     statuses.find((status) => status.id === settings.externalAgent.selectedId) ??
     defaultStatuses.find((status) => status.id === settings.externalAgent.selectedId) ??

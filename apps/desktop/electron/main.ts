@@ -16,6 +16,7 @@ import {
   readDesktopLibrary,
   resolveCreateProjectRequest,
   revertDesktopCheckpoint,
+  runDesktopExternalAgent,
   runDesktopMockAgent,
   runHtmlslideCli,
   summarizeDeckProject,
@@ -267,6 +268,19 @@ function registerIpcHandlers(): void {
         runId?: string;
       }
     ) => runDesktopMockAgent(request, { cliRuntime })
+  );
+
+  ipcMain.handle(
+    "htmlslide:run-external-agent",
+    async (
+      _event,
+      request: {
+        projectPath: string;
+        brief: string;
+        runExport?: boolean;
+        runId?: string;
+      }
+    ) => runDesktopExternalAgent(request, { cliRuntime, settingsPath: aiEngineSettingsPath() })
   );
 
   ipcMain.handle(

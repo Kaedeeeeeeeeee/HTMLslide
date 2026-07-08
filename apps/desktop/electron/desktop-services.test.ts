@@ -13,6 +13,7 @@ import {
   resolveDesktopCliIntegrationTarget,
   resolveCreateProjectRequest,
   revertDesktopCheckpoint,
+  runDesktopExternalAgent,
   runDesktopMockAgent,
   summarizeDeckProject,
   uninstallDesktopCliIntegration,
@@ -20,6 +21,7 @@ import {
   writeDesktopLibrary,
   type CliRunResult,
   type DesktopCliRunner,
+  type DesktopAiEngineSettings,
   type DesktopProjectRecord
 } from "./desktop-services.js";
 
@@ -80,6 +82,29 @@ function projectRecord(projectPath: string, title: string): DesktopProjectRecord
     status: "Needs check",
     title
   };
+}
+
+function externalAgentSettings(commandTemplate: string, selectedId: "claude-code" | "codex-cli" | "generic" = "generic"): DesktopAiEngineSettings {
+  return {
+    apiKey: {
+      hasKey: false,
+      model: "gpt-5-mini",
+      provider: "openai"
+    },
+    externalAgent: {
+      customCommand: commandTemplate,
+      selectedId
+    },
+    mode: "external-agent",
+    version: 1
+  };
+}
+
+async function writeExternalAgentScript(projectPath: string, name: string, source: string): Promise<string> {
+  const scriptFile = path.join(projectPath, ".htmlslide", "runs", `${name}.mjs`);
+  await mkdir(path.dirname(scriptFile), { recursive: true });
+  await writeFile(scriptFile, source.trimStart(), "utf8");
+  return scriptFile;
 }
 
 describe("desktop services", () => {
@@ -556,6 +581,217 @@ describe("desktop services", () => {
       checkStatus: "failed"
     });
     expect(calls).toEqual([["check", projectPath, "--json"]]);
+  });
+
+  it("runs a configured generic external agent through check and export", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const scriptFile = await writeExternalAgentScript(
+      projectPath,
+      "edit-slide",
+      `
+import fs from "node:fs";
+import path from "node:path";
+const args = readPairs(process.argv.slice(2));
+const projectRoot = requireArg(args, "--project");
+const promptFile = requireArg(args, "--prompt-file");
+const manifestFile = requireArg(args, "--writes-manifest");
+const slideFile = path.join(projectRoot, "slides", "001-title.html");
+fs.readFileSync(promptFile, "utf8");
+fs.writeFileSync(slideFile, '<section class="slide" data-slide-id="001-title"><h1>Edited externally</h1><ul><li>External point</li></ul></section>\\n');
+fs.writeFileSync(manifestFile, JSON.stringify({ writes: ["slides/001-title.html"] }));
+function readPairs(argv) {
+  const pairs = new Map();
+  for (let index = 0; index < argv.length; index += 2) {
+    pairs.set(argv[index], argv[index + 1]);
+  }
+  return pairs;
+}
+function requireArg(args, name) {
+  const value = args.get(name);
+  if (!value) throw new Error("Missing " + name);
+  return value;
+}
+`
+    );
+    const commandTemplate = `"${process.execPath}" "${scriptFile}" --project "{{projectPath}}" --prompt-file "{{promptFile}}" --writes-manifest "{{writeManifest}}"`;
+    const calls: string[][] = [];
+    const runner: DesktopCliRunner = async (args) => {
+      calls.push(args);
+
+      if (args[0] === "check") {
+        return {
+          ok: true,
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+          json: {
+            status: "passed",
+            summary: {
+              errors: 0,
+              warnings: 0,
+              info: 0,
+              suggestions: 0
+            },
+            issues: []
+          }
+        };
+      }
+
+      if (args[0] === "export") {
+        return {
+          ok: true,
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+          json: {
+            status: "passed",
+            artifacts: {
+              deckpkg: path.join(projectPath, "exports", "desktop-test.deckpkg"),
+              pdf: path.join(projectPath, "exports", "desktop-test.pdf")
+            }
+          }
+        };
+      }
+
+      throw new Error(`Unexpected CLI call: ${args.join(" ")}`);
+    };
+
+    const result = await runDesktopExternalAgent(
+      {
+        brief: "Tighten the title slide.",
+        projectPath,
+        runId: "run-external-test"
+      },
+      {
+        cliRuntime: {
+          cliPath: "/fake/htmlslide.js",
+          cwd: "/fake",
+          mode: "development",
+          rootPath: "/fake"
+        },
+        cliRunner: runner,
+        settings: externalAgentSettings(commandTemplate)
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.providerId).toBe("external-generic");
+    expect(result.adapter?.ok).toBe(true);
+    expect(result.summary).toMatchObject({
+      checkStatus: "passed",
+      exportStatus: "passed",
+      filesChanged: ["slides/001-title.html"],
+      runId: "run-external-test",
+      status: "succeeded"
+    });
+    expect(result.summary.exportArtifacts).toEqual([
+      path.join(projectPath, "exports", "desktop-test.deckpkg"),
+      path.join(projectPath, "exports", "desktop-test.pdf")
+    ]);
+    expect(result.checkpointDiff?.summary).toMatchObject({
+      changed: 1,
+      added: 0,
+      deleted: 0
+    });
+    expect(result.project?.slides[0]?.html).toContain("Edited externally");
+    expect(calls).toEqual([
+      ["check", projectPath, "--json"],
+      ["export", projectPath, "--json"]
+    ]);
+
+    const prompt = await readFile(path.join(projectPath, ".htmlslide", "runs", "run-external-test", "prompt.md"), "utf8");
+    expect(prompt).toContain("Tighten the title slide.");
+    expect(prompt).toContain("deck.json, slides/, notes/, theme/, or assets/");
+  });
+
+  it("blocks external agent runs until Generic command is selected and configured", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+
+    const nonGeneric = await runDesktopExternalAgent(
+      {
+        brief: "Edit the deck.",
+        projectPath,
+        runId: "run-codex-blocked"
+      },
+      {
+        settings: externalAgentSettings("codex exec", "codex-cli")
+      }
+    );
+    expect(nonGeneric).toMatchObject({
+      error: "Only Generic command headless runs are enabled in this milestone.",
+      ok: false,
+      providerId: "external-generic"
+    });
+
+    const emptyCommand = await runDesktopExternalAgent(
+      {
+        brief: "Edit the deck.",
+        projectPath,
+        runId: "run-empty-command"
+      },
+      {
+        settings: externalAgentSettings("")
+      }
+    );
+    expect(emptyCommand).toMatchObject({
+      error: "Generic command template is required before running an external agent.",
+      ok: false
+    });
+  });
+
+  it("fails external agent runs that report artifact writes", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const scriptFile = await writeExternalAgentScript(
+      projectPath,
+      "forbidden-artifact",
+      `
+import fs from "node:fs";
+import path from "node:path";
+const args = readPairs(process.argv.slice(2));
+const projectRoot = requireArg(args, "--project");
+const manifestFile = requireArg(args, "--writes-manifest");
+const exportFile = path.join(projectRoot, "exports", "bad.html");
+fs.mkdirSync(path.dirname(exportFile), { recursive: true });
+fs.writeFileSync(exportFile, "not a source edit");
+fs.writeFileSync(manifestFile, JSON.stringify({ writes: ["exports/bad.html"] }));
+function readPairs(argv) {
+  const pairs = new Map();
+  for (let index = 0; index < argv.length; index += 2) {
+    pairs.set(argv[index], argv[index + 1]);
+  }
+  return pairs;
+}
+function requireArg(args, name) {
+  const value = args.get(name);
+  if (!value) throw new Error("Missing " + name);
+  return value;
+}
+`
+    );
+    const commandTemplate = `"${process.execPath}" "${scriptFile}" --project "{{projectPath}}" --prompt-file "{{promptFile}}" --writes-manifest "{{writeManifest}}"`;
+
+    const result = await runDesktopExternalAgent(
+      {
+        brief: "Write an artifact.",
+        projectPath,
+        runId: "run-forbidden-artifact"
+      },
+      {
+        settings: externalAgentSettings(commandTemplate)
+      }
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.adapter?.ok).toBe(false);
+    if (result.adapter?.ok === false) {
+      expect(result.adapter.failure.type).toBe("forbidden-file-write");
+      expect(result.adapter.failure.path).toBe(path.join(projectPath, "exports", "bad.html"));
+    }
+    expect(result.check).toBeUndefined();
+    expect(result.export).toBeUndefined();
   });
 
   it("returns a presenter preparation error when deckpkg export fails", async () => {

@@ -88,5 +88,41 @@ export function validateReportedFileWrites(projectRoot: string, reportedWrites: 
     );
   }
 
+  const forbiddenSourceWrite = normalizedWrites.find((reportedWrite) => !isEditableProjectSourcePath(projectRoot, reportedWrite));
+  if (forbiddenSourceWrite !== undefined) {
+    throw new AgentAdapterFailureError(
+      createAgentAdapterFailure("forbidden-file-write", {
+        detail: "External agents may only report writes to deck source files: deck.json, slides/, notes/, theme/, or assets/.",
+        path: forbiddenSourceWrite
+      })
+    );
+  }
+
   return normalizedWrites;
+}
+
+export function isEditableProjectSourcePath(projectRoot: string, candidatePath: string): boolean {
+  if (!isPathInsideProject(projectRoot, candidatePath)) {
+    return false;
+  }
+
+  const root = path.resolve(projectRoot);
+  const candidate = resolveProjectPath(root, candidatePath);
+  const relativePath = path.relative(root, candidate).split(path.sep).join(path.posix.sep);
+  if (relativePath.length === 0 || relativePath.includes("\0") || relativePath.startsWith("../")) {
+    return false;
+  }
+
+  const segments = relativePath.split("/");
+  if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) {
+    return false;
+  }
+
+  return (
+    relativePath === "deck.json" ||
+    relativePath.startsWith("slides/") ||
+    relativePath.startsWith("notes/") ||
+    relativePath.startsWith("theme/") ||
+    relativePath.startsWith("assets/")
+  );
 }

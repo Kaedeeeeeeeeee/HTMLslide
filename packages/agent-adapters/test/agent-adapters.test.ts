@@ -11,6 +11,7 @@ import {
   readJsonFileWriteManifest,
   renderCommandTemplate,
   runGenericAgentAdapter,
+  validateReportedFileWrites,
   type CommandRunner,
   type GenericAgentAdapterConfig
 } from "../src/index.js";
@@ -295,6 +296,24 @@ function requireArg(args, name) {
     }
     expect(result.failure.type).toBe("forbidden-file-write");
     expect(result.failure.path).toBe(path.resolve(project.projectRoot, "..", "outside-project.txt"));
+  });
+
+  it("rejects reported writes outside editable deck source roots", async () => {
+    const project = await createFakeProject("source-scope");
+
+    expect(validateReportedFileWrites(project.projectRoot, ["slides/001-title.html"])).toEqual([
+      path.join(project.projectRoot, "slides", "001-title.html")
+    ]);
+
+    for (const reportedWrite of [
+      "exports/deck.pdf",
+      ".htmlslide/cache/thumb.png",
+      path.resolve(project.projectRoot, "..", "outside.txt")
+    ]) {
+      expect(() => validateReportedFileWrites(project.projectRoot, [reportedWrite])).toThrow(
+        /External agents may only|outside the HTMLslide project/u
+      );
+    }
   });
 });
 

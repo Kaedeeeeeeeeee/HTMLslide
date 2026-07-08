@@ -4,6 +4,14 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  createCapabilitySet,
+  readJsonFileWriteManifest,
+  runGenericAgentAdapter,
+  type AgentAdapterRunResult,
+  type CommandRunner,
+  type GenericAgentAdapterConfig
+} from "@htmlslide/agent-adapters";
+import {
   applyMockAgentProject,
   createFileCopyCheckpoint,
   createMockProvider,
@@ -192,6 +200,43 @@ export type DesktopMockAgentRunResult = {
   summary: DesktopMockAgentRunSummary;
 };
 
+export type DesktopExternalAgentRunRequest = {
+  projectPath: string;
+  brief: string;
+  runExport?: boolean;
+  runId?: string;
+};
+
+export type DesktopExternalAgentRunSummary = {
+  runId: string;
+  status: "succeeded" | "failed" | "cancelled";
+  stageCount: number;
+  completedStages: number;
+  failedStages: number;
+  checkStatus?: string;
+  checkErrors?: number;
+  checkWarnings?: number;
+  exportStatus?: string;
+  exportArtifacts: string[];
+  filesChanged: string[];
+};
+
+export type DesktopExternalAgentRunResult = {
+  ok: boolean;
+  providerId: "external-generic";
+  projectPath: string;
+  stages: DesktopMockAgentStageSummary[];
+  events: AgentRunEvent[];
+  logs: AgentRunLog[];
+  adapter?: AgentAdapterRunResult;
+  checkpointDiff?: FileCopyCheckpointDiff;
+  check?: CliRunResult;
+  export?: CliRunResult;
+  project?: DesktopProjectPreview;
+  error?: string;
+  summary: DesktopExternalAgentRunSummary;
+};
+
 export type DesktopCheckpointRequest = {
   projectPath: string;
   runId?: string;
@@ -234,6 +279,15 @@ export type DesktopPresenterDeckResult =
 export type DesktopMockAgentRunnerOptions = {
   cliRuntime?: CliRuntime;
   cliRunner?: DesktopCliRunner;
+};
+
+export type DesktopExternalAgentRunnerOptions = {
+  cliRuntime?: CliRuntime;
+  cliRunner?: DesktopCliRunner;
+  settings?: DesktopAiEngineSettings;
+  settingsPath?: string;
+  agentRunner?: CommandRunner;
+  timeoutMs?: number;
 };
 
 export type DesktopAiEngineMode = "no-ai" | "htmlslide-agent" | "external-agent";
@@ -990,6 +1044,200 @@ export async function runDesktopMockAgent(
   };
 }
 
+export async function runDesktopExternalAgent(
+  request: DesktopExternalAgentRunRequest,
+  options: DesktopExternalAgentRunnerOptions = {}
+): Promise<DesktopExternalAgentRunResult> {
+  const projectPath = path.resolve(request.projectPath);
+  const runId = normalizeExternalAgentRunId(request.runId);
+  const brief = request.brief.trim();
+  const events: AgentRunEvent[] = [];
+  const logs: AgentRunLog[] = [];
+  const cliRunner = options.cliRunner ?? runHtmlslideCli;
+  const addEvent = createDesktopAgentEventRecorder(events, runId);
+  const addLog = createDesktopAgentLogRecorder(logs, runId);
+
+  addEvent("brief", "running", "External agent request accepted.", "run-created", {
+    nextAction: "Prepare prompt"
+  });
+
+  const settings = options.settings ?? (options.settingsPath
+    ? await readAiEngineSettings(options.settingsPath)
+    : sanitizeAiEngineSettings(DEFAULT_AI_ENGINE_SETTINGS));
+
+  if (settings.mode !== "external-agent") {
+    return externalAgentFailureResult({
+      addEvent,
+      addLog,
+      error: "External agent mode is not selected in AI Engines settings.",
+      events,
+      logs,
+      projectPath,
+      runId,
+      stage: "brief"
+    });
+  }
+
+  if (settings.externalAgent.selectedId !== "generic") {
+    return externalAgentFailureResult({
+      addEvent,
+      addLog,
+      error: "Only Generic command headless runs are enabled in this milestone.",
+      events,
+      logs,
+      projectPath,
+      runId,
+      stage: "brief"
+    });
+  }
+
+  const commandTemplate = settings.externalAgent.customCommand.trim();
+  if (commandTemplate.length === 0) {
+    return externalAgentFailureResult({
+      addEvent,
+      addLog,
+      error: "Generic command template is required before running an external agent.",
+      events,
+      logs,
+      projectPath,
+      runId,
+      stage: "brief"
+    });
+  }
+
+  const checkpoint = await createFileCopyCheckpoint({
+    projectRoot: projectPath,
+    runId
+  });
+  addEvent("brief", "succeeded", "External agent checkpoint created.", "checkpoint-created", {
+    checkpointId: checkpoint.id,
+    nextAction: "Run generic command"
+  });
+
+  const runDirectory = path.join(projectPath, ".htmlslide", "runs", runId);
+  const promptFile = path.join(runDirectory, "prompt.md");
+  const writeManifest = path.join(runDirectory, "writes.json");
+  await fs.mkdir(runDirectory, { recursive: true });
+  await fs.writeFile(promptFile, externalAgentPrompt({
+    brief: brief.length > 0 ? brief : "Create or revise this HTMLslide deck.",
+    projectPath,
+    writeManifest
+  }), "utf8");
+  await fs.writeFile(writeManifest, `${JSON.stringify({ writes: [] }, null, 2)}\n`, "utf8");
+
+  const adapterConfig: GenericAgentAdapterConfig = {
+    id: "generic-command",
+    label: "Generic command",
+    kind: "generic",
+    commandTemplate,
+    capabilities: createCapabilitySet(["headlessRun", "streamLogs", "readDiff"]),
+    pathVariables: ["projectRoot", "projectPath", "promptFile", "writeManifest"],
+    timeoutMs: options.timeoutMs ?? 120_000
+  };
+
+  addEvent("build", "running", "Running Generic command external agent.", "stage-started", {
+    nextAction: "Wait for reported writes"
+  });
+
+  const adapter = await runGenericAgentAdapter({
+    adapter: adapterConfig,
+    projectRoot: projectPath,
+    promptFile,
+    variables: {
+      writeManifest
+    },
+    runner: options.agentRunner,
+    timeoutMs: options.timeoutMs,
+    readReportedFileWrites: () => readJsonFileWriteManifest(projectPath, writeManifest)
+  });
+
+  if (!adapter.ok) {
+    const error = adapter.failure.detail ?? adapter.failure.message;
+    addEvent("build", adapter.status === "cancelled" ? "cancelled" : "failed", adapter.failure.message, adapter.status === "cancelled" ? "run-cancelled" : "stage-failed", {
+      nextAction: adapter.failure.remediation
+    });
+    addLog(adapter.status === "cancelled" ? "warning" : "error", error, "build", {
+      failureType: adapter.failure.type
+    });
+
+    return {
+      ok: false,
+      providerId: "external-generic",
+      projectPath,
+      stages: summarizeAgentStages(events),
+      events,
+      logs,
+      adapter,
+      error,
+      summary: summarizeDesktopExternalAgentRun(runId, events, undefined, undefined, [])
+    };
+  }
+
+  const filesChanged = adapter.reportedWrites.map((reportedWrite) => projectRelativeSourcePath(projectPath, reportedWrite));
+  await recordCheckpointChanges({
+    projectRoot: projectPath,
+    runId,
+    filesChanged
+  });
+  const checkpointDiff = await diffFileCopyCheckpoint({
+    projectRoot: projectPath,
+    runId
+  });
+
+  addEvent("build", "succeeded", `External agent reported ${filesChanged.length} source file writes.`, "stage-completed", {
+    filesChanged,
+    nextAction: "Run htmlslide check"
+  });
+  addLog("info", "Generic command completed.", "build", {
+    filesChanged
+  });
+
+  addEvent("check", "running", "Running htmlslide check after external agent changes.", "stage-started", {
+    nextAction: "Validate source files"
+  });
+  const check = await runDesktopAgentCliStep(["check", projectPath, "--json"], options.cliRuntime, cliRunner);
+  logs.push(desktopAgentCliLog(runId, "check", check));
+  const checkIssues = checkIssueCount(check);
+  addEvent("check", check.ok ? "succeeded" : "failed", check.ok ? "Check passed after external agent run." : "Check found issues after external agent run.", check.ok ? "stage-completed" : "stage-failed", {
+    issuesFound: checkIssues,
+    nextAction: check.ok ? "Export artifacts" : "Review QA issues"
+  });
+
+  let exportResult: CliRunResult | undefined;
+  if (check.ok && request.runExport !== false) {
+    addEvent("export", "running", "Exporting artifacts after external agent run.", "stage-started", {
+      nextAction: "Write PDF, HTML, deckpkg, notes, and thumbnails"
+    });
+    exportResult = await runDesktopAgentCliStep(["export", projectPath, "--json"], options.cliRuntime, cliRunner);
+    logs.push(desktopAgentCliLog(runId, "export", exportResult));
+    addEvent("export", exportResult.ok ? "succeeded" : "failed", exportResult.ok ? "Export completed after external agent run." : "Export failed after external agent run.", exportResult.ok ? "stage-completed" : "stage-failed", {
+      nextAction: exportResult.ok ? "Review generated changes" : "Inspect export failure"
+    });
+  }
+
+  const project = await loadProjectPreview(projectPath).catch((): DesktopProjectPreview | undefined => undefined);
+  const ok = check.ok && (exportResult === undefined || exportResult.ok);
+  addEvent("review", ok ? "succeeded" : "failed", ok ? "External agent changes are ready for review." : "External agent changes need review.", ok ? "run-completed" : "run-failed", {
+    filesChanged,
+    nextAction: ok ? "Accept or revert checkpoint" : "Inspect QA/export status"
+  });
+
+  return {
+    ok,
+    providerId: "external-generic",
+    projectPath,
+    stages: summarizeAgentStages(events),
+    events,
+    logs,
+    adapter,
+    checkpointDiff,
+    check,
+    export: exportResult,
+    project,
+    summary: summarizeDesktopExternalAgentRun(runId, events, check, exportResult, filesChanged)
+  };
+}
+
 export async function diffDesktopCheckpoint(request: DesktopCheckpointRequest): Promise<FileCopyCheckpointDiff> {
   return diffFileCopyCheckpoint({
     projectRoot: path.resolve(request.projectPath),
@@ -1658,6 +1906,150 @@ function desktopAgentCliLog(runId: string, stage: "check" | "export", result: Cl
   };
 }
 
+type DesktopAgentEventRecorder = ReturnType<typeof createDesktopAgentEventRecorder>;
+type DesktopAgentLogRecorder = ReturnType<typeof createDesktopAgentLogRecorder>;
+
+function createDesktopAgentEventRecorder(events: AgentRunEvent[], runId: string) {
+  return (
+    stage: AgentRunStage,
+    status: AgentRunStatus,
+    summary: string,
+    type: AgentRunEvent["type"],
+    fields: Partial<Pick<AgentRunEvent, "checkpointId" | "filesChanged" | "issuesFound" | "nextAction" | "metadata">> = {}
+  ): void => {
+    events.push({
+      createdAt: new Date().toISOString(),
+      runId,
+      sequence: events.length + 1,
+      stage,
+      status,
+      summary,
+      type,
+      ...fields
+    });
+  };
+}
+
+function createDesktopAgentLogRecorder(logs: AgentRunLog[], runId: string) {
+  return (
+    level: AgentRunLog["level"],
+    message: string,
+    stage?: AgentRunStage,
+    metadata?: AgentRunLog["metadata"]
+  ): void => {
+    logs.push({
+      createdAt: new Date().toISOString(),
+      level,
+      message,
+      runId,
+      stage,
+      metadata
+    });
+  };
+}
+
+function externalAgentFailureResult({
+  addEvent,
+  addLog,
+  error,
+  events,
+  logs,
+  projectPath,
+  runId,
+  stage
+}: {
+  addEvent: DesktopAgentEventRecorder;
+  addLog: DesktopAgentLogRecorder;
+  error: string;
+  events: AgentRunEvent[];
+  logs: AgentRunLog[];
+  projectPath: string;
+  runId: string;
+  stage: AgentRunStage;
+}): DesktopExternalAgentRunResult {
+  addEvent(stage, "failed", error, "stage-failed", {
+    nextAction: "Update AI Engines settings and retry."
+  });
+  addLog("error", error, stage);
+
+  return {
+    ok: false,
+    providerId: "external-generic",
+    projectPath,
+    stages: summarizeAgentStages(events),
+    events,
+    logs,
+    error,
+    summary: summarizeDesktopExternalAgentRun(runId, events, undefined, undefined, [])
+  };
+}
+
+function externalAgentPrompt({
+  brief,
+  projectPath,
+  writeManifest
+}: {
+  brief: string;
+  projectPath: string;
+  writeManifest: string;
+}): string {
+  return [
+    "# HTMLslide External Agent Task",
+    "",
+    `Project root: ${projectPath}`,
+    "",
+    "## User request",
+    brief,
+    "",
+    "## Required boundaries",
+    "- Edit only deck source files: deck.json, slides/, notes/, theme/, or assets/.",
+    "- Do not edit exports/ or .htmlslide/ except for the write manifest below.",
+    "- Keep slide content as fixed 16:9 HTML fragments; do not add responsive reflow.",
+    "- Preserve project-relative paths in deck.json.",
+    "",
+    "## Write manifest",
+    `After editing, write JSON to: ${writeManifest}`,
+    "",
+    "Use either of these shapes:",
+    "",
+    "```json",
+    "{ \"writes\": [\"slides/001-title.html\", \"notes/001-title.md\"] }",
+    "```",
+    "",
+    "or:",
+    "",
+    "```json",
+    "[\"slides/001-title.html\", \"notes/001-title.md\"]",
+    "```",
+    ""
+  ].join("\n");
+}
+
+function normalizeExternalAgentRunId(runId: string | undefined): string {
+  const fallback = `external-${Date.now().toString(36)}`;
+  const raw = typeof runId === "string" && runId.trim().length > 0 ? runId.trim() : fallback;
+  const normalized = raw.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 96);
+  return normalized.length > 0 && normalized !== "." && normalized !== ".." ? normalized : fallback;
+}
+
+function projectRelativeSourcePath(projectPath: string, filePath: string): string {
+  const relativePath = path.relative(path.resolve(projectPath), path.resolve(filePath)).split(path.sep).join(path.posix.sep);
+  if (relativePath.length === 0 || relativePath.startsWith("../") || path.posix.isAbsolute(relativePath)) {
+    throw new Error(`Reported write is outside the project: ${filePath}`);
+  }
+  return relativePath;
+}
+
+function checkIssueCount(check: CliRunResult): number {
+  const summary = asRecord(asRecord(check.json)?.summary);
+  return (
+    (numberFromRecord(summary, "errors") ?? 0) +
+    (numberFromRecord(summary, "warnings") ?? 0) +
+    (numberFromRecord(summary, "info") ?? 0) +
+    (numberFromRecord(summary, "suggestions") ?? 0)
+  );
+}
+
 function summarizeAgentStages(events: readonly AgentRunEvent[]): DesktopMockAgentStageSummary[] {
   return defaultAgentStages.map((stage) => {
     const stageEvents = events.filter((event) => event.stage === stage);
@@ -1709,6 +2101,38 @@ function summarizeDesktopMockAgentRun(
     checkWarnings: numberFromRecord(checkSummary, "warnings"),
     exportStatus: typeof exportJson?.status === "string" ? exportJson.status : undefined,
     exportArtifacts: collectExportArtifacts(exportJson)
+  };
+}
+
+function summarizeDesktopExternalAgentRun(
+  runId: string,
+  events: readonly AgentRunEvent[],
+  check: CliRunResult | undefined,
+  exportResult: CliRunResult | undefined,
+  filesChanged: string[]
+): DesktopExternalAgentRunSummary {
+  const stages = summarizeAgentStages(events);
+  const checkJson = asRecord(check?.json);
+  const checkSummary = asRecord(checkJson?.summary);
+  const exportJson = asRecord(exportResult?.json);
+  const status = events.some((event) => event.status === "cancelled")
+    ? "cancelled"
+    : stages.some((stage) => stage.status === "failed")
+      ? "failed"
+      : "succeeded";
+
+  return {
+    runId,
+    status,
+    stageCount: stages.length,
+    completedStages: stages.filter((stage) => stage.status === "succeeded").length,
+    failedStages: stages.filter((stage) => stage.status === "failed").length,
+    checkStatus: typeof checkJson?.status === "string" ? checkJson.status : undefined,
+    checkErrors: numberFromRecord(checkSummary, "errors"),
+    checkWarnings: numberFromRecord(checkSummary, "warnings"),
+    exportStatus: typeof exportJson?.status === "string" ? exportJson.status : undefined,
+    exportArtifacts: collectExportArtifacts(exportJson),
+    filesChanged
   };
 }
 

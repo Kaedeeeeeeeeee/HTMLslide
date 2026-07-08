@@ -30,9 +30,19 @@ Each placeholder value renders as one argv token, even when it contains spaces. 
 
 Adapters must not execute generated shell text. Tests should use injected runners or controlled Node fake commands in temporary project directories.
 
+## Desktop Generic Command Runs
+
+The desktop app can run a saved Generic command from Electron main for an opened local deck project. The renderer sends only the project path and user brief; Electron reads the saved AI Engine settings, writes `.htmlslide/runs/<runId>/prompt.md` and `.htmlslide/runs/<runId>/writes.json`, then invokes the Generic command with project-local `{{projectPath}}`, `{{projectRoot}}`, `{{promptFile}}`, and `{{writeManifest}}` placeholders.
+
+After the command exits, HTMLslide reads the write manifest, validates reported source writes, records a file-copy checkpoint diff, runs `htmlslide check --json`, and exports only when check passes. This is user-owned local command execution, not an OS sandbox.
+
+Claude Code and Codex CLI are detection-only until their headless command templates are explicitly defined and tested.
+
 ## Project Boundary
 
 External agents may edit source areas described by the project-structure spec, but they must not write outside the project root. Runs can provide a write manifest, and adapter code rejects any reported write whose resolved path escapes the project.
+
+For desktop headless runs, reported writes are further restricted to deck source files covered by checkpoint/revert: `deck.json`, `slides/`, `notes/`, `theme/`, and `assets/`. Reported writes to `exports/` or `.htmlslide/` fail the run even if the command exits successfully.
 
 Forbidden writes fail the run even when the command exits successfully. The app should then offer checkpoint revert and show the reported path.
 

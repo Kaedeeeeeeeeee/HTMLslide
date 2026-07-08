@@ -26,7 +26,7 @@ Use deterministic fixtures and avoid real provider credentials in automated test
 - CLI E2E tests: `htmlslide new`, `htmlslide check --json`, `htmlslide export --pdf --deckpkg`, `htmlslide package`, `htmlslide doctor`.
 - Compiler regression tests: golden decks for minimal, text-heavy, data chart, image-heavy, notes, and multi-theme decks.
 - Linter tests: `linter-text-overflow`, `linter-safe-area`, contrast, remote font, missing notes, and valid clean fixtures.
-- Agent tests: use mock model providers and fake external commands. CI must not require real Claude Code, Codex, or provider login.
+- Agent tests: use mock model providers and fake external commands. Generic command runs must verify project-local prompt/manifest handling, source-write boundaries, checkpoint diffs, and check/export gating. CI must not require real Claude Code, Codex, or provider login.
 - MCP tests: verify server startup, tool listing, path boundary enforcement, schema-valid reports, and artifact creation.
 - Electron and presenter tests: cover onboarding, workspace choice, mock agent deck creation, preview, checks, export, rehearsal mode, settings, notes, next/previous navigation, timer, and keyboard shortcuts.
 - Packaging tests: unsigned CI build, DMG/package smoke checks, first-run setup, CLI shim install/repair/uninstall, and `htmlslide doctor`.
@@ -49,7 +49,7 @@ pnpm e2e:desktop:headed
 
 The smoke test builds `@htmlslide/desktop`, launches the built Electron main process with Playwright, verifies the app loads without a Vite/framework error overlay, skips onboarding into No AI mode, reaches the project library, creates a No AI source deck, confirms BYOK generation is visibly blocked until the backend exists, creates and generates a Local Mock deck from the New Deck wizard, mocks the native folder picker, opens `packages/test-fixtures/decks/valid-full`, runs Check and Export through the shared CLI/compiler path, asserts PDF/HTML/deckpkg/notes/thumbnail artifacts exist, verifies Present loads the exported deckpkg metadata and notes before exercising navigation/overlays/keyboard exit, and verifies Settings can reinstall/copy/uninstall the CLI shim in an isolated target directory.
 
-Artifacts are written under `tmp/playwright/` so they stay out of release artifacts and normal source diffs. This is a foundation smoke, not full coverage for BYOK providers, dual-screen presenter placement, or native packaging install flows.
+Artifacts are written under `tmp/playwright/` so they stay out of release artifacts and normal source diffs. This is a foundation smoke, not full coverage for BYOK providers, real Claude/Codex agents, dual-screen presenter placement, or native packaging install flows. Generic external-agent command coverage lives in desktop service tests with controlled fake commands.
 
 ## Packaging Verification
 

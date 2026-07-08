@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   buildAiEngineSettingsUpdate,
   createDefaultAiEngineSettings,
+  createDefaultExternalAgentStatuses,
   formatRedactedKeyStatus,
-  normalizeAiEngineSettings
+  normalizeAiEngineSettings,
+  selectedExternalAgentStatus
 } from "./settings-model";
 
 describe("AI engine settings model", () => {
@@ -85,5 +87,32 @@ describe("AI engine settings model", () => {
     });
     expect(JSON.stringify(normalized)).not.toContain("should-not-survive");
     expect(JSON.stringify(normalized)).not.toContain("also-not-safe");
+  });
+
+  it("marks a saved Generic command as ready for headless workspace runs", () => {
+    const settings = buildAiEngineSettingsUpdate(
+      createDefaultAiEngineSettings(),
+      {
+        customCommand: "my-agent --cwd {{projectPath}} --prompt-file {{promptFile}}",
+        externalAgentId: "generic",
+        mode: "external-agent",
+        model: "gpt-5-mini",
+        provider: "openai"
+      },
+      "2026-07-09T00:10:00.000Z"
+    );
+
+    const status = selectedExternalAgentStatus(settings, createDefaultExternalAgentStatuses());
+
+    expect(status).toMatchObject({
+      authenticated: true,
+      command: "my-agent --cwd {{projectPath}} --prompt-file {{promptFile}}",
+      id: "generic",
+      installed: true,
+      status: "ready",
+      summary: "Generic command template saved"
+    });
+    expect(status.capabilities.headlessRun).toBe(true);
+    expect(status.capabilities.readDiff).toBe(true);
   });
 });

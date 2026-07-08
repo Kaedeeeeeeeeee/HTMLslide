@@ -11,6 +11,7 @@ import {
   getDesktopApi,
   type DesktopCheckReport,
   type DesktopCliIntegrationState,
+  type DesktopExternalAgentRunResult,
   type DesktopMockAgentRunResult,
   type DesktopProjectPreview,
   type DesktopProjectRecord
@@ -58,6 +59,8 @@ const idleStatus: OperationStatus = {
 };
 
 const nowIso = (): string => new Date().toISOString();
+
+type DesktopAgentRunResult = DesktopMockAgentRunResult | DesktopExternalAgentRunResult;
 
 function projectRecordToSummary(project: DesktopProjectRecord): ProjectSummary {
   return {
@@ -281,12 +284,14 @@ function App(): React.ReactNode {
     ]);
   }, []);
 
-  const applyMockAgentResult = useCallback(
-    (result: DesktopMockAgentRunResult): void => {
+  const applyAgentRunResult = useCallback(
+    (result: DesktopAgentRunResult): void => {
       const checkReport = result.check?.json as DesktopCheckReport | undefined;
-      const repairs = result.agent.outputs.repairs ?? [];
+      const repairs = result.providerId === "htmlslide-mock" ? result.agent.outputs.repairs ?? [] : [];
       const checkErrors = result.summary.checkErrors ?? 0;
       const checkWarnings = result.summary.checkWarnings ?? 0;
+      const agentLabel = result.providerId === "external-generic" ? "External agent" : "Mock agent";
+      const generationOk = result.providerId === "htmlslide-mock" ? result.agent.ok : result.adapter?.ok === true;
 
       if (result.project) {
         const generatedPreview = result.project;
@@ -323,16 +328,22 @@ function App(): React.ReactNode {
       setOperationStatus({
         kind: result.ok ? "success" : "failed",
         message: result.ok
-          ? "Mock agent completed check and export"
+          ? `${agentLabel} completed check and export`
           : result.check?.ok === false
-            ? "Mock agent completed, but check found issues"
+            ? `${agentLabel} completed, but check found issues`
             : result.export?.ok === false
-              ? "Mock agent completed, but export failed"
-              : "Mock agent run failed"
+              ? `${agentLabel} completed, but export failed`
+              : `${agentLabel} run failed`
       });
       updateCommandActionStatus("generate", {
-        kind: result.agent.ok ? "success" : "failed",
-        message: result.agent.ok ? "Mock generation complete" : "Mock generation failed"
+        kind: generationOk ? "success" : "failed",
+        message: generationOk
+          ? result.providerId === "htmlslide-mock"
+            ? "Mock generation complete"
+            : "External agent complete"
+          : result.providerId === "htmlslide-mock"
+            ? "Mock generation failed"
+            : "External agent failed"
       });
       updateCommandActionStatus("check", {
         kind: result.check?.ok ? "success" : result.check ? "failed" : "idle",
@@ -363,10 +374,18 @@ function App(): React.ReactNode {
   );
 
   const startMockGeneration = useCallback(
-    (brief: string, options: { action?: "generate" | "retry"; projectPath?: string } = {}): void => {
+    (brief: string, options: { action?: "generate" | "retry"; forceMock?: boolean; projectPath?: string } = {}): void => {
       const trimmedBrief = brief.trim();
       const prompt = trimmedBrief.length > 0 ? trimmedBrief : "Create or revise this HTMLslide deck.";
       const action = options.action ?? "generate";
+      const useExternalAgent = !options.forceMock && aiEngineSettings.mode === "external-agent";
+      const generateMessage = useExternalAgent
+        ? action === "retry"
+          ? "Retrying external agent"
+          : "External agent running"
+        : action === "retry"
+          ? "Retrying mock generation"
+          : "Mock generation running";
 
       setRunning(true);
       setActiveStageIndex(0);
@@ -378,7 +397,7 @@ function App(): React.ReactNode {
         ...defaultCommandActionStatuses(),
         generate: {
           kind: "running",
-          message: action === "retry" ? "Retrying mock generation" : "Mock generation running"
+          message: generateMessage
         },
         review: {
           kind: "idle",
@@ -386,11 +405,19 @@ function App(): React.ReactNode {
         }
       });
 
+      if (aiEngineSettings.mode === "htmlslide-agent") {
+        const message = "HTMLslide Agent generation is not connected in this milestone.";
+        setOperationStatus({ kind: "failed", message });
+        updateCommandActionStatus("generate", { kind: "failed", message });
+        setRunning(false);
+        return;
+      }
+
       if (!desktopApi || !options.projectPath) {
         seedMockAgentRun(
           !desktopApi
-            ? `Mock generation running for: ${prompt}`
-            : "Open a local deck project before running the mock agent."
+            ? `${useExternalAgent ? "External agent" : "Mock generation"} running for: ${prompt}`
+            : `Open a local deck project before running the ${useExternalAgent ? "external agent" : "mock agent"}.`
         );
         if (desktopApi && !options.projectPath) {
           updateCommandActionStatus("generate", { kind: "failed", message: "Local project required" });
@@ -400,13 +427,21 @@ function App(): React.ReactNode {
         return;
       }
 
-      setOperationStatus({ kind: "running", message: "Running mock agent" });
-      desktopApi.runMockAgent({
-        brief: prompt,
-        projectPath: options.projectPath,
-        runExport: true
-      })
-        .then(applyMockAgentResult)
+      setOperationStatus({ kind: "running", message: useExternalAgent ? "Running external agent" : "Running mock agent" });
+      const run = useExternalAgent
+        ? desktopApi.runExternalAgent({
+            brief: prompt,
+            projectPath: options.projectPath,
+            runExport: true
+          })
+        : desktopApi.runMockAgent({
+            brief: prompt,
+            projectPath: options.projectPath,
+            runExport: true
+          });
+
+      run
+        .then(applyAgentRunResult)
         .catch((error: unknown) => {
           const message = error instanceof Error ? error.message : String(error);
           setRunning(false);
@@ -414,7 +449,7 @@ function App(): React.ReactNode {
           updateCommandActionStatus("generate", { kind: "failed", message });
         });
     },
-    [applyMockAgentResult, desktopApi, seedMockAgentRun, updateCommandActionStatus]
+    [aiEngineSettings.mode, applyAgentRunResult, desktopApi, seedMockAgentRun, updateCommandActionStatus]
   );
 
   const activeProject = useMemo(() => {
@@ -524,6 +559,7 @@ function App(): React.ReactNode {
         openPreview(result.project);
         if (draft.generationMode === "mock-agent") {
           startMockGeneration(buildNewDeckAgentBrief(draft), {
+            forceMock: true,
             projectPath: result.project.project.path
           });
         }

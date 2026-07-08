@@ -1,6 +1,7 @@
 import type { NewDeckDraft, ProjectSummary, SlideSummary } from "./model";
 import type { AiEngineSettings, ExternalAgentStatus } from "./settings-model";
 import type { PresenterDeck } from "@htmlslide/presenter/session";
+import type { AgentAdapterRunResult } from "@htmlslide/agent-adapters";
 import type {
   AgentRunEvent,
   AgentRunLog,
@@ -133,6 +134,43 @@ export type DesktopMockAgentRunResult = {
   summary: DesktopMockAgentRunSummary;
 };
 
+export type DesktopExternalAgentRunRequest = {
+  projectPath: string;
+  brief: string;
+  runExport?: boolean;
+  runId?: string;
+};
+
+export type DesktopExternalAgentRunSummary = {
+  runId: string;
+  status: "succeeded" | "failed" | "cancelled";
+  stageCount: number;
+  completedStages: number;
+  failedStages: number;
+  checkStatus?: string;
+  checkErrors?: number;
+  checkWarnings?: number;
+  exportStatus?: string;
+  exportArtifacts: string[];
+  filesChanged: string[];
+};
+
+export type DesktopExternalAgentRunResult = {
+  ok: boolean;
+  providerId: "external-generic";
+  projectPath: string;
+  stages: DesktopMockAgentStageSummary[];
+  events: AgentRunEvent[];
+  logs: AgentRunLog[];
+  adapter?: AgentAdapterRunResult;
+  checkpointDiff?: FileCopyCheckpointDiff;
+  check?: DesktopCliResult;
+  export?: DesktopCliResult;
+  project?: DesktopProjectPreview;
+  error?: string;
+  summary: DesktopExternalAgentRunSummary;
+};
+
 export type DesktopCheckpointRequest = {
   projectPath: string;
   runId?: string;
@@ -188,6 +226,7 @@ export type HtmlslideDesktopApi = {
   exportProject(projectPath: string): Promise<DesktopCliResult>;
   loadPresenterDeck(projectPath: string): Promise<DesktopPresenterDeckResult>;
   runMockAgent(request: DesktopMockAgentRunRequest): Promise<DesktopMockAgentRunResult>;
+  runExternalAgent(request: DesktopExternalAgentRunRequest): Promise<DesktopExternalAgentRunResult>;
   diffCheckpoint(request: DesktopCheckpointRequest): Promise<FileCopyCheckpointDiff>;
   revertCheckpoint(request: DesktopCheckpointRequest): Promise<DesktopCheckpointRevertResult>;
 };

@@ -114,7 +114,7 @@ Tests can override mock check results, provider failures, and delay to exercise 
 
 The desktop New Deck wizard can create a No AI source project or run the deterministic Local Mock agent immediately after `htmlslide new` succeeds. The wizard collects title, folder, brief, AI engine, language, audience, duration, slide count, tone, design direction, speaker notes, and requested outputs.
 
-For v1, HTMLslide Agent and Coding Agent are visible as product modes with readiness state, but their generation submit path is blocked until provider-backed BYOK and external-agent run IPC exist. This prevents the alpha app from silently treating those modes as source-only generation.
+For v1, HTMLslide Agent and Coding Agent are visible as product modes with readiness state. Provider-backed BYOK generation remains blocked until a real provider and secure key path exist. Coding Agent generation is enabled only for a saved Generic command in the opened workspace Generate path; New Deck generation remains blocked for Claude/Codex until headless templates are defined. This prevents the alpha app from silently treating unsupported modes as source-only generation.
 
 When Local Mock is selected, the richer wizard fields are encoded into the agent brief and sent through the existing `runMockAgent` IPC path. The desktop app must pass the project path returned by `createProject` directly into the mock-agent call so generation does not depend on React state settling after the project preview opens.
 

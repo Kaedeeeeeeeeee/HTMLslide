@@ -48,7 +48,7 @@ For local debugging with the app window visible:
 pnpm e2e:desktop:headed
 ```
 
-The smoke test builds `@htmlslide/desktop`, launches the built Electron main process with Playwright, verifies the app loads without a Vite/framework error overlay, skips onboarding into No AI mode, reaches the project library, creates a No AI source deck, confirms BYOK generation is visibly gated until a provider key is saved, creates and generates a Local Mock deck from the New Deck wizard, mocks the native folder picker, opens `packages/test-fixtures/decks/valid-full`, runs Check and Export through the shared CLI/compiler path, asserts PDF/HTML/deckpkg/notes/thumbnail artifacts exist, verifies Present loads the exported deckpkg metadata, display target selector, and notes before exercising navigation/overlays/keyboard exit, verifies a startup-opened standalone `.deckpkg` enters Presenter without onboarding or folder selection, and verifies Settings can reinstall/copy/uninstall the CLI shim in an isolated target directory.
+The smoke test builds `@htmlslide/desktop`, launches the built Electron main process with Playwright, verifies the app loads without a Vite/framework error overlay, skips onboarding into No AI mode, reaches the project library, creates a No AI source deck, confirms BYOK generation is visibly gated until a provider key is saved, creates and generates a Local Mock deck from the New Deck wizard, mocks the native folder picker, opens `packages/test-fixtures/decks/valid-full`, runs Check and Export through the shared CLI/compiler path, asserts PDF/HTML/deckpkg/notes/thumbnail artifacts exist, verifies Present loads the exported deckpkg metadata, display target selector, and notes before exercising navigation/overlays/keyboard exit, verifies standalone `.deckpkg` files enter Presenter through a startup file argument and a macOS `open-file` event without onboarding or folder selection, and verifies Settings can reinstall/copy/uninstall the CLI shim in an isolated target directory.
 
 GitHub `CI` runs this smoke on `macos-latest` for pull requests and pushes to `main`. The `Alpha Package` workflow also runs it before unsigned packaging so release artifacts are gated on the desktop app path, not only package creation.
 
@@ -70,7 +70,7 @@ After an alpha package already exists, run the smoke directly with:
 pnpm smoke:package:alpha
 ```
 
-The smoke mounts the generated DMG, verifies the packaged app and `Applications` symlink, copies the app to a temporary install directory, launches it with isolated app data, verifies packaged first-run CLI provisioning into an isolated target directory, installs a temporary CLI shim against the packaged CLI runtime, verifies `htmlslide doctor --json`, and uninstalls the shim.
+The smoke mounts the generated DMG, verifies the packaged app and `Applications` symlink, copies the app to a temporary install directory, verifies the packaged app declares `.deckpkg` as an owned macOS document type, launches it with isolated app data, verifies packaged first-run CLI provisioning into an isolated target directory, installs a temporary CLI shim against the packaged CLI runtime, verifies `htmlslide doctor --json`, and uninstalls the shim.
 
 The `Alpha Package` GitHub Actions workflow remains the CI packaging verifier for scheduled, tagged, and manual runs. Do not add provider credentials or local machine state to this path.
 

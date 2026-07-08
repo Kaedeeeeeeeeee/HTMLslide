@@ -304,6 +304,7 @@ export type HtmlslideDesktopApi = {
   exportProject(projectPath: string): Promise<DesktopCliResult>;
   loadPresenterDeck(projectPath: string): Promise<DesktopPresenterDeckResult>;
   loadPresenterDeckPackage(deckpkgPath: string): Promise<DesktopPresenterDeckResult>;
+  onOpenDeckPackage(handler: (request: DesktopInitialOpenRequest) => void): () => void;
   listPresenterDisplays(): Promise<DesktopPresenterDisplay[]>;
   runMockAgent(request: DesktopMockAgentRunRequest): Promise<DesktopMockAgentRunResult>;
   runByokAgent(request: DesktopByokAgentRunRequest): Promise<DesktopByokAgentRunResult>;

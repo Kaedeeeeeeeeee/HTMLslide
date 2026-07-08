@@ -43,9 +43,7 @@ const smokeQuitAfterReady = process.env.HTMLSLIDE_SMOKE_QUIT_AFTER_READY === "1"
 const smokeReadyFile = process.env.HTMLSLIDE_SMOKE_READY_FILE
   ? resolve(process.env.HTMLSLIDE_SMOKE_READY_FILE)
   : undefined;
-const initialDeckPackagePath = process.env.HTMLSLIDE_E2E_OPEN_DECKPKG_PATH
-  ? resolve(process.env.HTMLSLIDE_E2E_OPEN_DECKPKG_PATH)
-  : undefined;
+let pendingDeckPackagePath = initialDeckPackagePath();
 
 const writeSmokeMarker = async (marker: Record<string, unknown>) => {
   if (!smokeReadyFile) {
@@ -110,10 +108,47 @@ const invokeCli = async (args: string[]) => {
   });
 };
 
+function isDeckPackagePath(filePath: string | undefined): filePath is string {
+  return typeof filePath === "string" && /\.deckpkg$/iu.test(filePath.trim());
+}
+
+function initialDeckPackagePath(): string | undefined {
+  const envPath = process.env.HTMLSLIDE_E2E_OPEN_DECKPKG_PATH;
+  if (isDeckPackagePath(envPath)) {
+    return resolve(envPath);
+  }
+
+  const argPath = process.argv.find((arg) => isDeckPackagePath(arg));
+  return argPath ? resolve(argPath) : undefined;
+}
+
+function takePendingDeckPackageOpen(): string | undefined {
+  const deckpkgPath = pendingDeckPackagePath;
+  pendingDeckPackagePath = undefined;
+  return deckpkgPath;
+}
+
+function queueDeckPackageOpen(filePath: string): boolean {
+  if (!isDeckPackagePath(filePath)) {
+    return false;
+  }
+
+  const deckpkgPath = resolve(filePath);
+  pendingDeckPackagePath = deckpkgPath;
+  for (const browserWindow of BrowserWindow.getAllWindows()) {
+    browserWindow.webContents.send("htmlslide:open-deckpkg", {
+      kind: "deckpkg",
+      path: deckpkgPath
+    });
+  }
+  return true;
+}
+
 function registerIpcHandlers(): void {
   ipcMain.handle("htmlslide:get-setup", async () => {
     const library = await readDesktopLibrary(libraryPath(), configuredWorkspacePath());
     const cliIntegration = await getDesktopCliIntegration(cliIntegrationOptions());
+    const initialOpenDeckPackagePath = takePendingDeckPackageOpen();
     return {
       appName: "HTMLslide",
       version: app.getVersion(),
@@ -127,10 +162,10 @@ function registerIpcHandlers(): void {
         cliPath: cliRuntime?.cliPath
       },
       cliIntegration,
-      initialOpen: initialDeckPackagePath
+      initialOpen: initialOpenDeckPackagePath
         ? {
             kind: "deckpkg",
-            path: initialDeckPackagePath
+            path: initialOpenDeckPackagePath
           }
         : undefined
     };
@@ -330,6 +365,12 @@ function registerIpcHandlers(): void {
       revertDesktopCheckpoint(request)
   );
 }
+
+app.on("open-file", (event, filePath) => {
+  if (queueDeckPackageOpen(filePath)) {
+    event.preventDefault();
+  }
+});
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({

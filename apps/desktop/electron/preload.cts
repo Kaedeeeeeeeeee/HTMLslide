@@ -26,6 +26,11 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
   exportProject: (projectPath: string) => ipcRenderer.invoke("htmlslide:export-project", projectPath),
   loadPresenterDeck: (projectPath: string) => ipcRenderer.invoke("htmlslide:load-presenter-deck", projectPath),
   loadPresenterDeckPackage: (deckpkgPath: string) => ipcRenderer.invoke("htmlslide:load-presenter-deckpkg", deckpkgPath),
+  onOpenDeckPackage: (handler: (request: { kind: "deckpkg"; path: string }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, request: { kind: "deckpkg"; path: string }) => handler(request);
+    ipcRenderer.on("htmlslide:open-deckpkg", listener);
+    return () => ipcRenderer.removeListener("htmlslide:open-deckpkg", listener);
+  },
   listPresenterDisplays: () => ipcRenderer.invoke("htmlslide:list-presenter-displays"),
   runMockAgent: (request: {
     projectPath: string;

@@ -64,11 +64,52 @@ function plistSet(plistPath, key, value) {
   });
 }
 
+function plistAdd(plistPath, key, type, value = undefined) {
+  run("/usr/libexec/PlistBuddy", [
+    "-c",
+    value === undefined ? `Add :${key} ${type}` : `Add :${key} ${type} ${value}`,
+    plistPath
+  ], {
+    stdio: "ignore"
+  });
+}
+
 function plistDelete(plistPath, key) {
   spawnSync("/usr/libexec/PlistBuddy", ["-c", `Delete :${key}`, plistPath], {
     encoding: "utf8",
     stdio: "ignore"
   });
+}
+
+function writeDeckPackageDocumentTypes(plistPath, bundleIdentifier, documentType) {
+  const typeName = documentType?.name ?? "HTMLslide Deck Package";
+  const extension = documentType?.extension ?? "deckpkg";
+  const mimeType = documentType?.mimeType ?? "application/vnd.htmlslide.deckpkg";
+  const deckPackageUti = `${bundleIdentifier}.deckpkg`;
+
+  plistDelete(plistPath, "CFBundleDocumentTypes");
+  plistAdd(plistPath, "CFBundleDocumentTypes", "array");
+  plistAdd(plistPath, "CFBundleDocumentTypes:0", "dict");
+  plistAdd(plistPath, "CFBundleDocumentTypes:0:CFBundleTypeName", "string", typeName);
+  plistAdd(plistPath, "CFBundleDocumentTypes:0:CFBundleTypeRole", "string", "Viewer");
+  plistAdd(plistPath, "CFBundleDocumentTypes:0:LSHandlerRank", "string", "Owner");
+  plistAdd(plistPath, "CFBundleDocumentTypes:0:CFBundleTypeExtensions", "array");
+  plistAdd(plistPath, "CFBundleDocumentTypes:0:CFBundleTypeExtensions:0", "string", extension);
+  plistAdd(plistPath, "CFBundleDocumentTypes:0:LSItemContentTypes", "array");
+  plistAdd(plistPath, "CFBundleDocumentTypes:0:LSItemContentTypes:0", "string", deckPackageUti);
+
+  plistDelete(plistPath, "UTExportedTypeDeclarations");
+  plistAdd(plistPath, "UTExportedTypeDeclarations", "array");
+  plistAdd(plistPath, "UTExportedTypeDeclarations:0", "dict");
+  plistAdd(plistPath, "UTExportedTypeDeclarations:0:UTTypeIdentifier", "string", deckPackageUti);
+  plistAdd(plistPath, "UTExportedTypeDeclarations:0:UTTypeDescription", "string", typeName);
+  plistAdd(plistPath, "UTExportedTypeDeclarations:0:UTTypeConformsTo", "array");
+  plistAdd(plistPath, "UTExportedTypeDeclarations:0:UTTypeConformsTo:0", "string", "com.pkware.zip-archive");
+  plistAdd(plistPath, "UTExportedTypeDeclarations:0:UTTypeConformsTo:1", "string", "public.data");
+  plistAdd(plistPath, "UTExportedTypeDeclarations:0:UTTypeTagSpecification", "dict");
+  plistAdd(plistPath, "UTExportedTypeDeclarations:0:UTTypeTagSpecification:public.filename-extension", "array");
+  plistAdd(plistPath, "UTExportedTypeDeclarations:0:UTTypeTagSpecification:public.filename-extension:0", "string", extension);
+  plistAdd(plistPath, "UTExportedTypeDeclarations:0:UTTypeTagSpecification:public.mime-type", "string", mimeType);
 }
 
 async function requirePath(pathToCheck, label) {
@@ -148,7 +189,10 @@ async function deployCliRuntime(appResourcesPath) {
     buildCliRuntimePackages();
     await rm(cliRuntimePath, { recursive: true, force: true });
     run("pnpm", ["--filter", "@htmlslide/cli", "deploy", "--prod", "--legacy", temporaryRuntimePath], {
-      env: { CI: "true" }
+      env: {
+        CI: "true",
+        npm_config_confirm_modules_purge: "false"
+      }
     });
     await pruneCliRuntime(temporaryRuntimePath);
     await cp(temporaryRuntimePath, cliRuntimePath, {
@@ -161,18 +205,67 @@ async function deployCliRuntime(appResourcesPath) {
   }
 }
 
-async function deployDesktopRuntime(appResourcesPath) {
-  const agentRuntimePath = path.join(appResourcesPath, "node_modules", "@htmlslide", "agent");
-  const agentPackagePath = path.join(root, "packages", "agent");
-
-  await rm(agentRuntimePath, { recursive: true, force: true });
-  await mkdir(agentRuntimePath, { recursive: true });
-  await cp(path.join(agentPackagePath, "package.json"), path.join(agentRuntimePath, "package.json"));
-  await cp(path.join(agentPackagePath, "dist"), path.join(agentRuntimePath, "dist"), {
+async function copyWorkspaceRuntimePackage(appNodeModulesPath, packageName, packagePath) {
+  const runtimePath = path.join(appNodeModulesPath, ...packageName.split("/"));
+  await rm(runtimePath, { recursive: true, force: true });
+  await mkdir(runtimePath, { recursive: true });
+  await cp(path.join(packagePath, "package.json"), path.join(runtimePath, "package.json"));
+  await cp(path.join(packagePath, "dist"), path.join(runtimePath, "dist"), {
     recursive: true,
     verbatimSymlinks: true
   });
-  await requirePath(path.join(agentRuntimePath, "dist", "index.js"), "Packaged desktop agent runtime");
+  await requirePath(path.join(runtimePath, "dist", "index.js"), `Packaged desktop runtime ${packageName}`);
+}
+
+async function copyNpmRuntimePackage(appNodeModulesPath, packageName, requireContext) {
+  const packageRoot = path.dirname(requireContext.resolve(`${packageName}/package.json`));
+  const runtimePath = path.join(appNodeModulesPath, ...packageName.split("/"));
+  await rm(runtimePath, { recursive: true, force: true });
+  await mkdir(path.dirname(runtimePath), { recursive: true });
+  await cp(packageRoot, runtimePath, {
+    recursive: true,
+    verbatimSymlinks: false
+  });
+  await requirePath(path.join(runtimePath, "package.json"), `Packaged npm runtime ${packageName}`);
+}
+
+async function deployDesktopRuntime(appResourcesPath) {
+  const appNodeModulesPath = path.join(appResourcesPath, "node_modules");
+  const compilerRequire = createRequire(path.join(root, "packages", "compiler", "package.json"));
+  const coreRequire = createRequire(path.join(root, "packages", "core", "package.json"));
+  const jszipRequire = createRequire(compilerRequire.resolve("jszip/package.json"));
+  const workspaceRuntimePackages = [
+    ["@htmlslide/agent", path.join(root, "packages", "agent")],
+    ["@htmlslide/agent-adapters", path.join(root, "packages", "agent-adapters")],
+    ["@htmlslide/core", path.join(root, "packages", "core")],
+    ["@htmlslide/presenter", path.join(root, "packages", "presenter")]
+  ];
+  const npmRuntimePackages = [
+    [compilerRequire, "jszip"],
+    [coreRequire, "zod"],
+    [jszipRequire, "core-util-is"],
+    [jszipRequire, "immediate"],
+    [jszipRequire, "inherits"],
+    [jszipRequire, "isarray"],
+    [jszipRequire, "lie"],
+    [jszipRequire, "pako"],
+    [jszipRequire, "process-nextick-args"],
+    [jszipRequire, "readable-stream"],
+    [jszipRequire, "safe-buffer"],
+    [jszipRequire, "setimmediate"],
+    [jszipRequire, "string_decoder"],
+    [jszipRequire, "util-deprecate"]
+  ];
+
+  await rm(appNodeModulesPath, { recursive: true, force: true });
+  await mkdir(appNodeModulesPath, { recursive: true });
+
+  for (const [packageName, packagePath] of workspaceRuntimePackages) {
+    await copyWorkspaceRuntimePackage(appNodeModulesPath, packageName, packagePath);
+  }
+  for (const [requireContext, packageName] of npmRuntimePackages) {
+    await copyNpmRuntimePackage(appNodeModulesPath, packageName, requireContext);
+  }
 }
 
 async function createDmg({ appPath, artifactBaseName, outputDir, volumeName }) {
@@ -256,6 +349,7 @@ plistSet(plistPath, "CFBundleShortVersionString", version);
 plistSet(plistPath, "CFBundleVersion", process.env.GITHUB_RUN_NUMBER ?? version);
 plistSet(plistPath, "LSMinimumSystemVersion", config.minimumSystemVersion);
 plistDelete(plistPath, "ElectronAsarIntegrity");
+writeDeckPackageDocumentTypes(plistPath, config.bundleIdentifier, config.deckPackageDocumentType);
 
 if (config.adHocSign && process.env.HTMLSLIDE_ALPHA_SKIP_ADHOC_SIGN !== "1") {
   run("codesign", ["--force", "--deep", "--sign", "-", appPath]);
@@ -279,6 +373,7 @@ await writeFile(
       arch,
       channel: "alpha",
       bundleIdentifier: config.bundleIdentifier,
+      documentTypes: [config.deckPackageDocumentType?.extension ?? "deckpkg"],
       signing: config.adHocSign ? "ad-hoc" : "none",
       notarized: false,
       artifacts: [dmgPath, zipPath]

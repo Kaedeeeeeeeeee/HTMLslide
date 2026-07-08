@@ -85,6 +85,39 @@ function plistValue(plistPath, key) {
   return run("/usr/libexec/PlistBuddy", ["-c", `Print :${key}`, plistPath]).stdout.trim();
 }
 
+function assertDeckPackageDocumentType(appPath) {
+  const plistPath = path.join(appPath, "Contents", "Info.plist");
+  const bundleIdentifier = plistValue(plistPath, "CFBundleIdentifier");
+  const expectedUti = `${bundleIdentifier}.deckpkg`;
+  const documentExtension = plistValue(plistPath, "CFBundleDocumentTypes:0:CFBundleTypeExtensions:0");
+  const documentUti = plistValue(plistPath, "CFBundleDocumentTypes:0:LSItemContentTypes:0");
+  const exportedUti = plistValue(plistPath, "UTExportedTypeDeclarations:0:UTTypeIdentifier");
+  const exportedExtension = plistValue(
+    plistPath,
+    "UTExportedTypeDeclarations:0:UTTypeTagSpecification:public.filename-extension:0"
+  );
+  const exportedConformance = plistValue(plistPath, "UTExportedTypeDeclarations:0:UTTypeConformsTo:0");
+
+  if (documentExtension !== "deckpkg" || documentUti !== expectedUti) {
+    fail(
+      `Packaged app does not register .deckpkg as a document type.\n` +
+      `extension: ${documentExtension}\n` +
+      `uti: ${documentUti}\n` +
+      `expected uti: ${expectedUti}`
+    );
+  }
+
+  if (exportedUti !== expectedUti || exportedExtension !== "deckpkg" || exportedConformance !== "com.pkware.zip-archive") {
+    fail(
+      `Packaged app does not export the .deckpkg UTI.\n` +
+      `exported uti: ${exportedUti}\n` +
+      `exported extension: ${exportedExtension}\n` +
+      `exported conformance: ${exportedConformance}\n` +
+      `expected uti: ${expectedUti}`
+    );
+  }
+}
+
 async function mountDmg(dmgPath, mountPoint) {
   await rm(mountPoint, { recursive: true, force: true });
   await mkdir(mountPoint, { recursive: true });
@@ -277,6 +310,7 @@ async function main() {
     });
     detachDmg(mountPoint);
 
+    assertDeckPackageDocumentType(installedAppPath);
     await launchAppOnce(installedAppPath, smokeRoot);
     await smokeCliShim(installedAppPath, smokeRoot);
 

@@ -5,5 +5,10 @@
   "outputDirectory": "dist/alpha",
   "volumeName": "HTMLslide Alpha",
   "minimumSystemVersion": "13.0",
+  "deckPackageDocumentType": {
+    "name": "HTMLslide Deck Package",
+    "extension": "deckpkg",
+    "mimeType": "application/vnd.htmlslide.deckpkg"
+  },
   "adHocSign": true
 }

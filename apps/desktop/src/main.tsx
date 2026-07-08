@@ -242,6 +242,59 @@ function App(): React.ReactNode {
   const [directPresenterOpen, setDirectPresenterOpen] = useState<DirectPresenterOpen | undefined>();
   const desktopApi = getDesktopApi();
 
+  const applyDeckPackageOpenResult = useCallback((
+    result: DesktopPresenterDeckResult,
+    baseProjects?: ProjectSummary[]
+  ): void => {
+    if (result.ok) {
+      const next = presenterDeckToWorkspaceState(result.deck, result.deckpkgPath);
+      setProjects((current) => [
+        next.project,
+        ...(baseProjects ?? current).filter((project) => project.id !== next.project.id)
+      ]);
+      setSelectedProjectId(next.project.id);
+      setActiveSlides(next.slides);
+      setSelectedSlideId(next.slides[0]?.id ?? "");
+      setQaIssues([]);
+      setDiffReview(undefined);
+      setDirectPresenterOpen({
+        id: `${result.deckpkgPath}:${result.deck.slides.length}:${Date.now()}`,
+        source: "deckpkg-file",
+        deckpkgPath: result.deckpkgPath,
+        deck: result.deck
+      });
+      setView("workspace");
+      setOperationStatus({ kind: "success", message: "Deck package opened" });
+      setCommandActionStatuses((current) => ({
+        ...current,
+        export: { kind: "success", message: "Deck package file" },
+        review: { kind: "success", message: "Deck package ready" }
+      }));
+      return;
+    }
+
+    setOperationStatus({ kind: "failed", message: result.error });
+    setView("library");
+    setCommandActionStatuses((current) => ({
+      ...current,
+      review: { kind: "failed", message: result.source === "missing" ? "Deck package missing" : "Deck package invalid" }
+    }));
+  }, []);
+
+  const openDeckPackagePath = useCallback(
+    async (deckpkgPath: string, baseProjects?: ProjectSummary[]): Promise<void> => {
+      if (!desktopApi) {
+        setOperationStatus({ kind: "failed", message: "Desktop API unavailable" });
+        return;
+      }
+
+      setOperationStatus({ kind: "running", message: "Opening deck package" });
+      const result = await desktopApi.loadPresenterDeckPackage(deckpkgPath);
+      applyDeckPackageOpenResult(result, baseProjects);
+    },
+    [applyDeckPackageOpenResult, desktopApi]
+  );
+
   useEffect(() => {
     if (!desktopApi) {
       return;
@@ -272,43 +325,9 @@ function App(): React.ReactNode {
         });
 
         if (setup.initialOpen?.kind === "deckpkg") {
-          setOperationStatus({ kind: "running", message: "Opening deck package" });
-          const result: DesktopPresenterDeckResult = await desktopApi.loadPresenterDeckPackage(setup.initialOpen.path);
+          await openDeckPackagePath(setup.initialOpen.path, projectSummaries);
           if (cancelled) {
             return;
-          }
-
-          if (result.ok) {
-            const next = presenterDeckToWorkspaceState(result.deck, result.deckpkgPath);
-            setProjects([
-              next.project,
-              ...projectSummaries.filter((project) => project.id !== next.project.id)
-            ]);
-            setSelectedProjectId(next.project.id);
-            setActiveSlides(next.slides);
-            setSelectedSlideId(next.slides[0]?.id ?? "");
-            setQaIssues([]);
-            setDiffReview(undefined);
-            setDirectPresenterOpen({
-              id: `${result.deckpkgPath}:${result.deck.slides.length}`,
-              source: "deckpkg-file",
-              deckpkgPath: result.deckpkgPath,
-              deck: result.deck
-            });
-            setView("workspace");
-            setOperationStatus({ kind: "success", message: "Deck package opened" });
-            setCommandActionStatuses((current) => ({
-              ...current,
-              export: { kind: "success", message: "Deck package file" },
-              review: { kind: "success", message: "Deck package ready" }
-            }));
-          } else {
-            setOperationStatus({ kind: "failed", message: result.error });
-            setView("library");
-            setCommandActionStatuses((current) => ({
-              ...current,
-              review: { kind: "failed", message: result.source === "missing" ? "Deck package missing" : "Deck package invalid" }
-            }));
           }
         }
 
@@ -341,7 +360,19 @@ function App(): React.ReactNode {
     return () => {
       cancelled = true;
     };
-  }, [desktopApi]);
+  }, [desktopApi, openDeckPackagePath]);
+
+  useEffect(() => {
+    if (!desktopApi) {
+      return;
+    }
+
+    return desktopApi.onOpenDeckPackage((request) => {
+      if (request.kind === "deckpkg") {
+        void openDeckPackagePath(request.path);
+      }
+    });
+  }, [desktopApi, openDeckPackagePath]);
 
   useEffect(() => {
     if (!running || agentRunEvents.length > 0) {

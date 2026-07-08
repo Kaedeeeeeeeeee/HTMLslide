@@ -8,6 +8,7 @@ export default tseslint.config(
       "dist/**",
       "coverage/**",
       "node_modules/**",
+      "tmp/**",
       "apps/desktop/dist/**",
       "**/*.d.ts",
       "**/*.config.js"

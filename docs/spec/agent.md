@@ -125,6 +125,14 @@ Writers may only target `deck.json`, `slides/`, `notes/`, `theme/`, and `assets/
 
 Provider `build` and `repair` outputs may include `sourceWrites` so desktop and CLI callers can apply model-generated source edits through the same boundary before running real `htmlslide check --json`.
 
+## OpenAI-Compatible Provider
+
+`@htmlslide/agent` includes an OpenAI-compatible provider adapter for BYOK model calls. The adapter uses Chat Completions with `response_format.type = "json_schema"`, `strict: true`, and `store: false`, and validates credentials with `GET /models/{model}` against the configured base URL. Automated coverage uses injected fake `fetch` implementations only; no CI path requires real provider credentials or network access.
+
+The provider converts structured stage responses into the shared agent output types. `build` and `repair` require `sourceWrites`, then parse them through the shared source-write boundary before callers can apply edits. Provider errors are sanitized before surfacing so API keys, bearer tokens, and `sk-` style secrets do not appear in logs, validation results, or thrown messages.
+
+This adapter is provider-layer infrastructure. The desktop New Deck BYOK path remains credential-gated and deterministic until the desktop service wires this provider into the run, applies returned `sourceWrites`, records checkpoints, and runs the real CLI check/export gate.
+
 ## Desktop New Deck v1
 
 The desktop New Deck wizard can create a No AI source project, run the deterministic Local Mock agent, or run the current deterministic HTMLslide Agent path after `htmlslide new` succeeds. The wizard collects title, folder, brief, AI engine, language, audience, duration, slide count, tone, design direction, speaker notes, and requested outputs.

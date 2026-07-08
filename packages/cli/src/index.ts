@@ -191,6 +191,7 @@ const appCliCandidates = (config) => {
     config && config.cliPath,
     config && config.cliEntry,
     config && config.appCliPath,
+    appPath && path.join(appPath, "Contents", "Resources", "app", "cli-runtime", "dist", "bin", "htmlslide.js"),
     appPath && path.join(appPath, "Contents", "Resources", "app", "packages", "cli", "dist", "bin", "htmlslide.js"),
     appPath && path.join(appPath, "Contents", "Resources", "app.asar", "packages", "cli", "dist", "bin", "htmlslide.js"),
     appPath && path.join(appPath, "Contents", "Resources", "htmlslide", "cli", "htmlslide.js")

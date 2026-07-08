@@ -3,9 +3,22 @@ import { fileURLToPath, URL } from "node:url";
 import { defineConfig } from "vite";
 
 export default defineConfig({
+  base: "./",
   plugins: [react()],
   resolve: {
     alias: [
+      {
+        find: "@htmlslide/agent-adapters",
+        replacement: fileURLToPath(
+          new URL("../../packages/agent-adapters/src/index.ts", import.meta.url)
+        )
+      },
+      {
+        find: "@htmlslide/presenter/session",
+        replacement: fileURLToPath(
+          new URL("../../packages/presenter/src/session.ts", import.meta.url)
+        )
+      },
       {
         find: "@htmlslide/shared-ui/styles.css",
         replacement: fileURLToPath(

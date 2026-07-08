@@ -12,12 +12,22 @@ import {
   getNextStageIndex,
   type AppView,
   type InspectorTab,
+  type LibrarySection,
   type OperationStatus,
   type ProjectSummary,
   type QaFilter,
   type QaIssue,
   type SlideSummary
 } from "./model";
+import {
+  buildAiEngineSettingsUpdate,
+  createDefaultAiEngineSettings,
+  createDefaultExternalAgentStatuses,
+  normalizeAiEngineSettings,
+  type AiEngineSettings,
+  type AiEngineSettingsDraft,
+  type ExternalAgentStatus
+} from "./settings-model";
 import {
   agentStages,
   onboardingSteps,
@@ -72,6 +82,7 @@ function projectPreviewToState(preview: DesktopProjectPreview): {
 
 function App(): React.ReactNode {
   const [view, setView] = useState<AppView>("onboarding");
+  const [librarySection, setLibrarySection] = useState<LibrarySection>("recent");
   const [activeStepIndex, setActiveStepIndex] = useState(0);
   const [workspacePath, setWorkspacePath] = useState<string | undefined>();
   const [projects, setProjects] = useState<ProjectSummary[]>(sampleProjects);
@@ -86,6 +97,14 @@ function App(): React.ReactNode {
   const [running, setRunning] = useState(true);
   const [activeStageIndex, setActiveStageIndex] = useState(4);
   const [operationStatus, setOperationStatus] = useState<OperationStatus>(idleStatus);
+  const [aiEngineSettings, setAiEngineSettings] = useState<AiEngineSettings>(() => createDefaultAiEngineSettings());
+  const [externalAgentStatuses, setExternalAgentStatuses] = useState<ExternalAgentStatus[]>(() =>
+    createDefaultExternalAgentStatuses()
+  );
+  const [aiEngineStatus, setAiEngineStatus] = useState<OperationStatus>({
+    kind: "idle",
+    message: "No AI mode"
+  });
   const desktopApi = getDesktopApi();
 
   useEffect(() => {
@@ -94,23 +113,39 @@ function App(): React.ReactNode {
     }
 
     let cancelled = false;
-    Promise.all([desktopApi.getSetup(), desktopApi.listProjects()])
-      .then(([setup, records]) => {
+    Promise.all([desktopApi.getSetup(), desktopApi.listProjects(), desktopApi.getAiEngineSettings()])
+      .then(([setup, records, settings]) => {
         if (cancelled) {
           return;
         }
         setWorkspacePath(setup.workspacePath);
         setProjects(records.map(projectRecordToSummary));
+        setAiEngineSettings(normalizeAiEngineSettings(settings));
         setOperationStatus({
           kind: setup.cli.available ? "success" : "failed",
           message: setup.cli.available ? "CLI available" : "CLI unavailable"
         });
+        setAiEngineStatus({
+          kind: "success",
+          message: "AI engine settings loaded"
+        });
+        return desktopApi.detectExternalAgents();
+      })
+      .then((statuses) => {
+        if (cancelled || !statuses) {
+          return;
+        }
+        setExternalAgentStatuses(statuses);
       })
       .catch((error: unknown) => {
         if (cancelled) {
           return;
         }
         setOperationStatus({
+          kind: "failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+        setAiEngineStatus({
           kind: "failed",
           message: error instanceof Error ? error.message : String(error)
         });
@@ -268,6 +303,53 @@ function App(): React.ReactNode {
       });
   }, [desktopApi]);
 
+  const handleSaveAiEngineSettings = useCallback(
+    (draft: AiEngineSettingsDraft): void => {
+      const nextSettings = buildAiEngineSettingsUpdate(aiEngineSettings, draft);
+      setAiEngineSettings(nextSettings);
+      setAiEngineStatus({ kind: "running", message: "Saving AI engine settings" });
+
+      if (!desktopApi) {
+        setAiEngineStatus({ kind: "success", message: "AI engine metadata updated locally" });
+        return;
+      }
+
+      desktopApi.saveAiEngineSettings(nextSettings)
+        .then((savedSettings) => {
+          setAiEngineSettings(normalizeAiEngineSettings(savedSettings));
+          setAiEngineStatus({ kind: "success", message: "AI engine metadata saved" });
+        })
+        .catch((error: unknown) => {
+          setAiEngineStatus({
+            kind: "failed",
+            message: error instanceof Error ? error.message : String(error)
+          });
+        });
+    },
+    [aiEngineSettings, desktopApi]
+  );
+
+  const handleRefreshExternalAgents = useCallback((): void => {
+    if (!desktopApi) {
+      setExternalAgentStatuses(createDefaultExternalAgentStatuses());
+      setAiEngineStatus({ kind: "idle", message: "Desktop detection unavailable" });
+      return;
+    }
+
+    setAiEngineStatus({ kind: "running", message: "Checking external agents" });
+    desktopApi.detectExternalAgents()
+      .then((statuses) => {
+        setExternalAgentStatuses(statuses);
+        setAiEngineStatus({ kind: "success", message: "External agent status refreshed" });
+      })
+      .catch((error: unknown) => {
+        setAiEngineStatus({
+          kind: "failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
+  }, [desktopApi]);
+
   const runCheck = useCallback((): void => {
     if (!desktopApi || !activeProject || activeProject.path.startsWith("~")) {
       setInspectorTab("qa");
@@ -342,10 +424,17 @@ function App(): React.ReactNode {
   if (view === "library") {
     return (
       <ProjectLibrary
+        activeSection={librarySection}
+        aiEngineSettings={aiEngineSettings}
+        aiEngineStatus={aiEngineStatus}
+        externalAgentStatuses={externalAgentStatuses}
         onChooseWorkspace={handleChooseWorkspace}
+        onLibrarySectionChange={setLibrarySection}
         onNewDeck={handleNewDeck}
         onOpenFolder={handleOpenFolder}
         onOpenProject={handleOpenProject}
+        onRefreshExternalAgents={handleRefreshExternalAgents}
+        onSaveAiEngineSettings={handleSaveAiEngineSettings}
         projects={projects}
         workspacePath={workspacePath}
       />
@@ -379,6 +468,10 @@ function App(): React.ReactNode {
         }
       }}
       onSelectSlide={setSelectedSlideId}
+      onSettingsOpen={() => {
+        setLibrarySection("ai-engines");
+        setView("library");
+      }}
       onToolbarAction={(action) => {
         if (action === "check") {
           runCheck();
@@ -387,7 +480,7 @@ function App(): React.ReactNode {
           runExport();
         }
         if (action === "present") {
-          setOperationStatus({ kind: "idle", message: "Presenter mode is queued for Phase 6" });
+          setOperationStatus({ kind: "success", message: "Rehearsal mode open" });
         }
       }}
       operationStatus={operationStatus}

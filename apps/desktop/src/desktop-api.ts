@@ -1,4 +1,5 @@
 import type { ProjectSummary, SlideSummary } from "./model";
+import type { AiEngineSettings, ExternalAgentStatus } from "./settings-model";
 
 export type DesktopSetupState = {
   appName: string;
@@ -8,8 +9,9 @@ export type DesktopSetupState = {
   workspacePath: string;
   cli: {
     available: boolean;
-    mode: "development" | "packaged-missing";
+    mode: "development" | "packaged" | "missing";
     rootPath?: string;
+    cliPath?: string;
   };
 };
 
@@ -61,6 +63,9 @@ export type HtmlslideDesktopApi = {
   shell: "electron";
   getSetup(): Promise<DesktopSetupState>;
   listProjects(): Promise<DesktopProjectRecord[]>;
+  getAiEngineSettings(): Promise<AiEngineSettings>;
+  saveAiEngineSettings(settings: AiEngineSettings): Promise<AiEngineSettings>;
+  detectExternalAgents(): Promise<ExternalAgentStatus[]>;
   chooseWorkspace(): Promise<string | undefined>;
   openProjectDialog(): Promise<DesktopProjectPreview | undefined>;
   loadProject(projectPath: string): Promise<DesktopProjectPreview>;

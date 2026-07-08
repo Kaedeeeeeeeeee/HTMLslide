@@ -1,6 +1,7 @@
 import type { InspectorTabId, QaSeverityId } from "@htmlslide/shared-ui";
 
 export type AppView = "onboarding" | "library" | "workspace";
+export type LibrarySection = "recent" | "templates" | "skills" | "ai-engines" | "settings";
 export type InspectorTab = InspectorTabId;
 export type QaSeverity = QaSeverityId;
 export type QaFilter = "all" | QaSeverity;

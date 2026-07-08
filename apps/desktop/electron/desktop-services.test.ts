@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  findCliRuntime,
   loadProjectPreview,
   readDesktopLibrary,
   summarizeDeckProject,
@@ -128,5 +129,34 @@ describe("desktop services", () => {
     );
 
     await expect(loadProjectPreview(projectPath)).rejects.toThrow("Unsafe project path");
+  });
+
+  it("finds a packaged CLI runtime under Electron resources", async () => {
+    const root = await tempDir();
+    const resourcesPath = path.join(root, "HTMLslide.app", "Contents", "Resources");
+    const cliPath = path.join(resourcesPath, "app", "cli-runtime", "dist", "bin", "htmlslide.js");
+    await mkdir(path.dirname(cliPath), { recursive: true });
+    await writeFile(cliPath, "#!/usr/bin/env node\n");
+
+    expect(findCliRuntime(path.join(resourcesPath, "app", "dist", "electron"), resourcesPath)).toEqual({
+      mode: "packaged",
+      cliPath,
+      cwd: path.join(resourcesPath, "app", "cli-runtime")
+    });
+  });
+
+  it("finds the development CLI runtime from a workspace child path", async () => {
+    const root = await tempDir();
+    const cliPath = path.join(root, "packages", "cli", "dist", "bin", "htmlslide.js");
+    await mkdir(path.dirname(cliPath), { recursive: true });
+    await writeFile(path.join(root, "pnpm-workspace.yaml"), "packages: []\n");
+    await writeFile(cliPath, "#!/usr/bin/env node\n");
+
+    expect(findCliRuntime(path.join(root, "apps", "desktop", "dist", "electron"))).toEqual({
+      mode: "development",
+      cliPath,
+      cwd: root,
+      rootPath: root
+    });
   });
 });

@@ -5,6 +5,8 @@
     "types": ["vite/client"],
     "baseUrl": ".",
     "paths": {
+      "@htmlslide/agent-adapters": ["../../packages/agent-adapters/src/index.ts"],
+      "@htmlslide/presenter/session": ["../../packages/presenter/src/session.ts"],
       "@htmlslide/shared-ui": ["../../packages/shared-ui/src/index.ts"],
       "@htmlslide/shared-ui/styles.css": ["../../packages/shared-ui/src/styles.css"]
     }

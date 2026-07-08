@@ -56,11 +56,67 @@ export type CliRunResult = {
   error?: string;
 };
 
+export type CliRuntime = {
+  mode: "development" | "packaged";
+  cliPath: string;
+  cwd: string;
+  rootPath?: string;
+};
+
 export type CliRunnerOptions = {
-  rootPath: string;
+  rootPath?: string;
+  cliPath?: string;
+  cwd?: string;
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
 };
+
+export type DesktopAiEngineMode = "no-ai" | "htmlslide-agent" | "external-agent";
+export type DesktopApiKeyProvider = "openai" | "anthropic" | "compatible";
+export type DesktopExternalAgentId = "claude-code" | "codex-cli" | "generic";
+export type DesktopExternalAgentDetectionStatus = "ready" | "not-installed" | "not-authenticated" | "unavailable";
+
+export type DesktopAiEngineSettings = {
+  version: 1;
+  mode: DesktopAiEngineMode;
+  apiKey: {
+    provider: DesktopApiKeyProvider;
+    model: string;
+    hasKey: boolean;
+    updatedAt?: string;
+  };
+  externalAgent: {
+    selectedId: DesktopExternalAgentId;
+    customCommand: string;
+    updatedAt?: string;
+  };
+  updatedAt?: string;
+};
+
+export type DesktopExternalAgentStatus = {
+  id: DesktopExternalAgentId;
+  label: string;
+  kind: DesktopExternalAgentId;
+  capabilities: Record<string, boolean>;
+  status: DesktopExternalAgentDetectionStatus;
+  installed: boolean;
+  authenticated: boolean;
+  command: string;
+  version?: string;
+  checkedAt: string;
+  summary: string;
+};
+
+export type ExternalAgentDetectorRunner = (invocation: {
+  command: string;
+  args: readonly string[];
+  cwd: string;
+  timeoutMs: number;
+}) => Promise<{
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}>;
 
 type DeckManifest = {
   title?: unknown;
@@ -80,6 +136,59 @@ const DEFAULT_LIBRARY: Omit<DesktopLibrary, "defaultWorkspace"> = {
   recentProjects: []
 };
 
+const DEFAULT_AI_ENGINE_SETTINGS: DesktopAiEngineSettings = {
+  apiKey: {
+    hasKey: false,
+    model: "gpt-5-mini",
+    provider: "openai"
+  },
+  externalAgent: {
+    customCommand: "",
+    selectedId: "codex-cli"
+  },
+  mode: "no-ai",
+  version: 1
+};
+
+const DEFAULT_AGENT_CAPABILITIES = {
+  cancelRun: false,
+  configureMCP: false,
+  detectAuthenticated: true,
+  detectInstalled: true,
+  headlessRun: false,
+  installSkills: false,
+  openExternal: true,
+  readDiff: false,
+  streamLogs: false
+};
+
+const EXTERNAL_AGENT_SPECS = [
+  {
+    authArgs: ["auth", "status"] as const,
+    command: "claude",
+    id: "claude-code",
+    kind: "claude-code",
+    label: "Claude Code",
+    versionArgs: ["--version"] as const
+  },
+  {
+    authArgs: ["auth", "status"] as const,
+    command: "codex",
+    id: "codex-cli",
+    kind: "codex-cli",
+    label: "Codex CLI",
+    versionArgs: ["--version"] as const
+  }
+] satisfies Array<{
+  authArgs: readonly string[];
+  command: string;
+  id: DesktopExternalAgentId;
+  kind: DesktopExternalAgentId;
+  label: string;
+  versionArgs: readonly string[];
+}>;
+
+const CLI_RUNTIME_ENTRY_PARTS = ["cli-runtime", "dist", "bin", "htmlslide.js"] as const;
 const DEFAULT_ACCENT = "#315fcb";
 const DEFAULT_ACCENTS = [DEFAULT_ACCENT, "#267a4f", "#9a6410", "#286a8d", "#7b4ab8", "#bc3a3a"];
 
@@ -116,6 +225,132 @@ export async function readDesktopLibrary(
 export async function writeDesktopLibrary(libraryPath: string, library: DesktopLibrary): Promise<void> {
   await fs.mkdir(path.dirname(libraryPath), { recursive: true });
   await fs.writeFile(libraryPath, `${JSON.stringify(library, null, 2)}\n`);
+}
+
+export async function readAiEngineSettings(settingsPath: string): Promise<DesktopAiEngineSettings> {
+  try {
+    const contents = await fs.readFile(settingsPath, "utf8");
+    return sanitizeAiEngineSettings(JSON.parse(contents));
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return sanitizeAiEngineSettings(DEFAULT_AI_ENGINE_SETTINGS);
+    }
+    throw error;
+  }
+}
+
+export async function writeAiEngineSettings(
+  settingsPath: string,
+  settings: unknown
+): Promise<DesktopAiEngineSettings> {
+  const safeSettings = sanitizeAiEngineSettings(settings);
+  await fs.mkdir(path.dirname(settingsPath), { recursive: true });
+  await fs.writeFile(settingsPath, `${JSON.stringify(safeSettings, null, 2)}\n`);
+  return safeSettings;
+}
+
+export async function detectExternalAgentStatuses({
+  cwd = process.cwd(),
+  now = new Date().toISOString(),
+  runner = runDetectorCommand
+}: {
+  cwd?: string;
+  now?: string;
+  runner?: ExternalAgentDetectorRunner;
+} = {}): Promise<DesktopExternalAgentStatus[]> {
+  const detected = await Promise.all(
+    EXTERNAL_AGENT_SPECS.map(async (spec) => {
+      const versionResult = await runDetectorSafely(runner, {
+        args: spec.versionArgs,
+        command: spec.command,
+        cwd,
+        timeoutMs: 3_000
+      });
+
+      if (versionResult.kind === "not-installed") {
+        return externalAgentStatus({
+          checkedAt: now,
+          command: spec.command,
+          id: spec.id,
+          installed: false,
+          label: spec.label,
+          status: "not-installed",
+          summary: versionResult.detail
+        });
+      }
+
+      if (versionResult.result.exitCode !== 0) {
+        return externalAgentStatus({
+          checkedAt: now,
+          command: spec.command,
+          id: spec.id,
+          installed: true,
+          label: spec.label,
+          rawVersion: versionResult.result.stderr || versionResult.result.stdout,
+          status: "unavailable",
+          summary: `Version check exited with ${versionResult.result.exitCode}`
+        });
+      }
+
+      const authResult = await runDetectorSafely(runner, {
+        args: spec.authArgs,
+        command: spec.command,
+        cwd,
+        timeoutMs: 3_000
+      });
+      const version = firstNonEmptyLine(versionResult.result.stdout) ?? firstNonEmptyLine(versionResult.result.stderr);
+
+      if (authResult.kind === "not-installed") {
+        return externalAgentStatus({
+          checkedAt: now,
+          command: spec.command,
+          id: spec.id,
+          installed: false,
+          label: spec.label,
+          status: "not-installed",
+          summary: authResult.detail
+        });
+      }
+
+      if (authResult.result.exitCode !== 0) {
+        return externalAgentStatus({
+          checkedAt: now,
+          command: spec.command,
+          id: spec.id,
+          installed: true,
+          label: spec.label,
+          status: "not-authenticated",
+          summary: authResult.result.stderr || authResult.result.stdout || "Authentication status is unavailable",
+          version
+        });
+      }
+
+      return externalAgentStatus({
+        authenticated: true,
+        checkedAt: now,
+        command: spec.command,
+        id: spec.id,
+        installed: true,
+        label: spec.label,
+        status: "ready",
+        summary: "Detected and authenticated",
+        version
+      });
+    })
+  );
+
+  return [
+    ...detected,
+    externalAgentStatus({
+      checkedAt: now,
+      command: "",
+      id: "generic",
+      installed: false,
+      label: "Generic command",
+      status: "unavailable",
+      summary: "Add a custom command template before detection"
+    })
+  ];
 }
 
 export async function upsertRecentProject(
@@ -196,8 +431,20 @@ export async function loadProjectPreview(projectPath: string): Promise<DesktopPr
 export async function runHtmlslideCli(args: string[], options: CliRunnerOptions): Promise<CliRunResult> {
   const timeoutMs = options.timeoutMs ?? 120_000;
   const command = process.execPath;
-  const commandArgs = [path.join(options.rootPath, "packages", "cli", "dist", "bin", "htmlslide.js"), ...args];
-  const cliExists = await pathExists(commandArgs[0] ?? "");
+  const cliPath = options.cliPath ?? (options.rootPath ? path.join(options.rootPath, "packages", "cli", "dist", "bin", "htmlslide.js") : undefined);
+
+  if (!cliPath) {
+    return {
+      ok: false,
+      exitCode: 4,
+      stdout: "",
+      stderr: "",
+      error: "HTMLslide CLI runtime was not configured for this desktop build."
+    };
+  }
+
+  const commandArgs = [cliPath, ...args];
+  const cliExists = await pathExists(cliPath);
 
   if (!cliExists) {
     return {
@@ -205,15 +452,16 @@ export async function runHtmlslideCli(args: string[], options: CliRunnerOptions)
       exitCode: 4,
       stdout: "",
       stderr: "",
-      error: "HTMLslide CLI build was not found. Run pnpm build before using desktop CLI-backed actions."
+      error: `HTMLslide CLI runtime was not found at ${cliPath}.`
     };
   }
 
   return new Promise<CliRunResult>((resolve) => {
     const child = spawn(command, commandArgs, {
-      cwd: options.rootPath,
+      cwd: options.cwd ?? options.rootPath ?? path.dirname(cliPath),
       env: {
         ...process.env,
+        ELECTRON_RUN_AS_NODE: "1",
         ...options.env
       },
       stdio: ["ignore", "pipe", "pipe"]
@@ -274,6 +522,42 @@ export async function runHtmlslideCli(args: string[], options: CliRunnerOptions)
   });
 }
 
+export function findCliRuntime(startPath: string, resourcesPath?: string): CliRuntime | undefined {
+  const repoRoot = findRepositoryRoot(startPath);
+  if (repoRoot) {
+    const cliPath = path.join(repoRoot, "packages", "cli", "dist", "bin", "htmlslide.js");
+    if (pathExistsSync(cliPath)) {
+      return {
+        mode: "development",
+        cliPath,
+        cwd: repoRoot,
+        rootPath: repoRoot
+      };
+    }
+  }
+
+  const processResourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  const resourceRoots = [
+    resourcesPath,
+    typeof processResourcesPath === "string" ? processResourcesPath : undefined,
+    path.resolve(startPath, "..", "..", "..")
+  ].filter((value): value is string => Boolean(value));
+
+  for (const resourceRoot of resourceRoots) {
+    const appResourcesRoot = path.join(resourceRoot, "app");
+    const cliPath = path.join(appResourcesRoot, ...CLI_RUNTIME_ENTRY_PARTS);
+    if (pathExistsSync(cliPath)) {
+      return {
+        mode: "packaged",
+        cliPath,
+        cwd: path.join(appResourcesRoot, "cli-runtime")
+      };
+    }
+  }
+
+  return undefined;
+}
+
 export function findRepositoryRoot(startPath: string): string | undefined {
   let current = path.resolve(startPath);
   while (true) {
@@ -287,6 +571,190 @@ export function findRepositoryRoot(startPath: string): string | undefined {
     }
     current = parent;
   }
+}
+
+function sanitizeAiEngineSettings(value: unknown): DesktopAiEngineSettings {
+  if (!isRecord(value)) {
+    return { ...DEFAULT_AI_ENGINE_SETTINGS, apiKey: { ...DEFAULT_AI_ENGINE_SETTINGS.apiKey }, externalAgent: { ...DEFAULT_AI_ENGINE_SETTINGS.externalAgent } };
+  }
+
+  const apiKey = isRecord(value.apiKey) ? value.apiKey : {};
+  const externalAgent = isRecord(value.externalAgent) ? value.externalAgent : {};
+  const provider = normalizeApiKeyProvider(apiKey.provider);
+
+  return {
+    apiKey: {
+      hasKey: apiKey.hasKey === true,
+      model: normalizeModel(apiKey.model, provider),
+      provider,
+      updatedAt: typeof apiKey.updatedAt === "string" ? apiKey.updatedAt : undefined
+    },
+    externalAgent: {
+      customCommand: typeof externalAgent.customCommand === "string" ? externalAgent.customCommand.trim() : "",
+      selectedId: normalizeExternalAgentId(externalAgent.selectedId),
+      updatedAt: typeof externalAgent.updatedAt === "string" ? externalAgent.updatedAt : undefined
+    },
+    mode: normalizeAiEngineMode(value.mode),
+    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : undefined,
+    version: 1
+  };
+}
+
+function normalizeAiEngineMode(value: unknown): DesktopAiEngineMode {
+  return value === "htmlslide-agent" || value === "external-agent" || value === "no-ai" ? value : "no-ai";
+}
+
+function normalizeApiKeyProvider(value: unknown): DesktopApiKeyProvider {
+  return value === "anthropic" || value === "compatible" || value === "openai" ? value : "openai";
+}
+
+function normalizeExternalAgentId(value: unknown): DesktopExternalAgentId {
+  return value === "claude-code" || value === "generic" || value === "codex-cli" ? value : "codex-cli";
+}
+
+function normalizeModel(value: unknown, provider: DesktopApiKeyProvider): string {
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value.trim();
+  }
+
+  if (provider === "anthropic") {
+    return "claude-sonnet-4.5";
+  }
+
+  if (provider === "compatible") {
+    return "openai-compatible/default";
+  }
+
+  return "gpt-5-mini";
+}
+
+function externalAgentStatus({
+  authenticated = false,
+  checkedAt,
+  command,
+  id,
+  installed,
+  label,
+  status,
+  summary,
+  version
+}: {
+  authenticated?: boolean;
+  checkedAt: string;
+  command: string;
+  id: DesktopExternalAgentId;
+  installed: boolean;
+  label: string;
+  rawVersion?: string;
+  status: DesktopExternalAgentDetectionStatus;
+  summary: string;
+  version?: string;
+}): DesktopExternalAgentStatus {
+  return {
+    authenticated,
+    capabilities: { ...DEFAULT_AGENT_CAPABILITIES },
+    checkedAt,
+    command,
+    id,
+    installed,
+    kind: id,
+    label,
+    status,
+    summary: collapseWhitespace(summary),
+    version
+  };
+}
+
+type DetectorCommandOutcome =
+  | {
+      kind: "result";
+      result: Awaited<ReturnType<ExternalAgentDetectorRunner>>;
+    }
+  | {
+      detail: string;
+      kind: "not-installed";
+    };
+
+async function runDetectorSafely(
+  runner: ExternalAgentDetectorRunner,
+  invocation: Parameters<ExternalAgentDetectorRunner>[0]
+): Promise<DetectorCommandOutcome> {
+  try {
+    const result = await runner(invocation);
+    if (isCommandNotFoundText(result.stderr)) {
+      return {
+        detail: result.stderr,
+        kind: "not-installed"
+      };
+    }
+    return {
+      kind: "result",
+      result
+    };
+  } catch (error) {
+    if (isCommandNotFoundError(error)) {
+      return {
+        detail: error instanceof Error ? error.message : String(error),
+        kind: "not-installed"
+      };
+    }
+    throw error;
+  }
+}
+
+function runDetectorCommand(invocation: Parameters<ExternalAgentDetectorRunner>[0]): Promise<Awaited<ReturnType<ExternalAgentDetectorRunner>>> {
+  return new Promise((resolve) => {
+    const child = spawn(invocation.command, [...invocation.args], {
+      cwd: invocation.cwd,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      child.kill("SIGTERM");
+      resolve({
+        exitCode: 1,
+        stdout,
+        stderr: stderr || `Command ${invocation.command} timed out after ${invocation.timeoutMs}ms.`
+      });
+    }, invocation.timeoutMs);
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.once("error", (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      resolve({
+        exitCode: 1,
+        stdout,
+        stderr: error.message
+      });
+    });
+    child.once("exit", (code) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      resolve({
+        exitCode: code ?? 1,
+        stdout,
+        stderr
+      });
+    });
+  });
 }
 
 async function readDeckManifest(projectPath: string): Promise<DeckManifest> {
@@ -388,6 +856,17 @@ function parseJsonOutput(stdout: string): unknown {
   }
 }
 
+function firstNonEmptyLine(output: string): string | undefined {
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+}
+
+function collapseWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
 async function pathExists(filePath: string): Promise<boolean> {
   try {
     await fs.access(filePath);
@@ -415,6 +894,23 @@ function isProjectRecord(value: unknown): value is DesktopProjectRecord {
     typeof record.slideCount === "number" &&
     typeof record.status === "string"
   );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isCommandNotFoundError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { readonly code?: unknown }).code === "ENOENT"
+  );
+}
+
+function isCommandNotFoundText(stderr: string): boolean {
+  return /\bENOENT\b|command not found|not recognized as/.test(stderr);
 }
 
 function isMissingFileError(error: unknown): boolean {

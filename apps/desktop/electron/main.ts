@@ -5,41 +5,47 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import {
   defaultWorkspacePath,
-  findRepositoryRoot,
+  detectExternalAgentStatuses,
+  findCliRuntime,
   loadProjectPreview,
+  readAiEngineSettings,
   readDesktopLibrary,
   runHtmlslideCli,
   summarizeDeckProject,
   upsertRecentProject,
+  writeAiEngineSettings,
   writeDesktopLibrary,
+  type DesktopAiEngineSettings,
   type DesktopProjectRecord
 } from "./desktop-services.js";
 
 const currentDir = fileURLToPath(new URL(".", import.meta.url));
 const devServerUrl = process.env.HTMLSLIDE_DESKTOP_DEV_SERVER_URL;
-const repoRoot = findRepositoryRoot(currentDir);
+const cliRuntime = findCliRuntime(currentDir, process.resourcesPath);
 
 const libraryPath = (): string => join(app.getPath("userData"), "library.json");
+const aiEngineSettingsPath = (): string => join(app.getPath("userData"), "ai-engine-settings.json");
 const configuredWorkspacePath = (): string =>
   process.env.HTMLSLIDE_DEFAULT_WORKSPACE
     ? resolve(process.env.HTMLSLIDE_DEFAULT_WORKSPACE)
     : defaultWorkspacePath();
 
-const cliRootPath = (): string | undefined => repoRoot;
-
 const invokeCli = async (args: string[]) => {
-  const rootPath = cliRootPath();
-  if (!rootPath) {
+  if (!cliRuntime) {
     return {
       ok: false,
       exitCode: 4,
       stdout: "",
       stderr: "",
-      error: "Packaged CLI runtime is not available yet. Open a development build or install the CLI shim."
+      error: "HTMLslide CLI runtime is not available. Rebuild the app or reinstall HTMLslide."
     };
   }
 
-  return runHtmlslideCli(args, { rootPath });
+  return runHtmlslideCli(args, {
+    cliPath: cliRuntime.cliPath,
+    cwd: cliRuntime.cwd,
+    rootPath: cliRuntime.rootPath
+  });
 };
 
 function registerIpcHandlers(): void {
@@ -52,9 +58,10 @@ function registerIpcHandlers(): void {
       libraryPath: libraryPath(),
       workspacePath: library.defaultWorkspace,
       cli: {
-        available: Boolean(cliRootPath()),
-        mode: cliRootPath() ? "development" : "packaged-missing",
-        rootPath: cliRootPath()
+        available: Boolean(cliRuntime),
+        mode: cliRuntime?.mode ?? "missing",
+        rootPath: cliRuntime?.rootPath,
+        cliPath: cliRuntime?.cliPath
       }
     };
   });
@@ -63,6 +70,14 @@ function registerIpcHandlers(): void {
     const library = await readDesktopLibrary(libraryPath(), configuredWorkspacePath());
     return library.recentProjects;
   });
+
+  ipcMain.handle("htmlslide:get-ai-engine-settings", async () => readAiEngineSettings(aiEngineSettingsPath()));
+
+  ipcMain.handle("htmlslide:save-ai-engine-settings", async (_event, settings: DesktopAiEngineSettings) =>
+    writeAiEngineSettings(aiEngineSettingsPath(), settings)
+  );
+
+  ipcMain.handle("htmlslide:detect-external-agents", async () => detectExternalAgentStatuses());
 
   ipcMain.handle("htmlslide:choose-workspace", async () => {
     const result = await dialog.showOpenDialog({
@@ -83,15 +98,23 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle("htmlslide:open-project-dialog", async () => {
-    const result = await dialog.showOpenDialog({
-      buttonLabel: "Open Deck",
-      properties: ["openDirectory"]
-    });
-    if (result.canceled || !result.filePaths[0]) {
-      return undefined;
+    const selectedProjectPath = process.env.HTMLSLIDE_E2E_OPEN_PROJECT_PATH
+      ? resolve(process.env.HTMLSLIDE_E2E_OPEN_PROJECT_PATH)
+      : undefined;
+
+    let projectPath = selectedProjectPath;
+    if (!projectPath) {
+      const result = await dialog.showOpenDialog({
+        buttonLabel: "Open Deck",
+        properties: ["openDirectory"]
+      });
+      if (result.canceled || !result.filePaths[0]) {
+        return undefined;
+      }
+      projectPath = result.filePaths[0];
     }
 
-    const project = await summarizeDeckProject(result.filePaths[0]);
+    const project = await summarizeDeckProject(projectPath);
     await upsertRecentProject(libraryPath(), project, configuredWorkspacePath());
     return loadProjectPreview(project.path);
   });
@@ -165,7 +188,8 @@ function createWindow(): void {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      preload: join(currentDir, "preload.js")
+      preload: join(currentDir, "preload.cjs"),
+      sandbox: false
     },
     width: 1440
   });

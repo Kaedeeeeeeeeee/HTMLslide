@@ -25,6 +25,14 @@ import {
   toggleWhiteScreen,
   validateDeckPackage
 } from "../src/index";
+import {
+  applyPresenterKeyboardAction as applySessionKeyboardAction,
+  createPresenterSession as createSessionPresenterSession,
+  createRehearsalPresenterDeck,
+  getPresenterKeyboardAction as getSessionKeyboardAction,
+  getPresenterSessionView as getSessionPresenterView,
+  parseDurationLabel
+} from "../src/session";
 
 const ZIP_DATE = new Date("2000-01-01T00:00:00.000Z");
 const PNG_BYTES = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -279,5 +287,72 @@ describe("@htmlslide/presenter session helpers", () => {
       state = applyPresenterKeyboardAction(deckPackage, state, "jump", { jumpSlideId: "001-title" });
       expect(getCurrentSlide(deckPackage, state).id).toBe("001-title");
     });
+  });
+});
+
+describe("@htmlslide/presenter rehearsal deck helpers", () => {
+  it("creates a browser-safe presenter deck from loaded preview slides", () => {
+    const deck = createRehearsalPresenterDeck({
+      title: "Loaded Preview",
+      notesFontSizePx: 500,
+      slides: [
+        {
+          id: "intro",
+          title: "Intro",
+          source: "slides/intro.html",
+          notesPath: "notes/intro.md",
+          notesMarkdown: "  Open with the local project path.  ",
+          duration: "1:05"
+        },
+        {
+          id: "demo",
+          title: "Demo",
+          notesMarkdown: "",
+          durationSec: 90
+        },
+        {
+          id: "close",
+          title: "Close",
+          duration: "not a duration"
+        }
+      ]
+    });
+
+    expect(deck.title).toBe("Loaded Preview");
+    expect(deck.settings.mode).toBe("rehearsal");
+    expect(deck.settings.notes.fontSizePx).toBe(40);
+    expect(deck.slides.map((slide) => [slide.id, slide.slideNumber, slide.durationSec, slide.hasNotes])).toEqual([
+      ["intro", 1, 65, true],
+      ["demo", 2, 90, false],
+      ["close", 3, 60, false]
+    ]);
+    expect(deck.slides[0]?.notesMarkdown).toBe("Open with the local project path.");
+    expect(deck.slides[0]?.thumbnail.bytes.byteLength).toBe(0);
+  });
+
+  it("drives rehearsal navigation and keyboard actions without deckpkg artifacts", () => {
+    const deck = createRehearsalPresenterDeck({
+      title: "Keyboard Preview",
+      slides: [
+        { id: "one", title: "One", duration: "0:10" },
+        { id: "two", title: "Two", duration: "0:20" }
+      ]
+    });
+    let state = createSessionPresenterSession(deck, { initialSlideId: "one", nowMs: 5_000 });
+
+    expect(parseDurationLabel("1:02:03")).toBe(3723);
+    expect(getSessionKeyboardAction({ key: " " })).toBe("next");
+
+    state = applySessionKeyboardAction(deck, state, "next");
+    expect(getSessionPresenterView(deck, state, 10_000).currentSlide.id).toBe("two");
+
+    state = applySessionKeyboardAction(deck, state, "jump", { jumpSlideNumber: 1 });
+    state = applySessionKeyboardAction(deck, state, "pause-resume-timer", { nowMs: 12_000 });
+    const view = getSessionPresenterView(deck, state, 30_000);
+
+    expect(view.currentSlide.id).toBe("one");
+    expect(view.timerStatus).toBe("paused");
+    expect(view.elapsedMs).toBe(7_000);
+    expect(view.remainingMs).toBe(23_000);
   });
 });

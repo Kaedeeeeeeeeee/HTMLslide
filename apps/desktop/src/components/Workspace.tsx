@@ -1,4 +1,16 @@
 import {
+  applyPresenterKeyboardAction,
+  createPresenterSession,
+  createRehearsalPresenterDeck,
+  getPresenterKeyboardAction,
+  getPresenterSessionView,
+  PRESENTER_KEYBOARD_CONTROLS,
+  type PresenterDeck,
+  type PresenterKeyboardAction,
+  type PresenterSessionState,
+  type PresenterSessionView
+} from "@htmlslide/presenter/session";
+import {
   Button,
   IconButton,
   PanelHeader,
@@ -13,6 +25,8 @@ import {
   Activity,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CircleDot,
   Clock3,
   Download,
@@ -26,12 +40,25 @@ import {
   Send,
   Settings2,
   ShieldCheck,
+  Shrink,
   Sparkles,
   Square,
+  TimerReset,
   TerminalSquare,
-  Upload
+  Text,
+  Upload,
+  X
 } from "lucide-react";
-import type { CSSProperties, FormEvent, ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+  type ReactNode
+} from "react";
 import {
   buildRuntimeStages,
   countIssuesBySeverity,
@@ -65,6 +92,7 @@ interface WorkspaceProps {
   onQaFilterChange: (filter: QaFilter) => void;
   onRunAction: (action: "start" | "pause" | "cancel" | "retry") => void;
   onSelectSlide: (slideId: string) => void;
+  onSettingsOpen: () => void;
   onToolbarAction: (action: "generate" | "check" | "export" | "present") => void;
 }
 
@@ -116,6 +144,7 @@ export function Workspace({
   onQaFilterChange,
   onRunAction,
   onSelectSlide,
+  onSettingsOpen,
   onToolbarAction,
   operationStatus,
   project,
@@ -132,6 +161,66 @@ export function Workspace({
   const issueCounts = countIssuesBySeverity(qaIssues);
   const selectedIssueCounts = countIssuesBySeverity(selectedSlideIssues);
   const runtimeStages = buildRuntimeStages(stages, activeStageIndex, running);
+  const presenterDeck = useMemo(
+    () =>
+      slides.length > 0
+        ? createRehearsalPresenterDeck({
+            title: project.title,
+            slides: slides.map((slide) => ({
+              id: slide.id,
+              title: slide.title,
+              source: slide.sourcePath,
+              notesPath: slide.notesPath,
+              notesMarkdown: slide.speakerNotes,
+              duration: slide.duration
+            }))
+          })
+        : null,
+    [project.title, slides]
+  );
+  const [presenterSession, setPresenterSession] = useState<PresenterSessionState | null>(null);
+
+  useEffect(() => {
+    setPresenterSession(null);
+  }, [project.id, slides]);
+
+  const handlePresenterSessionChange = useCallback(
+    (nextSession: PresenterSessionState): void => {
+      setPresenterSession(nextSession);
+      const nextSlide = slides[nextSession.slideIndex];
+      if (nextSlide) {
+        onSelectSlide(nextSlide.id);
+      }
+    },
+    [onSelectSlide, slides]
+  );
+
+  const handleOpenPresenter = useCallback((): void => {
+    if (!presenterDeck) {
+      onToolbarAction("present");
+      return;
+    }
+
+    const selectedIndex = Math.max(0, slides.findIndex((slide) => slide.id === selectedSlideId));
+    setPresenterSession(
+      createPresenterSession(presenterDeck, {
+        initialSlideIndex: selectedIndex,
+        nowMs: Date.now()
+      })
+    );
+    onToolbarAction("present");
+  }, [onToolbarAction, presenterDeck, selectedSlideId, slides]);
+
+  const handleWorkspaceToolbarAction = useCallback(
+    (action: "generate" | "check" | "export" | "present"): void => {
+      if (action === "present") {
+        handleOpenPresenter();
+        return;
+      }
+      onToolbarAction(action);
+    },
+    [handleOpenPresenter, onToolbarAction]
+  );
 
   if (!currentSlide) {
     return null;
@@ -143,7 +232,8 @@ export function Workspace({
         issueCounts={issueCounts}
         onInspectorTabChange={onInspectorTabChange}
         onRunAction={onRunAction}
-        onToolbarAction={onToolbarAction}
+        onSettingsOpen={onSettingsOpen}
+        onToolbarAction={handleWorkspaceToolbarAction}
         operationStatus={operationStatus}
         project={project}
         running={running}
@@ -168,7 +258,7 @@ export function Workspace({
           issueCounts={selectedIssueCounts}
           issues={selectedIssues}
           onQaFilterChange={onQaFilterChange}
-          onToolbarAction={onToolbarAction}
+          onToolbarAction={handleWorkspaceToolbarAction}
           operationStatus={operationStatus}
           onTabChange={onInspectorTabChange}
           qaFilter={qaFilter}
@@ -183,8 +273,399 @@ export function Workspace({
         running={running}
         stages={runtimeStages}
       />
+
+      {presenterDeck && presenterSession ? (
+        <PresenterMode
+          deck={presenterDeck}
+          onExit={() => setPresenterSession(null)}
+          onSessionChange={handlePresenterSessionChange}
+          project={project}
+          session={presenterSession}
+          slides={slides}
+        />
+      ) : null}
     </main>
   );
+}
+
+interface PresenterModeProps {
+  deck: PresenterDeck;
+  project: ProjectSummary;
+  session: PresenterSessionState;
+  slides: SlideSummary[];
+  onExit: () => void;
+  onSessionChange: (session: PresenterSessionState) => void;
+}
+
+function PresenterMode({
+  deck,
+  onExit,
+  onSessionChange,
+  project,
+  session,
+  slides
+}: PresenterModeProps): ReactNode {
+  const shellRef = useRef<HTMLElement | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const view = useMemo(
+    () => getPresenterSessionView(deck, session, nowMs),
+    [deck, nowMs, session]
+  );
+  const currentSlide = slides[view.slideIndex] ?? slides[0];
+  const nextSlide = slides[view.slideIndex + 1] ?? null;
+
+  const runPresenterAction = useCallback(
+    (action: PresenterKeyboardAction, jumpSlideIndex?: number): void => {
+      if (action === "exit") {
+        onExit();
+        return;
+      }
+
+      if (action === "fullscreen") {
+        togglePresenterFullscreen(shellRef.current);
+        return;
+      }
+
+      if (action === "jump" && jumpSlideIndex === undefined) {
+        const answer = window.prompt("Jump to slide number", String(view.slideNumber));
+        if (!answer) {
+          return;
+        }
+        const slideNumber = Number(answer);
+        onSessionChange(
+          applyPresenterKeyboardAction(deck, session, action, {
+            jumpSlideNumber: slideNumber
+          })
+        );
+        return;
+      }
+
+      onSessionChange(
+        applyPresenterKeyboardAction(deck, session, action, {
+          jumpSlideIndex,
+          nowMs: Date.now()
+        })
+      );
+    },
+    [deck, onExit, onSessionChange, session, view.slideNumber]
+  );
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (isTextInputTarget(event.target)) {
+        return;
+      }
+
+      const action = getPresenterKeyboardAction({ key: event.key });
+      if (!action) {
+        return;
+      }
+
+      event.preventDefault();
+      runPresenterAction(action);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [runPresenterAction]);
+
+  if (!currentSlide) {
+    return null;
+  }
+
+  return (
+    <section
+      aria-label="Presenter rehearsal mode"
+      className={`presenter-mode presenter-mode--${view.screen}`}
+      ref={shellRef}
+    >
+      <header className="presenter-mode__topbar">
+        <div className="workspace-title">
+          <span className="brand-mark">Hs</span>
+          <div>
+            <strong>{project.title}</strong>
+            <span>Windowed Presenter / Rehearsal Mode</span>
+          </div>
+        </div>
+        <div className="presenter-mode__topbar-actions">
+          <StatusPill tone={view.timerStatus === "running" ? "success" : "warning"}>
+            {view.timerStatus}
+          </StatusPill>
+          <StatusPill tone="info">
+            {view.slideNumber} / {view.slideCount}
+          </StatusPill>
+          <IconButton
+            icon={<X />}
+            label="Exit presenter mode"
+            onClick={onExit}
+          />
+        </div>
+      </header>
+
+      <div className="presenter-mode__body">
+        <section className="presenter-current">
+          <PanelHeader
+            actions={
+              <PresenterTransport
+                onAction={runPresenterAction}
+                view={view}
+              />
+            }
+            eyebrow="Current slide"
+            title={currentSlide.title}
+          />
+          <PresenterSlidePreview
+            slide={currentSlide}
+            variant="current"
+          />
+          {view.screen !== "normal" ? (
+            <div className="presenter-screen-cover">
+              <strong>{view.screen === "black" ? "Black screen" : "White screen"}</strong>
+            </div>
+          ) : null}
+        </section>
+
+        <aside className="presenter-console">
+          <PresenterTimerPanel view={view} />
+
+          <section className="presenter-panel">
+            <PanelHeader
+              eyebrow={nextSlide ? `Slide ${view.slideNumber + 1}` : "End"}
+              title="Next"
+            />
+            {nextSlide ? (
+              <PresenterSlidePreview
+                slide={nextSlide}
+                variant="next"
+              />
+            ) : (
+              <div className="presenter-empty-next">
+                <CheckCircle2 />
+                <strong>Last slide</strong>
+                <span>Stay on closing or exit presenter mode.</span>
+              </div>
+            )}
+          </section>
+
+          <section className="presenter-panel presenter-notes-panel">
+            <PanelHeader
+              actions={
+                <div className="presenter-notes-actions">
+                  <IconButton
+                    icon={<Text />}
+                    label="Decrease notes font size"
+                    onClick={() => runPresenterAction("decrease-notes-font-size")}
+                  />
+                  <IconButton
+                    icon={<Text />}
+                    label="Increase notes font size"
+                    onClick={() => runPresenterAction("increase-notes-font-size")}
+                  />
+                </div>
+              }
+              eyebrow={currentSlide.duration}
+              title="Speaker Notes"
+            />
+            <div
+              className="presenter-notes"
+              style={{ fontSize: `${view.notesFontSizePx}px` }}
+            >
+              {view.currentSlide.notesMarkdown.length > 0
+                ? view.currentSlide.notesMarkdown
+                : "No speaker notes for this slide."}
+            </div>
+          </section>
+
+          <section className="presenter-panel presenter-jump-panel">
+            <label className="field-row">
+              <span>Jump to slide</span>
+              <select
+                onChange={(event) => runPresenterAction("jump", Number(event.currentTarget.value))}
+                value={view.slideIndex}
+              >
+                {slides.map((slide, index) => (
+                  <option
+                    key={slide.id}
+                    value={index}
+                  >
+                    {slide.number} {slide.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </section>
+
+          <PresenterKeyboardHints />
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+function PresenterTransport({
+  onAction,
+  view
+}: {
+  view: PresenterSessionView;
+  onAction: (action: PresenterKeyboardAction) => void;
+}): ReactNode {
+  return (
+    <div className="presenter-transport">
+      <IconButton
+        disabled={view.slideIndex === 0}
+        icon={<ChevronLeft />}
+        label="Previous slide"
+        onClick={() => onAction("previous")}
+      />
+      <IconButton
+        disabled={view.slideIndex >= view.slideCount - 1}
+        icon={<ChevronRight />}
+        label="Next slide"
+        onClick={() => onAction("next")}
+      />
+      <IconButton
+        icon={view.timerStatus === "running" ? <Pause /> : <Play />}
+        label={view.timerStatus === "running" ? "Pause timer" : "Resume timer"}
+        onClick={() => onAction("pause-resume-timer")}
+        selected={view.timerStatus === "paused"}
+      />
+      <IconButton
+        icon={<Square />}
+        label="Toggle black screen"
+        onClick={() => onAction("toggle-black-screen")}
+        selected={view.screen === "black"}
+      />
+      <IconButton
+        icon={<Shrink />}
+        label="Toggle white screen"
+        onClick={() => onAction("toggle-white-screen")}
+        selected={view.screen === "white"}
+      />
+      <IconButton
+        icon={<Maximize2 />}
+        label="Toggle fullscreen"
+        onClick={() => onAction("fullscreen")}
+      />
+    </div>
+  );
+}
+
+function PresenterTimerPanel({ view }: { view: PresenterSessionView }): ReactNode {
+  return (
+    <section className="presenter-panel presenter-timer-panel">
+      <div>
+        <Clock3 />
+        <span>Elapsed</span>
+        <strong>{formatPresenterClock(view.elapsedMs)}</strong>
+      </div>
+      <div>
+        <TimerReset />
+        <span>Remaining</span>
+        <strong>{formatPresenterClock(view.remainingMs)}</strong>
+      </div>
+      <progress
+        aria-label="Presenter progress"
+        max={1}
+        value={view.progress}
+      />
+    </section>
+  );
+}
+
+function PresenterSlidePreview({
+  slide,
+  variant
+}: {
+  slide: SlideSummary;
+  variant: "current" | "next";
+}): ReactNode {
+  const hasSourcePreview = variant === "current" && Boolean(slide.html && slide.html.trim().length > 0);
+
+  return (
+    <article
+      aria-label={`${slide.title} presenter preview`}
+      className={[
+        "presenter-slide-preview",
+        hasSourcePreview ? "slide-canvas slide-canvas--source" : "presenter-slide-preview--fallback",
+        variant === "next" ? "presenter-slide-preview--next" : ""
+      ].filter(Boolean).join(" ")}
+      style={{ "--slide-accent": slide.accent } as CSSProperties}
+    >
+      {hasSourcePreview ? (
+        <div
+          className="slide-fragment-preview"
+          dangerouslySetInnerHTML={{ __html: slide.html ?? "" }}
+        />
+      ) : (
+        <>
+          <header>
+            <span>{slide.section}</span>
+            <strong>{slide.duration}</strong>
+          </header>
+          <section>
+            <h1>{slide.title}</h1>
+            <ul>
+              {slide.bullets.slice(0, variant === "next" ? 2 : 4).map((bullet) => (
+                <li key={bullet}>{bullet}</li>
+              ))}
+            </ul>
+          </section>
+        </>
+      )}
+    </article>
+  );
+}
+
+function PresenterKeyboardHints(): ReactNode {
+  return (
+    <section className="presenter-panel presenter-keyboard">
+      <PanelHeader title="Keyboard" />
+      <div>
+        {PRESENTER_KEYBOARD_CONTROLS.map((control) => (
+          <span key={control.action}>
+            <kbd>{control.keys.join(" / ")}</kbd>
+            {control.label}
+          </span>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function formatPresenterClock(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function isTextInputTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName);
+}
+
+function togglePresenterFullscreen(element: HTMLElement | null): void {
+  if (!element) {
+    return;
+  }
+
+  if (document.fullscreenElement) {
+    void document.exitFullscreen();
+    return;
+  }
+
+  void element.requestFullscreen();
 }
 
 interface ToolbarProps {
@@ -194,6 +675,7 @@ interface ToolbarProps {
   running: boolean;
   onInspectorTabChange: (tab: InspectorTab) => void;
   onRunAction: (action: "start" | "pause" | "cancel" | "retry") => void;
+  onSettingsOpen: () => void;
   onToolbarAction: (action: "generate" | "check" | "export" | "present") => void;
 }
 
@@ -201,6 +683,7 @@ function Toolbar({
   issueCounts,
   onInspectorTabChange,
   onRunAction,
+  onSettingsOpen,
   onToolbarAction,
   operationStatus,
   project,
@@ -256,6 +739,7 @@ function Toolbar({
         <IconButton
           icon={<Settings2 />}
           label="Workspace settings"
+          onClick={onSettingsOpen}
         />
       </div>
     </header>

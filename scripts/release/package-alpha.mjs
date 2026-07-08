@@ -21,6 +21,10 @@ function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd ?? root,
     encoding: "utf8",
+    env: {
+      ...process.env,
+      ...options.env
+    },
     stdio: options.stdio ?? "inherit"
   });
 
@@ -96,6 +100,67 @@ async function writeRuntimePackage(appResourcesPath, desktopPackage, version) {
   );
 }
 
+const cliRuntimePackages = [
+  "@htmlslide/core",
+  "@htmlslide/renderer",
+  "@htmlslide/agent",
+  "@htmlslide/linter",
+  "@htmlslide/compiler",
+  "@htmlslide/cli"
+];
+
+function buildCliRuntimePackages() {
+  for (const packageName of cliRuntimePackages) {
+    run("pnpm", ["--filter", packageName, "build"]);
+  }
+}
+
+async function pruneCliRuntime(cliRuntimePath) {
+  const packageNames = ["agent", "cli", "compiler", "core", "linter", "renderer"];
+  const redundantPaths = [
+    path.join(cliRuntimePath, "__tests__"),
+    path.join(cliRuntimePath, "src"),
+    path.join(cliRuntimePath, "test"),
+    path.join(cliRuntimePath, "tsconfig.json"),
+    path.join(cliRuntimePath, "tsconfig.tsbuildinfo")
+  ];
+
+  for (const packageName of packageNames) {
+    const packagePath = path.join(cliRuntimePath, "node_modules", "@htmlslide", packageName);
+    redundantPaths.push(
+      path.join(packagePath, "__tests__"),
+      path.join(packagePath, "src"),
+      path.join(packagePath, "test"),
+      path.join(packagePath, "tsconfig.json"),
+      path.join(packagePath, "tsconfig.tsbuildinfo")
+    );
+  }
+
+  await Promise.all(redundantPaths.map((targetPath) => rm(targetPath, { recursive: true, force: true })));
+}
+
+async function deployCliRuntime(appResourcesPath) {
+  const cliRuntimePath = path.join(appResourcesPath, "cli-runtime");
+  const temporaryParentPath = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-runtime-"));
+  const temporaryRuntimePath = path.join(temporaryParentPath, "runtime");
+
+  try {
+    buildCliRuntimePackages();
+    await rm(cliRuntimePath, { recursive: true, force: true });
+    run("pnpm", ["--filter", "@htmlslide/cli", "deploy", "--prod", "--legacy", temporaryRuntimePath], {
+      env: { CI: "true" }
+    });
+    await pruneCliRuntime(temporaryRuntimePath);
+    await cp(temporaryRuntimePath, cliRuntimePath, {
+      recursive: true,
+      verbatimSymlinks: true
+    });
+    await requirePath(path.join(cliRuntimePath, "dist", "bin", "htmlslide.js"), "Packaged CLI runtime");
+  } finally {
+    await rm(temporaryParentPath, { recursive: true, force: true });
+  }
+}
+
 async function createDmg({ appPath, artifactBaseName, outputDir, volumeName }) {
   const dmgPath = path.join(outputDir, `${artifactBaseName}.dmg`);
   const dmgRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-alpha-dmg-"));
@@ -148,7 +213,7 @@ await requirePath(electronApp, "Electron runtime");
 run("pnpm", ["--filter", desktopPackage.name, "build"]);
 
 await requirePath(path.join(desktopDist, "electron", "main.js"), "Desktop main process build");
-await requirePath(path.join(desktopDist, "electron", "preload.js"), "Desktop preload build");
+await requirePath(path.join(desktopDist, "electron", "preload.cjs"), "Desktop preload build");
 await requirePath(path.join(desktopDist, "renderer", "index.html"), "Desktop renderer build");
 
 await rm(outputDir, { recursive: true, force: true });
@@ -166,6 +231,7 @@ await cp(desktopDist, path.join(appResourcesPath, "dist"), {
   verbatimSymlinks: true
 });
 await writeRuntimePackage(appResourcesPath, desktopPackage, version);
+await deployCliRuntime(appResourcesPath);
 
 const plistPath = path.join(appPath, "Contents", "Info.plist");
 plistSet(plistPath, "CFBundleName", config.appName);

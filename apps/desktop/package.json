@@ -9,17 +9,22 @@
     "dev": "tsx scripts/dev.ts",
     "dev:web": "vite --host 127.0.0.1",
     "build": "rm -rf dist/electron && vite build && tsc -p electron/tsconfig.json",
+    "e2e": "pnpm build && playwright test -c e2e/playwright.config.ts",
+    "e2e:headed": "pnpm build && playwright test -c e2e/playwright.config.ts --headed",
     "package:alpha": "node ../../scripts/release/package-alpha.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p electron/tsconfig.json --noEmit",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
+    "@htmlslide/agent-adapters": "workspace:*",
+    "@htmlslide/presenter": "workspace:*",
     "@htmlslide/shared-ui": "workspace:*",
     "lucide-react": "^1.23.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.6.0",

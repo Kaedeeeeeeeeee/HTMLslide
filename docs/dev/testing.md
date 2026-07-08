@@ -33,6 +33,36 @@ Use deterministic fixtures and avoid real provider credentials in automated test
 - Security tests: API keys absent from logs/project files, protected-mode write boundaries, MCP traversal denial, third-party skill warnings, remote asset detection, malformed deckpkg rejection.
 - Performance tests: track warm project open, single-slide render, 20-slide export, 20-slide check, and presenter next-slide latency.
 
+## Desktop E2E Smoke
+
+Run the intentional Electron smoke path when changing the desktop shell, preload/IPC wiring, project library, or packaging-adjacent app startup behavior:
+
+```bash
+pnpm e2e:desktop
+```
+
+For local debugging with the app window visible:
+
+```bash
+pnpm e2e:desktop:headed
+```
+
+The smoke test builds `@htmlslide/desktop`, launches the built Electron main process with Playwright, verifies the app loads without a Vite/framework error overlay, skips onboarding into No AI mode, reaches the project library, mocks the native folder picker, and opens `packages/test-fixtures/decks/valid-full`.
+
+Artifacts are written under `tmp/playwright/` so they stay out of release artifacts and normal source diffs. This is a foundation smoke, not full coverage for first-run setup, BYOK providers, presenter mode, or native packaging install flows.
+
+## Packaging Verification
+
+Unsigned macOS alpha packaging is intentionally separate from default CI because it requires macOS tooling and can be slower than unit checks:
+
+```bash
+pnpm verify:package:alpha
+```
+
+This command delegates to the existing alpha package flow. On macOS it builds the desktop app, creates the unsigned `.app`, DMG, ZIP, and manifest under `dist/alpha`, and performs the package script's built-in existence checks for the Electron main process, preload, and renderer output.
+
+The `Alpha Package` GitHub Actions workflow remains the CI packaging verifier for scheduled, tagged, and manual runs. Do not add provider credentials or local machine state to this path.
+
 ## Visual Regression
 
 Golden deck output should include PNG comparisons and PDF metadata checks. Start with the plan thresholds unless the baseline proves unrealistic:

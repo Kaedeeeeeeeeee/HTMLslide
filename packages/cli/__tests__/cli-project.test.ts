@@ -177,8 +177,7 @@ describe("CLI project helpers", () => {
         "Contents",
         "Resources",
         "app",
-        "packages",
-        "cli",
+        "cli-runtime",
         "dist",
         "bin",
         "htmlslide.js"

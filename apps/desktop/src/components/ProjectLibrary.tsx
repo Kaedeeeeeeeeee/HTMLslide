@@ -10,11 +10,20 @@ import {
   Sparkles
 } from "lucide-react";
 import type { ReactNode } from "react";
-import type { ProjectSummary } from "../model";
+import type { AiEngineSettingsDraft, AiEngineSettings, ExternalAgentStatus } from "../settings-model";
+import type { LibrarySection, OperationStatus, ProjectSummary } from "../model";
+import { AiEngineSettingsPanel } from "./AiEngineSettings";
 
 interface ProjectLibraryProps {
+  activeSection: LibrarySection;
+  aiEngineSettings: AiEngineSettings;
+  aiEngineStatus: OperationStatus;
+  externalAgentStatuses: ExternalAgentStatus[];
   projects: ProjectSummary[];
   workspacePath?: string;
+  onLibrarySectionChange: (section: LibrarySection) => void;
+  onRefreshExternalAgents: () => void;
+  onSaveAiEngineSettings: (draft: AiEngineSettingsDraft) => void;
   onChooseWorkspace: () => void;
   onNewDeck: () => void;
   onOpenFolder: () => void;
@@ -22,11 +31,11 @@ interface ProjectLibraryProps {
 }
 
 const navItems = [
-  { icon: GalleryVerticalEnd, label: "Recent", selected: true },
-  { icon: Layers3, label: "Templates", selected: false },
-  { icon: Sparkles, label: "Skills", selected: false },
-  { icon: BookOpen, label: "AI Engines", selected: false },
-  { icon: Settings, label: "Settings", selected: false }
+  { icon: GalleryVerticalEnd, id: "recent", label: "Recent" },
+  { icon: Layers3, id: "templates", label: "Templates" },
+  { icon: Sparkles, id: "skills", label: "Skills" },
+  { icon: BookOpen, id: "ai-engines", label: "AI Engines" },
+  { icon: Settings, id: "settings", label: "Settings" }
 ] as const;
 
 function projectTone(status: ProjectSummary["status"]): "success" | "warning" | "danger" | "info" {
@@ -46,6 +55,13 @@ function projectTone(status: ProjectSummary["status"]): "success" | "warning" | 
 }
 
 export function ProjectLibrary({
+  activeSection,
+  aiEngineSettings,
+  aiEngineStatus,
+  externalAgentStatuses,
+  onLibrarySectionChange,
+  onRefreshExternalAgents,
+  onSaveAiEngineSettings,
   onChooseWorkspace,
   onNewDeck,
   onOpenFolder,
@@ -66,8 +82,9 @@ export function ProjectLibrary({
         <nav aria-label="Project library">
           {navItems.map((item) => (
             <button
-              className={item.selected ? "library-nav__item is-selected" : "library-nav__item"}
+              className={activeSection === item.id ? "library-nav__item is-selected" : "library-nav__item"}
               key={item.label}
+              onClick={() => onLibrarySectionChange(item.id)}
               type="button"
             >
               <item.icon />
@@ -78,60 +95,110 @@ export function ProjectLibrary({
       </aside>
 
       <section className="library-main">
-        <PanelHeader
-          actions={
-            <>
-              <Button
-                icon={<Plus />}
-                onClick={onNewDeck}
-                variant="primary"
-              >
-                New Deck
-              </Button>
-              <Button
-                icon={<FolderOpen />}
-                onClick={onOpenFolder}
-              >
-                Open Folder
-              </Button>
-              <Button icon={<Import />}>Import</Button>
-            </>
-          }
-          eyebrow={workspacePath ? `Workspace: ${workspacePath}` : "Recent workspaces"}
-          title="Projects"
-        />
+        {activeSection === "recent" ? (
+          <RecentProjects
+            onChooseWorkspace={onChooseWorkspace}
+            onNewDeck={onNewDeck}
+            onOpenFolder={onOpenFolder}
+            onOpenProject={onOpenProject}
+            projects={projects}
+            workspacePath={workspacePath}
+          />
+        ) : null}
 
-        {projects.length === 0 ? (
+        {activeSection === "ai-engines" || activeSection === "settings" ? (
+          <AiEngineSettingsPanel
+            onRefreshExternalAgents={onRefreshExternalAgents}
+            onSaveSettings={onSaveAiEngineSettings}
+            operationStatus={aiEngineStatus}
+            settings={aiEngineSettings}
+            statuses={externalAgentStatuses}
+          />
+        ) : null}
+
+        {activeSection === "templates" || activeSection === "skills" ? (
           <section className="library-empty">
-            <FolderOpen />
-            <h2>No deck projects yet</h2>
-            <p>Create a local deck in the default workspace or open an existing folder with deck.json.</p>
-            <div>
-              <Button
-                icon={<Plus />}
-                onClick={onNewDeck}
-                variant="primary"
-              >
-                New Deck
-              </Button>
-              <Button
-                icon={<FolderOpen />}
-                onClick={onOpenFolder}
-              >
-                Open Folder
-              </Button>
-              <Button
-                icon={<Settings />}
-                onClick={onChooseWorkspace}
-                variant="ghost"
-              >
-                Change Workspace
-              </Button>
-            </div>
+            <Layers3 />
+            <h2>{activeSection === "templates" ? "Templates" : "Skills"}</h2>
+            <p>This library area is queued for a later phase.</p>
           </section>
-        ) : (
-          <div className="library-grid">
-            {projects.map((project) => (
+        ) : null}
+      </section>
+    </main>
+  );
+}
+
+function RecentProjects({
+  onChooseWorkspace,
+  onNewDeck,
+  onOpenFolder,
+  onOpenProject,
+  projects,
+  workspacePath
+}: {
+  projects: ProjectSummary[];
+  workspacePath?: string;
+  onChooseWorkspace: () => void;
+  onNewDeck: () => void;
+  onOpenFolder: () => void;
+  onOpenProject: (projectId: string) => void;
+}): ReactNode {
+  return (
+    <>
+      <PanelHeader
+        actions={
+          <>
+            <Button
+              icon={<Plus />}
+              onClick={onNewDeck}
+              variant="primary"
+            >
+              New Deck
+            </Button>
+            <Button
+              icon={<FolderOpen />}
+              onClick={onOpenFolder}
+            >
+              Open Folder
+            </Button>
+            <Button icon={<Import />}>Import</Button>
+          </>
+        }
+        eyebrow={workspacePath ? `Workspace: ${workspacePath}` : "Recent workspaces"}
+        title="Projects"
+      />
+
+      {projects.length === 0 ? (
+        <section className="library-empty">
+          <FolderOpen />
+          <h2>No deck projects yet</h2>
+          <p>Create a local deck in the default workspace or open an existing folder with deck.json.</p>
+          <div>
+            <Button
+              icon={<Plus />}
+              onClick={onNewDeck}
+              variant="primary"
+            >
+              New Deck
+            </Button>
+            <Button
+              icon={<FolderOpen />}
+              onClick={onOpenFolder}
+            >
+              Open Folder
+            </Button>
+            <Button
+              icon={<Settings />}
+              onClick={onChooseWorkspace}
+              variant="ghost"
+            >
+              Change Workspace
+            </Button>
+          </div>
+        </section>
+      ) : (
+        <div className="library-grid">
+          {projects.map((project) => (
             <article
               className="project-card"
               key={project.id}
@@ -162,10 +229,9 @@ export function ProjectLibrary({
                 </Button>
               </footer>
             </article>
-            ))}
-          </div>
-        )}
-      </section>
-    </main>
+          ))}
+        </div>
+      )}
+    </>
   );
 }

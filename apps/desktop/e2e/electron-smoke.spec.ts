@@ -13,6 +13,13 @@ const desktopRoot = path.resolve(e2eDir, "..");
 const repoRoot = path.resolve(desktopRoot, "..", "..");
 const electronMain = path.join(desktopRoot, "dist", "electron", "main.js");
 const sampleProjectPath = path.join(repoRoot, "packages", "test-fixtures", "decks", "valid-full");
+const intentionalFailuresProjectPath = path.join(
+  repoRoot,
+  "packages",
+  "test-fixtures",
+  "decks",
+  "linter-intentional-failures"
+);
 const textOverflowProjectPath = path.join(repoRoot, "packages", "test-fixtures", "decks", "linter-text-overflow");
 const requireFromDesktop = createRequire(path.join(desktopRoot, "package.json"));
 const electronExecutable = requireFromDesktop("electron") as string;
@@ -33,6 +40,19 @@ async function expectNoFrameworkOverlay(page: Page): Promise<void> {
   await expect(
     page.getByText(/\[plugin:vite|Internal server error|Failed to resolve import|Failed to load module script/i)
   ).toHaveCount(0);
+}
+
+function collectBrowserErrors(page: Page): string[] {
+  const browserErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      browserErrors.push(message.text());
+    }
+  });
+  page.on("pageerror", (error) => {
+    browserErrors.push(error.message);
+  });
+  return browserErrors;
 }
 
 test.describe("HTMLslide desktop smoke", () => {
@@ -263,16 +283,7 @@ test.describe("HTMLslide desktop smoke", () => {
     });
 
     const page = await electronApp.firstWindow();
-    const browserErrors: string[] = [];
-    page.on("console", (message) => {
-      if (message.type() === "error") {
-        browserErrors.push(message.text());
-      }
-    });
-    page.on("pageerror", (error) => {
-      browserErrors.push(error.message);
-    });
-
+    const browserErrors = collectBrowserErrors(page);
     await page.waitForLoadState("domcontentloaded");
     await expect(page.getByRole("heading", { name: "Welcome to HTMLslide" })).toBeVisible();
     await expectNoFrameworkOverlay(page);
@@ -355,16 +366,7 @@ test.describe("HTMLslide desktop smoke", () => {
     });
 
     const page = await electronApp.firstWindow();
-    const browserErrors: string[] = [];
-    page.on("console", (message) => {
-      if (message.type() === "error") {
-        browserErrors.push(message.text());
-      }
-    });
-    page.on("pageerror", (error) => {
-      browserErrors.push(error.message);
-    });
-
+    const browserErrors = collectBrowserErrors(page);
     await page.waitForLoadState("domcontentloaded");
     await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
     await page.locator(".library-main").getByRole("button", { name: "Open Folder", exact: true }).first().click();
@@ -461,16 +463,7 @@ test.describe("HTMLslide desktop smoke", () => {
     });
 
     const page = await electronApp.firstWindow();
-    const browserErrors: string[] = [];
-    page.on("console", (message) => {
-      if (message.type() === "error") {
-        browserErrors.push(message.text());
-      }
-    });
-    page.on("pageerror", (error) => {
-      browserErrors.push(error.message);
-    });
-
+    const browserErrors = collectBrowserErrors(page);
     await page.waitForLoadState("domcontentloaded");
     const presenter = page.getByLabel("Presenter rehearsal mode");
     const currentSlideHeading = presenter.locator(".presenter-current .hs-panel-header h2");
@@ -522,16 +515,7 @@ test.describe("HTMLslide desktop smoke", () => {
     });
 
     const page = await electronApp.firstWindow();
-    const browserErrors: string[] = [];
-    page.on("console", (message) => {
-      if (message.type() === "error") {
-        browserErrors.push(message.text());
-      }
-    });
-    page.on("pageerror", (error) => {
-      browserErrors.push(error.message);
-    });
-
+    const browserErrors = collectBrowserErrors(page);
     await page.waitForLoadState("domcontentloaded");
     await expect(page.getByRole("heading", { name: "Welcome to HTMLslide" })).toBeVisible();
     await electronApp.evaluate(
@@ -581,16 +565,7 @@ test.describe("HTMLslide desktop smoke", () => {
     });
 
     const page = await electronApp.firstWindow();
-    const browserErrors: string[] = [];
-    page.on("console", (message) => {
-      if (message.type() === "error") {
-        browserErrors.push(message.text());
-      }
-    });
-    page.on("pageerror", (error) => {
-      browserErrors.push(error.message);
-    });
-
+    const browserErrors = collectBrowserErrors(page);
     await page.waitForLoadState("domcontentloaded");
     await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
     await page.locator(".library-main").getByRole("button", { name: "Open Folder", exact: true }).first().click();
@@ -610,6 +585,55 @@ test.describe("HTMLslide desktop smoke", () => {
 
     await expectNoFrameworkOverlay(page);
     expect(browserErrors).toEqual([]);
+  });
+
+  test("shows missing asset and missing notes check issues in the QA panel", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
+    const homeDir = path.join(tempRoot, "home");
+    const userDataDir = path.join(tempRoot, "user-data");
+    const workspaceDir = path.join(tempRoot, "workspace");
+    const projectPath = path.join(tempRoot, "linter-intentional-failures");
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(userDataDir, { recursive: true });
+    await mkdir(workspaceDir, { recursive: true });
+    await cp(intentionalFailuresProjectPath, projectPath, { recursive: true });
+
+    electronApp = await electron.launch({
+      executablePath: electronExecutable,
+      args: [electronMain],
+      env: {
+        ...process.env,
+        ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+        HOME: homeDir,
+        HTMLSLIDE_USER_DATA_DIR: userDataDir,
+        HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir,
+        HTMLSLIDE_E2E_OPEN_PROJECT_PATH: projectPath
+      }
+    });
+
+    const page = await electronApp.firstWindow();
+    await page.waitForLoadState("domcontentloaded");
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await page.locator(".library-main").getByRole("button", { name: "Open Folder", exact: true }).first().click();
+    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Linter Intentional Failures" })).toBeVisible({
+      timeout: 30_000
+    });
+
+    await page.locator(".workspace-toolbar").getByRole("button", { name: "Check", exact: true }).click();
+    await expect(page.getByText(/check: Check found issues/)).toBeVisible({ timeout: 30_000 });
+
+    const qaPanel = page.locator(".qa-panel");
+    await expect(qaPanel.getByRole("heading", { name: "QA Panel" })).toBeVisible();
+    await expect(qaPanel.getByRole("heading", { name: "missing-asset" })).toBeVisible();
+    await expect(qaPanel.getByText("Referenced asset is missing: ../assets/missing-chart.png.")).toBeVisible();
+    await expect(qaPanel.getByText("img[src]").first()).toBeVisible();
+
+    await page.getByRole("button", { name: /Missing Notes/ }).click();
+    await expect(qaPanel.getByRole("heading", { name: "missing-notes" })).toBeVisible();
+    await expect(qaPanel.getByText("Slide has no speaker notes file.")).toBeVisible();
+    await expect(qaPanel.getByText("slides[].notes")).toBeVisible();
+
+    await expectNoFrameworkOverlay(page);
   });
 
   test("manages CLI integration from settings", async () => {

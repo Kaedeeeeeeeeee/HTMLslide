@@ -86,6 +86,14 @@ type ResourceCheckResult = {
   assetPaths: string[];
 };
 
+type TextOverflowFinding = {
+  selector: string;
+  overflowBottomPx: number;
+  source: "declared" | "estimated";
+  containerHeightPx?: number;
+  estimatedContentHeightPx?: number;
+};
+
 type ExportExpectation = {
   artifactPath: string;
   artifactProjectPath: string;
@@ -99,7 +107,15 @@ const TITLE_MAX_CHARACTERS = 72;
 const BODY_MAX_WORDS = 120;
 const BODY_MAX_CHARACTERS = 850;
 const NOTES_MIN_WORDS = 12;
+const DEFAULT_DECLARED_OVERFLOW_BOTTOM_PX = 1;
+const DEFAULT_TEXT_CONTAINER_WIDTH_PX = 960;
+const DEFAULT_TEXT_FONT_SIZE_PX = 28;
+const DEFAULT_LINE_HEIGHT_RATIO = 1.25;
 const EXPORT_MTIME_TOLERANCE_MS = 1000;
+const DECLARED_TEXT_OVERFLOW_VALUES = new Set(["1", "true", "text", "content"]);
+const OVERFLOW_BOTTOM_ATTRIBUTE_NAMES = ["data-htmlslide-overflow-bottom-px", "data-overflow-bottom-px"];
+const TEXT_CONTAINER_TAGS = new Set(["article", "blockquote", "div", "figcaption", "footer", "h1", "h2", "h3", "h4", "h5", "h6", "li", "p", "section", "span"]);
+const TEXT_OVERFLOW_CLIPPING_VALUES = new Set(["auto", "clip", "hidden", "scroll"]);
 
 const ASSET_EXTENSION_PATTERN =
   /\.(avif|bmp|csv|gif|ico|jpe?g|json|mp3|mp4|ogg|otf|pdf|png|svg|ttf|wav|webm|webp|woff2?)$/i;
@@ -270,6 +286,7 @@ const checkSlide = async (
 
   const html = await readFile(slide.sourcePath, "utf8");
   issues.push(...checkSlideId(slide, html));
+  issues.push(...checkTextOverflow(slide, html));
   issues.push(...checkBodyDensity(slide, html));
 
   const resourceResult = await checkResourceReferences({
@@ -354,6 +371,31 @@ const checkSlideId = (slide: SlideCheckContext, html: string): HtmlslideIssue[] 
     })
   ];
 };
+
+const checkTextOverflow = (slide: SlideCheckContext, html: string): HtmlslideIssue[] =>
+  extractTextOverflows(html).map((overflow) =>
+    makeIssue({
+      slideId: slide.id,
+      severity: "error",
+      type: "text-overflow",
+      path: slide.sourceProjectPath,
+      selector: overflow.selector,
+      message:
+        overflow.source === "declared"
+          ? `Text exceeds slide safe area by ${overflow.overflowBottomPx}px at bottom.`
+          : `Text is estimated to exceed its fixed container by ${overflow.overflowBottomPx}px.`,
+      measurement: {
+        overflowBottomPx: overflow.overflowBottomPx,
+        source: overflow.source,
+        ...(overflow.containerHeightPx !== undefined ? { containerHeightPx: overflow.containerHeightPx } : {}),
+        ...(overflow.estimatedContentHeightPx !== undefined
+          ? { estimatedContentHeightPx: overflow.estimatedContentHeightPx }
+          : {})
+      },
+      suggestedFix: "Shorten body copy, split the content across slides, or move the text into speaker notes.",
+      agentInstruction: `Fix ${overflow.selector} in ${slide.sourceProjectPath} for slide ${slide.id}. Keep the fixed viewport layout and prefer shortening or splitting content before reducing font size.`
+    })
+  );
 
 const checkBodyDensity = (slide: SlideCheckContext, html: string): HtmlslideIssue[] => {
   const text = htmlToText(html);
@@ -839,6 +881,195 @@ const extractCssResourceReferences = (content: string): ResourceReference[] => {
   }
 
   return references;
+};
+
+const extractTextOverflows = (html: string): TextOverflowFinding[] => {
+  const overflows: TextOverflowFinding[] = [];
+  const tagPattern = /<([A-Za-z][A-Za-z0-9:-]*)([^>]*)>/g;
+  let tagMatch: RegExpExecArray | null;
+
+  while ((tagMatch = tagPattern.exec(html)) !== null) {
+    const tag = tagMatch[1]?.toLowerCase();
+    if (!tag) {
+      continue;
+    }
+
+    const attributes = tagMatch[2] ?? "";
+    if (!declaresTextOverflow(attributes)) {
+      const estimatedOverflow = estimateTextOverflow(html, tag, attributes, tagPattern.lastIndex);
+      if (estimatedOverflow) {
+        overflows.push(estimatedOverflow);
+      }
+      continue;
+    }
+
+    overflows.push({
+      selector: selectorForTaggedElement(tag, attributes),
+      overflowBottomPx: declaredOverflowBottomPx(attributes),
+      source: "declared"
+    });
+  }
+
+  return overflows;
+};
+
+const declaresTextOverflow = (attributes: string): boolean => {
+  const value = getAttributeValue(attributes, "data-htmlslide-overflow")?.trim().toLowerCase();
+  if (value && DECLARED_TEXT_OVERFLOW_VALUES.has(value)) {
+    return true;
+  }
+
+  return OVERFLOW_BOTTOM_ATTRIBUTE_NAMES.some((name) => getAttributeValue(attributes, name) !== undefined);
+};
+
+const declaredOverflowBottomPx = (attributes: string): number => {
+  for (const name of OVERFLOW_BOTTOM_ATTRIBUTE_NAMES) {
+    const value = getAttributeValue(attributes, name);
+    if (!value) {
+      continue;
+    }
+
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  return DEFAULT_DECLARED_OVERFLOW_BOTTOM_PX;
+};
+
+const estimateTextOverflow = (
+  html: string,
+  tag: string,
+  attributes: string,
+  contentStartIndex: number
+): TextOverflowFinding | undefined => {
+  if (!TEXT_CONTAINER_TAGS.has(tag)) {
+    return undefined;
+  }
+
+  const style = getAttributeValue(attributes, "style");
+  if (!style) {
+    return undefined;
+  }
+
+  const declarations = parseStyleDeclarations(style);
+  const overflowValue = (declarations.get("overflow-y") ?? declarations.get("overflow"))?.toLowerCase();
+  if (!overflowValue || !TEXT_OVERFLOW_CLIPPING_VALUES.has(overflowValue)) {
+    return undefined;
+  }
+
+  const containerHeightPx = parseCssPx(declarations.get("max-height")) ?? parseCssPx(declarations.get("height"));
+  if (!containerHeightPx) {
+    return undefined;
+  }
+
+  const closeIndex = findClosingTagIndex(html, tag, contentStartIndex);
+  if (closeIndex === -1) {
+    return undefined;
+  }
+
+  const innerHtml = html.slice(contentStartIndex, closeIndex);
+  const text = htmlToText(innerHtml);
+  if (!text) {
+    return undefined;
+  }
+
+  const fontSizePx = parseCssPx(declarations.get("font-size")) ?? DEFAULT_TEXT_FONT_SIZE_PX;
+  const lineHeightPx = parseLineHeightPx(declarations.get("line-height"), fontSizePx);
+  const widthPx = parseCssPx(declarations.get("width")) ?? parseCssPx(declarations.get("max-width")) ?? DEFAULT_TEXT_CONTAINER_WIDTH_PX;
+  const charactersPerLine = Math.max(8, Math.floor(widthPx / (fontSizePx * 0.56)));
+  const estimatedLineCount = Math.max(1, Math.ceil(text.length / charactersPerLine));
+  const estimatedContentHeightPx = Math.ceil(estimatedLineCount * lineHeightPx);
+  const overflowBottomPx = Math.ceil(estimatedContentHeightPx - containerHeightPx);
+
+  if (overflowBottomPx <= 0) {
+    return undefined;
+  }
+
+  return {
+    selector: selectorForTaggedElement(tag, attributes),
+    overflowBottomPx,
+    source: "estimated",
+    containerHeightPx,
+    estimatedContentHeightPx
+  };
+};
+
+const parseStyleDeclarations = (style: string): Map<string, string> => {
+  const declarations = new Map<string, string>();
+  for (const declaration of style.split(";")) {
+    const separatorIndex = declaration.indexOf(":");
+    if (separatorIndex === -1) {
+      continue;
+    }
+
+    const property = declaration.slice(0, separatorIndex).trim().toLowerCase();
+    const value = declaration.slice(separatorIndex + 1).trim();
+    if (property && value) {
+      declarations.set(property, value);
+    }
+  }
+
+  return declarations;
+};
+
+const parseCssPx = (value: string | undefined): number | undefined => {
+  if (!value) {
+    return undefined;
+  }
+
+  const trimmed = value.trim().toLowerCase();
+  const match = trimmed.match(/^([0-9]+(?:\.[0-9]+)?)px$/);
+  if (!match) {
+    return undefined;
+  }
+
+  const parsed = Number.parseFloat(match[1] ?? "");
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+};
+
+const parseLineHeightPx = (value: string | undefined, fontSizePx: number): number => {
+  if (!value || value.trim().toLowerCase() === "normal") {
+    return Math.ceil(fontSizePx * DEFAULT_LINE_HEIGHT_RATIO);
+  }
+
+  const pxValue = parseCssPx(value);
+  if (pxValue) {
+    return pxValue;
+  }
+
+  const numericValue = Number.parseFloat(value);
+  if (Number.isFinite(numericValue) && numericValue > 0) {
+    return Math.ceil(fontSizePx * numericValue);
+  }
+
+  return Math.ceil(fontSizePx * DEFAULT_LINE_HEIGHT_RATIO);
+};
+
+const findClosingTagIndex = (html: string, tag: string, contentStartIndex: number): number =>
+  html.toLowerCase().indexOf(`</${tag}`, contentStartIndex);
+
+const selectorForTaggedElement = (tag: string, attributes: string): string => {
+  const explicitSelector = getAttributeValue(attributes, "data-htmlslide-selector")?.trim();
+  if (explicitSelector) {
+    return explicitSelector;
+  }
+
+  const id = getAttributeValue(attributes, "id")?.trim();
+  if (id) {
+    return `#${id}`;
+  }
+
+  const className = getAttributeValue(attributes, "class")?.trim();
+  if (className) {
+    const classes = className.split(/\s+/).filter(Boolean);
+    if (classes.length > 0) {
+      return `${tag}.${classes.join(".")}`;
+    }
+  }
+
+  return `${tag}[data-htmlslide-overflow]`;
 };
 
 const getAttributeValue = (attributes: string, name: string): string | undefined => {

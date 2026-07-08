@@ -69,6 +69,7 @@ describe("HTMLslide linter", () => {
         "remote-font",
         "remote-script",
         "slide-id-mismatch",
+        "text-overflow",
         "title-too-long"
       ])
     );
@@ -76,6 +77,25 @@ describe("HTMLslide linter", () => {
 
     const ranks = report.issues.map(severityRank);
     expect(ranks).toEqual([...ranks].sort((left, right) => left - right));
+  });
+
+  it("detects text overflow in fixed-height slide copy", async () => {
+    const report = await checkProject(fixturePath("linter-text-overflow"));
+    const overflowIssue = report.issues.find((issue) => issue.type === "text-overflow");
+
+    expect(report.status).toBe("failed");
+    expect(overflowIssue).toMatchObject({
+      severity: "error",
+      slideId: "001-overflow",
+      path: "slides/001-overflow.html",
+      selector: "p.body-copy",
+      measurement: {
+        source: "estimated"
+      }
+    });
+    expect(overflowIssue?.measurement?.overflowBottomPx).toEqual(expect.any(Number));
+    expect(Number(overflowIssue?.measurement?.overflowBottomPx)).toBeGreaterThan(0);
+    expectMachineRepairableIssues(report.issues);
   });
 
   it("normalizes core schema validation issues into repairable linter issues", async () => {

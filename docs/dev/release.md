@@ -51,7 +51,7 @@ Before calling an alpha build public, verify:
 - Mock provider full flow passes.
 - At least one real provider is manually validated when credentials are available.
 - Outline, visual directions, and full deck generation work.
-- Checks find overflow, missing asset, and missing notes issues.
+- Checks find `text-overflow`, missing asset, and missing notes issues.
 - PDF page count and PNG thumbnails match the deck.
 - deckpkg opens.
 - Rehearsal mode works.

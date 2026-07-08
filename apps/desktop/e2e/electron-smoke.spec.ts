@@ -11,6 +11,7 @@ const desktopRoot = path.resolve(e2eDir, "..");
 const repoRoot = path.resolve(desktopRoot, "..", "..");
 const electronMain = path.join(desktopRoot, "dist", "electron", "main.js");
 const sampleProjectPath = path.join(repoRoot, "packages", "test-fixtures", "decks", "valid-full");
+const textOverflowProjectPath = path.join(repoRoot, "packages", "test-fixtures", "decks", "linter-text-overflow");
 const requireFromDesktop = createRequire(path.join(desktopRoot, "package.json"));
 const electronExecutable = requireFromDesktop("electron") as string;
 
@@ -338,6 +339,62 @@ test.describe("HTMLslide desktop smoke", () => {
     await page.keyboard.press("Escape");
     await expect(presenter).toBeHidden();
     await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible();
+
+    await expectNoFrameworkOverlay(page);
+    expect(browserErrors).toEqual([]);
+  });
+
+  test("shows failing check issues in the QA panel", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
+    const homeDir = path.join(tempRoot, "home");
+    const userDataDir = path.join(tempRoot, "user-data");
+    const workspaceDir = path.join(tempRoot, "workspace");
+    const projectPath = path.join(tempRoot, "linter-text-overflow");
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(userDataDir, { recursive: true });
+    await mkdir(workspaceDir, { recursive: true });
+    await cp(textOverflowProjectPath, projectPath, { recursive: true });
+
+    electronApp = await electron.launch({
+      executablePath: electronExecutable,
+      args: [electronMain],
+      env: {
+        ...process.env,
+        ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+        HOME: homeDir,
+        HTMLSLIDE_USER_DATA_DIR: userDataDir,
+        HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir,
+        HTMLSLIDE_E2E_OPEN_PROJECT_PATH: projectPath
+      }
+    });
+
+    const page = await electronApp.firstWindow();
+    const browserErrors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") {
+        browserErrors.push(message.text());
+      }
+    });
+    page.on("pageerror", (error) => {
+      browserErrors.push(error.message);
+    });
+
+    await page.waitForLoadState("domcontentloaded");
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await page.locator(".library-main").getByRole("button", { name: "Open Folder", exact: true }).first().click();
+    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Linter Text Overflow" })).toBeVisible({
+      timeout: 30_000
+    });
+
+    await page.locator(".workspace-toolbar").getByRole("button", { name: "Check", exact: true }).click();
+    await expect(page.getByText(/check: Check found issues/)).toBeVisible({ timeout: 30_000 });
+
+    const qaPanel = page.locator(".qa-panel");
+    await expect(qaPanel.getByRole("heading", { name: "QA Panel" })).toBeVisible();
+    await expect(qaPanel.getByRole("heading", { name: "text-overflow" })).toBeVisible();
+    await expect(qaPanel.getByText("Text is estimated to exceed its fixed container")).toBeVisible();
+    await expect(qaPanel.getByText("p.body-copy")).toBeVisible();
+    await expect(qaPanel.getByText(/overflowBottomPx/)).toBeVisible();
 
     await expectNoFrameworkOverlay(page);
     expect(browserErrors).toEqual([]);

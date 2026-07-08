@@ -35,6 +35,11 @@
       "name": "invalid-unsupported-schema",
       "kind": "schema-invalid",
       "expectedIssuePath": "schemaVersion"
+    },
+    {
+      "name": "linter-text-overflow",
+      "kind": "linter-invalid",
+      "expectedIssueType": "text-overflow"
     }
   ]
 }

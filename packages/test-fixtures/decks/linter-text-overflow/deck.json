@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "0.1.0",
+  "id": "deck_linter_text_overflow",
+  "title": "Linter Text Overflow",
+  "language": "en-US",
+  "aspectRatio": "16:9",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "slides": [
+    {
+      "id": "001-overflow",
+      "title": "Text Overflow Fixture",
+      "source": "slides/001-overflow.html",
+      "notes": "notes/001-overflow.md",
+      "durationSec": 60,
+      "kind": "content",
+      "status": "draft"
+    }
+  ]
+}

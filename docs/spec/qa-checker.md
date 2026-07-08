@@ -39,9 +39,14 @@ Every checker-produced issue must include `slideId`, `severity`, `type`, `messag
 ## Checks
 
 - Core project checks: `deck.json` schema, duplicate slide ids, safe project paths, and referenced slide, notes, and theme files via `@htmlslide/core`.
-- Source checks: `data-slide-id` mismatch, remote asset, remote font, remote script, missing local asset, title too long, and body too dense.
+- Source checks: `data-slide-id` mismatch, text overflow, remote asset, remote font, remote script, missing local asset, title too long, and body too dense.
 - Notes checks: missing notes references and notes files that are too short for a useful talk track.
 - Export checks: requested PDF, HTML, deckpkg, speaker notes, and thumbnail artifacts are reported when missing or older than deck sources.
+
+The Alpha text-overflow checker is static and deterministic. It reports `text-overflow` when a slide source explicitly
+declares `data-htmlslide-overflow="text"` or when a text-bearing element has clipped overflow, a fixed `height` or
+`max-height`, and estimated text height above the container. Issues include `overflowBottomPx`, `source`, and known
+height measurements so agents can repair them without a browser session.
 
 ## Sorting
 
@@ -49,4 +54,8 @@ Issues are sorted deterministically by severity (`error`, `warning`, `info`), sl
 
 ## Limitations
 
-The current export checker uses file mtimes and expected compiler paths. It can flag missing or stale exports, but it cannot prove whether a generated export was manually edited after the latest source change without compiler-owned artifact metadata.
+The current text-overflow checker is a static Alpha pass, not a browser geometry pass. It is designed to catch
+deterministic fixed-text-box failures in CI; full DOM geometry checks should replace or supplement it when the checker
+owns a renderer/browser execution path. The current export checker uses file mtimes and expected compiler paths. It can
+flag missing or stale exports, but it cannot prove whether a generated export was manually edited after the latest
+source change without compiler-owned artifact metadata.

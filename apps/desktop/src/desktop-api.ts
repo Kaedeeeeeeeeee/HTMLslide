@@ -6,7 +6,9 @@ import type {
   AgentRunResult,
   AgentRunStage,
   AgentRunStatus,
-  ApplyMockAgentProjectResult
+  ApplyMockAgentProjectResult,
+  FileCopyCheckpointDiff,
+  FileCopyCheckpointRevertResult
 } from "@htmlslide/agent";
 
 export type DesktopSetupState = {
@@ -102,10 +104,22 @@ export type DesktopMockAgentRunResult = {
   logs: AgentRunLog[];
   agent: AgentRunResult;
   applied?: ApplyMockAgentProjectResult;
+  checkpointDiff?: FileCopyCheckpointDiff;
   check?: DesktopCliResult;
   export?: DesktopCliResult;
   project?: DesktopProjectPreview;
   summary: DesktopMockAgentRunSummary;
+};
+
+export type DesktopCheckpointRequest = {
+  projectPath: string;
+  runId?: string;
+  checkpointId?: string;
+  confirmed?: boolean;
+};
+
+export type DesktopCheckpointRevertResult = FileCopyCheckpointRevertResult & {
+  project?: DesktopProjectPreview;
 };
 
 export type HtmlslideDesktopApi = {
@@ -124,6 +138,8 @@ export type HtmlslideDesktopApi = {
   checkProject(projectPath: string): Promise<DesktopCliResult>;
   exportProject(projectPath: string): Promise<DesktopCliResult>;
   runMockAgent(request: DesktopMockAgentRunRequest): Promise<DesktopMockAgentRunResult>;
+  diffCheckpoint(request: DesktopCheckpointRequest): Promise<FileCopyCheckpointDiff>;
+  revertCheckpoint(request: DesktopCheckpointRequest): Promise<DesktopCheckpointRevertResult>;
 };
 
 export function getDesktopApi(): HtmlslideDesktopApi | undefined {

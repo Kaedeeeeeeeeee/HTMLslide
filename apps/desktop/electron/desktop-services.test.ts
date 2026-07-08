@@ -3,9 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  diffDesktopCheckpoint,
   findCliRuntime,
   loadProjectPreview,
   readDesktopLibrary,
+  revertDesktopCheckpoint,
   runDesktopMockAgent,
   summarizeDeckProject,
   upsertRecentProject,
@@ -228,10 +230,22 @@ describe("desktop services", () => {
     expect(result.ok).toBe(true);
     expect(result.providerId).toBe("htmlslide-mock");
     expect(result.agent.ok).toBe(true);
+    expect(result.agent.checkpoint).toMatchObject({
+      id: "checkpoint-run-desktop-test",
+      strategy: "file-copy",
+      restore: {
+        canRevert: true
+      }
+    });
     expect(result.applied).toMatchObject({
       projectPath,
       title: "Mock HTMLslide Deck",
       slideIds: ["001-title", "002-workflow", "003-review"]
+    });
+    expect(result.checkpointDiff?.summary).toMatchObject({
+      changed: 3,
+      added: 6,
+      deleted: 0
     });
     expect(result.check?.ok).toBe(true);
     expect(result.export?.ok).toBe(true);
@@ -274,6 +288,36 @@ describe("desktop services", () => {
     const deck = JSON.parse(await readFile(path.join(projectPath, "deck.json"), "utf8"));
     expect(deck.agent.lastRunId).toBe("run-desktop-test");
     expect(deck.slides).toHaveLength(3);
+
+    const diff = await diffDesktopCheckpoint({
+      projectPath,
+      runId: "run-desktop-test"
+    });
+    expect(diff.added.map((file) => file.path)).toEqual(
+      expect.arrayContaining(["slides/002-workflow.html", "slides/003-review.html", "theme/theme.css"])
+    );
+
+    await expect(revertDesktopCheckpoint({
+      projectPath,
+      runId: "run-desktop-test"
+    })).rejects.toThrow("explicit confirmation");
+
+    const reverted = await revertDesktopCheckpoint({
+      projectPath,
+      runId: "run-desktop-test",
+      confirmed: true
+    });
+    expect(reverted.restored).toEqual(expect.arrayContaining(["deck.json", "slides/001-title.html"]));
+    expect(reverted.deleted).toEqual(
+      expect.arrayContaining(["slides/002-workflow.html", "slides/003-review.html", "theme/theme.css"])
+    );
+    expect(reverted.project?.project).toMatchObject({
+      title: "Desktop Test Deck",
+      slideCount: 1
+    });
+    const restoredDeck = JSON.parse(await readFile(path.join(projectPath, "deck.json"), "utf8"));
+    expect(restoredDeck.title).toBe("Desktop Test Deck");
+    expect(restoredDeck.slides).toHaveLength(1);
   });
 
   it("skips export when real project check fails", async () => {

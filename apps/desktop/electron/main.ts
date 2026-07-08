@@ -6,10 +6,12 @@ import { fileURLToPath } from "node:url";
 import {
   defaultWorkspacePath,
   detectExternalAgentStatuses,
+  diffDesktopCheckpoint,
   findCliRuntime,
   loadProjectPreview,
   readAiEngineSettings,
   readDesktopLibrary,
+  revertDesktopCheckpoint,
   runDesktopMockAgent,
   runHtmlslideCli,
   summarizeDeckProject,
@@ -187,6 +189,21 @@ function registerIpcHandlers(): void {
         runId?: string;
       }
     ) => runDesktopMockAgent(request, { cliRuntime })
+  );
+
+  ipcMain.handle(
+    "htmlslide:diff-checkpoint",
+    async (_event, request: { projectPath: string; runId?: string; checkpointId?: string }) =>
+      diffDesktopCheckpoint(request)
+  );
+
+  ipcMain.handle(
+    "htmlslide:revert-checkpoint",
+    async (
+      _event,
+      request: { projectPath: string; runId?: string; checkpointId?: string; confirmed?: boolean }
+    ) =>
+      revertDesktopCheckpoint(request)
   );
 }
 

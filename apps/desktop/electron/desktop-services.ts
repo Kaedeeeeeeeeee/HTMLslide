@@ -5,15 +5,21 @@ import os from "node:os";
 import path from "node:path";
 import {
   applyMockAgentProject,
+  createFileCopyCheckpoint,
   createMockProvider,
   defaultAgentStages,
+  diffFileCopyCheckpoint,
+  recordCheckpointChanges,
+  revertFileCopyCheckpoint,
   runAgent,
   type AgentRunEvent,
   type AgentRunLog,
   type AgentRunResult,
   type AgentRunStage,
   type AgentRunStatus,
-  type ApplyMockAgentProjectResult
+  type ApplyMockAgentProjectResult,
+  type FileCopyCheckpointDiff,
+  type FileCopyCheckpointRevertResult
 } from "@htmlslide/agent";
 
 export type DesktopProjectStatus =
@@ -122,10 +128,22 @@ export type DesktopMockAgentRunResult = {
   logs: AgentRunLog[];
   agent: AgentRunResult;
   applied?: ApplyMockAgentProjectResult;
+  checkpointDiff?: FileCopyCheckpointDiff;
   check?: CliRunResult;
   export?: CliRunResult;
   project?: DesktopProjectPreview;
   summary: DesktopMockAgentRunSummary;
+};
+
+export type DesktopCheckpointRequest = {
+  projectPath: string;
+  runId?: string;
+  checkpointId?: string;
+  confirmed?: boolean;
+};
+
+export type DesktopCheckpointRevertResult = FileCopyCheckpointRevertResult & {
+  project?: DesktopProjectPreview;
 };
 
 export type DesktopMockAgentRunnerOptions = {
@@ -593,7 +611,7 @@ export async function runDesktopMockAgent(
   const logs: AgentRunLog[] = [];
   const cliRunner = options.cliRunner ?? runHtmlslideCli;
 
-  const agent = await runAgent({
+  let agent = await runAgent({
     brief: brief.length > 0 ? brief : "Create or revise this HTMLslide deck.",
     maxRepairRounds: request.maxRepairRounds,
     projectRoot: projectPath,
@@ -601,12 +619,14 @@ export async function runDesktopMockAgent(
     runId: request.runId,
     metadata: {
       mode: "desktop-mock-agent"
-    }
+    },
+    createCheckpoint: createFileCopyCheckpoint
   });
 
   logs.push(...agent.logs);
 
   let applied: ApplyMockAgentProjectResult | undefined;
+  let checkpointDiff: FileCopyCheckpointDiff | undefined;
   let check: CliRunResult | undefined;
   let exportResult: CliRunResult | undefined;
   let project: DesktopProjectPreview | undefined;
@@ -616,6 +636,19 @@ export async function runDesktopMockAgent(
       brief,
       projectPath,
       result: agent
+    });
+    const checkpoint = await recordCheckpointChanges({
+      projectRoot: projectPath,
+      runId: agent.runId,
+      filesChanged: applied.filesChanged
+    });
+    agent = {
+      ...agent,
+      checkpoint
+    };
+    checkpointDiff = await diffFileCopyCheckpoint({
+      projectRoot: projectPath,
+      runId: agent.runId
     });
     logs.push({
       createdAt: new Date().toISOString(),
@@ -650,10 +683,39 @@ export async function runDesktopMockAgent(
     logs,
     agent,
     applied,
+    checkpointDiff,
     check,
     export: exportResult,
     project,
     summary
+  };
+}
+
+export async function diffDesktopCheckpoint(request: DesktopCheckpointRequest): Promise<FileCopyCheckpointDiff> {
+  return diffFileCopyCheckpoint({
+    projectRoot: path.resolve(request.projectPath),
+    runId: request.runId,
+    checkpointId: request.checkpointId
+  });
+}
+
+export async function revertDesktopCheckpoint(
+  request: DesktopCheckpointRequest
+): Promise<DesktopCheckpointRevertResult> {
+  if (request.confirmed !== true) {
+    throw new Error("Checkpoint revert requires explicit confirmation.");
+  }
+
+  const projectPath = path.resolve(request.projectPath);
+  const reverted = await revertFileCopyCheckpoint({
+    projectRoot: projectPath,
+    runId: request.runId,
+    checkpointId: request.checkpointId
+  });
+
+  return {
+    ...reverted,
+    project: await loadProjectPreview(projectPath).catch(() => undefined)
   };
 }
 

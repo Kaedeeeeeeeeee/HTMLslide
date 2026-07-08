@@ -4,6 +4,7 @@ import { Command } from "commander";
 import {
   checkLoadedProject,
   createProject,
+  diffCheckpoint,
   doctor,
   EXIT_CODES,
   exportLoadedProject,
@@ -11,6 +12,7 @@ import {
   installCliShim,
   listAgentEngines,
   loadProject,
+  revertCheckpoint,
   runAgentTask,
   tryLoadProjectForCheck,
   uninstallCliShim
@@ -38,6 +40,13 @@ type AgentRunCommandOptions = JsonOption & {
   engine: string;
   task: string;
   path?: string;
+};
+
+type CheckpointCommandOptions = JsonOption & {
+  path?: string;
+  runId?: string;
+  checkpointId?: string;
+  yes?: boolean;
 };
 
 type CliError = Error & {
@@ -77,6 +86,16 @@ const fail = (error: unknown, json = false): never => {
     json
   );
   process.exit(exitCode);
+};
+
+const requireCheckpointReference = (options: CheckpointCommandOptions): void => {
+  if (!options.runId && !options.checkpointId) {
+    throw Object.assign(new Error("Pass --run-id or --checkpoint-id."), {
+      code: "CHECKPOINT_REFERENCE_REQUIRED",
+      exitCode: EXIT_CODES.generic,
+      suggestedFix: "Use the runId from htmlslide agent run output, or pass a checkpoint id."
+    });
+  }
 };
 
 const program = new Command();
@@ -283,6 +302,60 @@ agentCommand
       if (!result.ok) {
         process.exit(EXIT_CODES.agentFailed);
       }
+    } catch (error) {
+      fail(error, json);
+    }
+  });
+
+const checkpointCommand = program.command("checkpoint").description("Inspect or revert agent checkpoints.");
+
+checkpointCommand
+  .command("diff")
+  .option("--path <path>", "deck project path", process.cwd())
+  .option("--run-id <runId>", "agent run id")
+  .option("--checkpoint-id <checkpointId>", "checkpoint id")
+  .option("--json", "print machine-readable JSON")
+  .description("Show source file changes since a checkpoint.")
+  .action(async (options: CheckpointCommandOptions) => {
+    const json = Boolean(options.json ?? program.opts<JsonOption>().json);
+    try {
+      requireCheckpointReference(options);
+      const diff = await diffCheckpoint({
+        projectPath: options.path,
+        runId: options.runId,
+        checkpointId: options.checkpointId
+      });
+      writeResult({ status: "passed", ...diff }, json);
+    } catch (error) {
+      fail(error, json);
+    }
+  });
+
+checkpointCommand
+  .command("revert")
+  .option("--path <path>", "deck project path", process.cwd())
+  .option("--run-id <runId>", "agent run id")
+  .option("--checkpoint-id <checkpointId>", "checkpoint id")
+  .option("--yes", "confirm destructive checkpoint revert")
+  .option("--json", "print machine-readable JSON")
+  .description("Revert source files to a checkpoint after explicit confirmation.")
+  .action(async (options: CheckpointCommandOptions) => {
+    const json = Boolean(options.json ?? program.opts<JsonOption>().json);
+    try {
+      requireCheckpointReference(options);
+      if (!options.yes) {
+        throw Object.assign(new Error("Checkpoint revert requires --yes."), {
+          code: "CHECKPOINT_REVERT_CONFIRMATION_REQUIRED",
+          exitCode: EXIT_CODES.generic,
+          suggestedFix: "Rerun with --yes after reviewing the checkpoint diff."
+        });
+      }
+      const reverted = await revertCheckpoint({
+        projectPath: options.path,
+        runId: options.runId,
+        checkpointId: options.checkpointId
+      });
+      writeResult({ status: "passed", ...reverted }, json);
     } catch (error) {
       fail(error, json);
     }

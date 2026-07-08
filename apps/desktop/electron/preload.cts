@@ -25,5 +25,9 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
     runExport?: boolean;
     maxRepairRounds?: number;
     runId?: string;
-  }) => ipcRenderer.invoke("htmlslide:run-mock-agent", request)
+  }) => ipcRenderer.invoke("htmlslide:run-mock-agent", request),
+  diffCheckpoint: (request: { projectPath: string; runId?: string; checkpointId?: string }) =>
+    ipcRenderer.invoke("htmlslide:diff-checkpoint", request),
+  revertCheckpoint: (request: { projectPath: string; runId?: string; checkpointId?: string; confirmed?: boolean }) =>
+    ipcRenderer.invoke("htmlslide:revert-checkpoint", request)
 });

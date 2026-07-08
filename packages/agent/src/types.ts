@@ -170,10 +170,16 @@ export type AgentRunLog = {
 
 export type CheckpointFileStatus = "unknown" | "added" | "modified" | "deleted" | "unchanged";
 
+export type CheckpointFileOrigin = "snapshot" | "agent";
+
 export type CheckpointFile = {
   path: string;
   status: CheckpointFileStatus;
   digest?: string;
+  originalDigest?: string;
+  currentDigest?: string;
+  snapshotPath?: string;
+  origin?: CheckpointFileOrigin;
 };
 
 export type CheckpointStrategy = "metadata-only" | "git-diff" | "file-copy";
@@ -191,6 +197,52 @@ export type CheckpointMetadata = {
     canRevert: boolean;
     notes: string;
   };
+  schemaVersion?: string;
+  updatedAt?: string;
+  manifestPath?: string;
+  snapshotRoot?: string;
+};
+
+export type CreateFileCopyCheckpointInput = {
+  projectRoot: string;
+  runId: string;
+  createdAt?: string;
+};
+
+export type CheckpointReferenceInput = {
+  projectRoot: string;
+  runId?: string;
+  checkpointId?: string;
+};
+
+export type RecordCheckpointChangesInput = CheckpointReferenceInput & {
+  filesChanged: string[];
+  recordedAt?: string;
+};
+
+export type FileCopyCheckpointDiff = {
+  checkpoint: CheckpointMetadata;
+  changed: CheckpointFile[];
+  added: CheckpointFile[];
+  deleted: CheckpointFile[];
+  unchanged: CheckpointFile[];
+  summary: {
+    changed: number;
+    added: number;
+    deleted: number;
+    unchanged: number;
+  };
+};
+
+export type FileCopyCheckpointRevertResult = {
+  checkpoint: CheckpointMetadata;
+  restored: string[];
+  deleted: string[];
+  preserved: string[];
+  skipped: Array<{
+    path: string;
+    reason: string;
+  }>;
 };
 
 export type AgentOutlineSlide = {

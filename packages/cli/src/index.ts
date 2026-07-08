@@ -5,11 +5,17 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   applyMockAgentProject,
+  createFileCopyCheckpoint,
   createMockProvider,
+  diffFileCopyCheckpoint,
   mockEngines,
+  recordCheckpointChanges,
+  revertFileCopyCheckpoint,
   runAgent,
   type AgentRunResult,
-  type ApplyMockAgentProjectResult
+  type ApplyMockAgentProjectResult,
+  type FileCopyCheckpointDiff,
+  type FileCopyCheckpointRevertResult
 } from "@htmlslide/agent";
 import { exportDeck, type CompilerProjectInput, type ExportOptions } from "@htmlslide/compiler";
 import { loadDeckProject, parseDeck, ProjectLoadError, type Deck, type LoadedDeckProject } from "@htmlslide/core";
@@ -51,6 +57,12 @@ export type AgentRunCliOptions = {
 
 export type AgentRunCliResult = AgentRunResult & {
   applied?: ApplyMockAgentProjectResult;
+};
+
+export type CheckpointCliOptions = {
+  projectPath?: string;
+  runId?: string;
+  checkpointId?: string;
 };
 
 export type CliShimTargetOptions = {
@@ -794,7 +806,8 @@ export const runAgentTask = async (options: AgentRunCliOptions): Promise<AgentRu
     {
       projectRoot: projectPath,
       brief: options.task,
-      provider: createMockProvider()
+      provider: createMockProvider(),
+      createCheckpoint: createFileCopyCheckpoint
     },
     {
       clock: deterministicAgentClock
@@ -810,9 +823,30 @@ export const runAgentTask = async (options: AgentRunCliOptions): Promise<AgentRu
     projectPath,
     result
   });
+  const checkpoint = await recordCheckpointChanges({
+    projectRoot: projectPath,
+    runId: result.runId,
+    filesChanged: applied.filesChanged,
+    recordedAt: deterministicAgentClock().toISOString()
+  });
 
   return {
     ...result,
+    checkpoint,
     applied
   };
 };
+
+export const diffCheckpoint = async (options: CheckpointCliOptions): Promise<FileCopyCheckpointDiff> =>
+  diffFileCopyCheckpoint({
+    projectRoot: path.resolve(options.projectPath ?? process.cwd()),
+    runId: options.runId,
+    checkpointId: options.checkpointId
+  });
+
+export const revertCheckpoint = async (options: CheckpointCliOptions): Promise<FileCopyCheckpointRevertResult> =>
+  revertFileCopyCheckpoint({
+    projectRoot: path.resolve(options.projectPath ?? process.cwd()),
+    runId: options.runId,
+    checkpointId: options.checkpointId
+  });

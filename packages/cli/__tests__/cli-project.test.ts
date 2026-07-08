@@ -268,6 +268,7 @@ describe("CLI project helpers", () => {
   it("runs the mock agent through the CLI and returns deterministic JSON", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
     try {
+      const project = await createProject(path.join(root, "demo"), "demo");
       const executed = await runCli([
         "agent",
         "run",
@@ -276,7 +277,7 @@ describe("CLI project helpers", () => {
         "--task",
         "Create a deterministic CLI coverage deck",
         "--path",
-        root,
+        project.projectPath,
         "--json"
       ]);
       const payload = JSON.parse(executed.stdout);
@@ -312,8 +313,16 @@ describe("CLI project helpers", () => {
           })
         ])
       );
+      expect(payload.checkpoint).toMatchObject({
+        id: "checkpoint-run-0001",
+        runId: "run-0001",
+        strategy: "file-copy",
+        restore: {
+          canRevert: true
+        }
+      });
       expect(payload.applied).toMatchObject({
-        projectPath: root,
+        projectPath: project.projectPath,
         title: "Mock HTMLslide Deck",
         slideIds: ["001-title", "002-workflow", "003-review"],
         filesChanged: expect.arrayContaining([
@@ -324,20 +333,67 @@ describe("CLI project helpers", () => {
         ])
       });
 
-      const deck = JSON.parse(await readFile(path.join(root, "deck.json"), "utf8"));
+      const deck = JSON.parse(await readFile(path.join(project.projectPath, "deck.json"), "utf8"));
       expect(deck.slides.map((slide: { id: string }) => slide.id)).toEqual([
         "001-title",
         "002-workflow",
         "003-review"
       ]);
-      await expect(readFile(path.join(root, "slides", "003-review.html"), "utf8")).resolves.toContain(
+      await expect(readFile(path.join(project.projectPath, "slides", "003-review.html"), "utf8")).resolves.toContain(
         'data-slide-id="003-review"'
       );
 
-      const checked = await runCli(["check", root, "--json"]);
+      const checked = await runCli(["check", project.projectPath, "--json"]);
       const checkPayload = JSON.parse(checked.stdout);
       expect(checkPayload.status).toBe("passed");
       expect(checkPayload.summary.errors).toBe(0);
+
+      const diffed = await runCli([
+        "checkpoint",
+        "diff",
+        "--run-id",
+        "run-0001",
+        "--path",
+        project.projectPath,
+        "--json"
+      ]);
+      const diffPayload = JSON.parse(diffed.stdout);
+      expect(diffPayload.status).toBe("passed");
+      expect(diffPayload.summary.changed).toBeGreaterThan(0);
+      expect(diffPayload.added.map((file: { path: string }) => file.path)).toEqual(
+        expect.arrayContaining(["slides/003-review.html", "notes/003-review.md"])
+      );
+
+      await expect(
+        runCli(["checkpoint", "revert", "--run-id", "run-0001", "--path", project.projectPath, "--json"])
+      ).rejects.toMatchObject({
+        code: EXIT_CODES.generic,
+        stdout: expect.stringContaining("CHECKPOINT_REVERT_CONFIRMATION_REQUIRED")
+      });
+
+      const reverted = await runCli([
+        "checkpoint",
+        "revert",
+        "--run-id",
+        "run-0001",
+        "--path",
+        project.projectPath,
+        "--yes",
+        "--json"
+      ]);
+      const revertPayload = JSON.parse(reverted.stdout);
+      expect(revertPayload.status).toBe("passed");
+      expect(revertPayload.restored).toEqual(
+        expect.arrayContaining(["deck.json", "slides/001-title.html", "notes/001-title.md"])
+      );
+      expect(revertPayload.deleted).toEqual(
+        expect.arrayContaining(["slides/003-review.html", "notes/003-review.md"])
+      );
+
+      const restoredDeck = JSON.parse(await readFile(path.join(project.projectPath, "deck.json"), "utf8"));
+      expect(restoredDeck.title).toBe("Demo");
+      expect(restoredDeck.slides.map((slide: { id: string }) => slide.id)).toEqual(["001-title", "002-workflow"]);
+      await expectMissing(path.join(project.projectPath, "slides", "003-review.html"));
     } finally {
       await rm(root, { recursive: true, force: true });
     }

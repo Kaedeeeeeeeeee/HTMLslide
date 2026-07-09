@@ -97,6 +97,8 @@ describe("macOS alpha packaging contract", () => {
   it("keeps package smoke aligned with 19.13 install and repair requirements", async () => {
     const smokeScript = await readText("scripts/release/smoke-alpha-package.mjs");
 
+    expect(smokeScript).toContain("smokeZipArtifact");
+    expect(smokeScript).toContain("\"-x\", \"-k\"");
     expect(smokeScript).toContain("mountDmg");
     expect(smokeScript).toContain("launchAppOnce");
     expect(smokeScript).toContain("smokeFirstRunCliProvisioning");

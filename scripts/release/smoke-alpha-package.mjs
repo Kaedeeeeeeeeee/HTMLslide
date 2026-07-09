@@ -162,6 +162,29 @@ async function mountDmg(dmgPath, mountPoint) {
   run("hdiutil", ["attach", "-nobrowse", "-readonly", "-mountpoint", mountPoint, dmgPath]);
 }
 
+async function smokeZipArtifact(zipPath, smokeRoot) {
+  const zipRoot = path.join(smokeRoot, "zip-artifact");
+  await rm(zipRoot, { recursive: true, force: true });
+  await mkdir(zipRoot, { recursive: true });
+  run("ditto", ["-x", "-k", zipPath, zipRoot]);
+
+  const zipAppPath = path.join(zipRoot, appName);
+  if (!existsSync(zipAppPath)) {
+    const entries = await readdir(zipRoot).catch(() => []);
+    fail(`ZIP artifact did not extract ${appName} at its root.\nentries: ${entries.join(", ")}`);
+  }
+
+  const appStats = await lstat(zipAppPath);
+  if (!appStats.isDirectory()) {
+    fail(`ZIP artifact extracted ${appName}, but it is not an app bundle directory: ${zipAppPath}`);
+  }
+
+  assertDeckPackageDocumentType(zipAppPath);
+  packagedAppExecutablePath(zipAppPath);
+  packagedCliPath(zipAppPath);
+  await smokeCliShim(zipAppPath, path.join(smokeRoot, "zip-cli"));
+}
+
 function detachDmg(mountPoint) {
   spawnSync("hdiutil", ["detach", mountPoint, "-quiet"], {
     encoding: "utf8",
@@ -507,6 +530,7 @@ async function main() {
     const { dmgPath, manifestPath, zipPath } = await readLatestManifest();
     process.stdout.write(`Using alpha manifest: ${manifestPath}\n`);
     process.stdout.write(`Checking ZIP artifact: ${zipPath}\n`);
+    await smokeZipArtifact(zipPath, smokeRoot);
 
     await mountDmg(dmgPath, mountPoint);
     const mountedAppPath = path.join(mountPoint, appName);

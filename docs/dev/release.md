@@ -45,7 +45,7 @@ Alpha packaging uses the installed Electron macOS runtime and `hdiutil`/`ditto`,
 
 The alpha bundle may be ad-hoc signed to keep the local app bundle internally valid, but it is not Developer ID signed, notarized, or stapled. Treat it as an internal/tester artifact, not a production release. Testers may see Gatekeeper warnings and may need to right-click Open for the first launch.
 
-The DMG contains `HTMLslide.app` and an `Applications` symlink. The ZIP is provided as a fallback transport artifact for CI downloads and manual inspection.
+The DMG contains `HTMLslide.app` and an `Applications` symlink. The ZIP is provided as a fallback transport artifact for CI downloads and is also extracted during smoke verification.
 
 After packaging, run the package smoke:
 
@@ -53,7 +53,7 @@ After packaging, run the package smoke:
 pnpm smoke:package:alpha
 ```
 
-The smoke mounts the DMG, copies `HTMLslide.app` into a temporary install directory, verifies the packaged app declares `.deckpkg` as an owned macOS document type, launches the packaged app with isolated user data, verifies packaged first-run CLI provisioning and official skill installation into isolated target directories, moves the app to a second temporary install location, relaunches it to repair the recorded app path used by the CLI shim, exports a fixture deck through the packaged CLI, launches the packaged app with that `.deckpkg` as a direct file argument, waits for the renderer to confirm presenter mode opened the expected deck, installs a temporary HTMLslide-managed CLI shim, verifies `htmlslide doctor --json` through that shim, and uninstalls it. It never writes to real `/Applications` or the user's real `~/.htmlslide`.
+The smoke extracts the ZIP, verifies it contains `HTMLslide.app`, checks the `.deckpkg` document type and packaged CLI runtime, installs a temporary shim from the ZIP app, verifies `htmlslide doctor --json`, and uninstalls it. It then mounts the DMG, copies `HTMLslide.app` into a temporary install directory, verifies the packaged app declares `.deckpkg` as an owned macOS document type, launches the packaged app with isolated user data, verifies packaged first-run CLI provisioning and official skill installation into isolated target directories, moves the app to a second temporary install location, relaunches it to repair the recorded app path used by the CLI shim, exports a fixture deck through the packaged CLI, launches the packaged app with that `.deckpkg` as a direct file argument, waits for the renderer to confirm presenter mode opened the expected deck, installs a temporary HTMLslide-managed CLI shim, verifies `htmlslide doctor --json` through that shim, and uninstalls it. It never writes to real `/Applications` or the user's real `~/.htmlslide`.
 
 ## Alpha Checklist
 

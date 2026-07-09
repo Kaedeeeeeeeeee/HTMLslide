@@ -19,6 +19,7 @@
     "@htmlslide/compiler": "workspace:*",
     "@htmlslide/core": "workspace:*",
     "@htmlslide/linter": "workspace:*",
+    "@htmlslide/mcp-server": "workspace:*",
     "commander": "^14.0.0"
   }
 }

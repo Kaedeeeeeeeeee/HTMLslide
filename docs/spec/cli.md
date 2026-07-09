@@ -10,6 +10,9 @@ Initial commands:
 - `htmlslide check [path] --json` discovers `deck.json` from a project root, nested source path, or direct `deck.json` path, then validates schema, files, notes, and source rules.
 - `htmlslide export [path] --pdf --html --deckpkg --thumbnails` creates export artifacts after a successful check.
 - `htmlslide export [path] --no-pdf --no-deckpkg --no-thumbnails` skips selected artifacts while still writing required sidecars such as `notes.json`.
+- `htmlslide mcp --list-tools --json` lists registered MCP tool descriptors, safety labels, and implementation status.
+- `htmlslide mcp [path] --status --json` validates the project-scoped MCP in-process harness for a deck project and returns the project root plus registered and implemented tool counts.
+- `htmlslide mcp` is reserved for the future long-running stdio MCP server and must not print human status text to stdout in protocol mode.
 - `htmlslide setup install-cli` installs or updates the local `htmlslide` command shim.
 - `htmlslide setup uninstall-cli` removes an HTMLslide-managed command shim.
 - `htmlslide setup status --json` reports shim installation status.

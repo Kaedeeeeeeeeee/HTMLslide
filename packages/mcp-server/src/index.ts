@@ -36,6 +36,8 @@ export type ToolDescriptor = {
   name: HtmlslideMcpTool;
   safety: ToolSafety;
   description: string;
+  implemented: boolean;
+  deprecated?: boolean;
 };
 
 export type HtmlslideMcpServerOptions = {
@@ -45,6 +47,8 @@ export type HtmlslideMcpServerOptions = {
 export type HtmlslideMcpStartResult = {
   status: "started";
   projectRoot: string;
+  registeredToolCount: number;
+  implementedToolCount: number;
   toolCount: number;
 };
 
@@ -94,128 +98,73 @@ export type HtmlslideMcpServer = {
   callTool(name: HtmlslideMcpTool, input?: Record<string, unknown>): Promise<HtmlslideMcpToolResult>;
 };
 
-export const htmlslideTools: ToolDescriptor[] = [
-  {
-    name: "project_get_manifest",
-    safety: "read-only",
-    description: "Read deck.json and return normalized project metadata."
-  },
-  {
-    name: "project_list_slides",
-    safety: "read-only",
-    description: "List slide ids, titles, source paths, notes paths, and durations."
-  },
-  {
-    name: "slide_read",
-    safety: "read-only",
-    description: "Read one slide source fragment within the project boundary."
-  },
-  {
-    name: "slide_write",
-    safety: "project-write",
-    description: "Write one slide source fragment and append a write audit entry."
-  },
-  {
-    name: "notes_read",
-    safety: "read-only",
-    description: "Read speaker notes Markdown for one slide."
-  },
-  {
-    name: "notes_write",
-    safety: "project-write",
-    description: "Write speaker notes Markdown and append a write audit entry."
-  },
-  {
-    name: "theme_read",
-    safety: "read-only",
-    description: "Read project theme CSS or token files."
-  },
-  {
-    name: "theme_write",
-    safety: "project-write",
-    description: "Write project theme CSS or token files and append a write audit entry."
-  },
-  {
-    name: "render_slide",
-    safety: "read-only",
-    description: "Render one fixed-viewport slide for preview or QA."
-  },
-  {
-    name: "render_deck",
-    safety: "read-only",
-    description: "Build a fixed-viewport render document for the whole deck."
-  },
-  {
-    name: "check_deck",
-    safety: "read-only",
-    description: "Run HTMLslide checks and return a machine-readable report."
-  },
-  {
-    name: "get_check_report",
-    safety: "read-only",
-    description: "Read the latest .htmlslide/reports/check-report.json."
-  },
-  {
-    name: "export_pdf",
-    safety: "project-write",
-    description: "Export a PDF artifact inside the project exports folder."
-  },
-  {
-    name: "export_deckpkg",
-    safety: "project-write",
-    description: "Export a deckpkg artifact inside the project exports folder."
-  },
-  {
-    name: "checkpoint_create",
-    safety: "project-write",
-    description: "Create a project checkpoint before an agent run."
-  },
-  {
-    name: "checkpoint_diff",
-    safety: "read-only",
-    description: "Return a checkpoint diff summary."
-  },
-  {
-    name: "checkpoint_revert",
-    safety: "dangerous",
-    description: "Revert project files to a checkpoint after explicit user authorization."
-  },
-  {
-    name: "skill_list",
-    safety: "read-only",
-    description: "List installed HTMLslide skills."
-  },
-  {
-    name: "skill_get_instructions",
-    safety: "read-only",
-    description: "Read installed skill instructions for the active project."
-  },
-  {
-    name: "read_deck",
-    safety: "read-only",
-    description: "Deprecated alias for project_get_manifest."
-  },
-  {
-    name: "export_deck",
-    safety: "project-write",
-    description: "Deprecated alias that exports PDF, HTML, thumbnails, and deckpkg artifacts."
-  },
-  {
-    name: "list_slides",
-    safety: "read-only",
-    description: "Deprecated alias for project_list_slides."
-  },
-  {
-    name: "read_slide",
-    safety: "read-only",
-    description: "Deprecated alias for slide_read."
-  },
-  {
-    name: "write_slide",
-    safety: "project-write",
-    description: "Deprecated alias for slide_write."
-  }
+export const implementedHtmlslideMcpTools: readonly HtmlslideMcpTool[] = [
+  "project_get_manifest",
+  "project_list_slides",
+  "slide_read",
+  "slide_write",
+  "notes_read",
+  "notes_write",
+  "theme_read",
+  "theme_write",
+  "check_deck",
+  "export_pdf",
+  "read_deck",
+  "list_slides",
+  "read_slide",
+  "write_slide"
 ];
+
+export const deprecatedHtmlslideMcpTools: readonly HtmlslideMcpTool[] = [
+  "read_deck",
+  "export_deck",
+  "list_slides",
+  "read_slide",
+  "write_slide"
+];
+
+const implementedToolNames = new Set<HtmlslideMcpTool>(implementedHtmlslideMcpTools);
+const deprecatedToolNames = new Set<HtmlslideMcpTool>(deprecatedHtmlslideMcpTools);
+
+const defineTool = (name: HtmlslideMcpTool, safety: ToolSafety, description: string): ToolDescriptor => ({
+  name,
+  safety,
+  description,
+  implemented: implementedToolNames.has(name),
+  ...(deprecatedToolNames.has(name) ? { deprecated: true } : {})
+});
+
+export const htmlslideTools: ToolDescriptor[] = [
+  defineTool("project_get_manifest", "read-only", "Read deck.json and return normalized project metadata."),
+  defineTool("project_list_slides", "read-only", "List slide ids, titles, source paths, notes paths, and durations."),
+  defineTool("slide_read", "read-only", "Read one slide source fragment within the project boundary."),
+  defineTool("slide_write", "project-write", "Write one slide source fragment and append a write audit entry."),
+  defineTool("notes_read", "read-only", "Read speaker notes Markdown for one slide."),
+  defineTool("notes_write", "project-write", "Write speaker notes Markdown and append a write audit entry."),
+  defineTool("theme_read", "read-only", "Read project theme CSS or token files."),
+  defineTool("theme_write", "project-write", "Write project theme CSS or token files and append a write audit entry."),
+  defineTool("render_slide", "read-only", "Render one fixed-viewport slide for preview or QA."),
+  defineTool("render_deck", "read-only", "Build a fixed-viewport render document for the whole deck."),
+  defineTool("check_deck", "read-only", "Run HTMLslide checks and return a machine-readable report."),
+  defineTool("get_check_report", "read-only", "Read the latest .htmlslide/reports/check-report.json."),
+  defineTool("export_pdf", "project-write", "Export a PDF artifact inside the project exports folder."),
+  defineTool("export_deckpkg", "project-write", "Export a deckpkg artifact inside the project exports folder."),
+  defineTool("checkpoint_create", "project-write", "Create a project checkpoint before an agent run."),
+  defineTool("checkpoint_diff", "read-only", "Return a checkpoint diff summary."),
+  defineTool("checkpoint_revert", "dangerous", "Revert project files to a checkpoint after explicit user authorization."),
+  defineTool("skill_list", "read-only", "List installed HTMLslide skills."),
+  defineTool("skill_get_instructions", "read-only", "Read installed skill instructions for the active project."),
+  defineTool("read_deck", "read-only", "Deprecated alias for project_get_manifest."),
+  defineTool("export_deck", "project-write", "Deprecated alias that exports PDF, HTML, thumbnails, and deckpkg artifacts."),
+  defineTool("list_slides", "read-only", "Deprecated alias for project_list_slides."),
+  defineTool("read_slide", "read-only", "Deprecated alias for slide_read."),
+  defineTool("write_slide", "project-write", "Deprecated alias for slide_write.")
+];
+
+export const summarizeHtmlslideMcpTools = () => ({
+  registeredToolCount: htmlslideTools.length,
+  implementedToolCount: htmlslideTools.filter((tool) => tool.implemented).length
+});
 
 export const isProjectRelativePathSafe = (relativePath: string): boolean => {
   if (relativePath.trim() !== relativePath || relativePath.length === 0) {
@@ -271,10 +220,12 @@ export const createHtmlslideMcpServer = (options: HtmlslideMcpServerOptions): Ht
   return {
     async start() {
       await loadDeckProject(projectRoot, { verifyFiles: false });
+      const toolSummary = summarizeHtmlslideMcpTools();
       return {
         status: "started",
         projectRoot,
-        toolCount: htmlslideTools.length
+        ...toolSummary,
+        toolCount: toolSummary.registeredToolCount
       };
     },
 

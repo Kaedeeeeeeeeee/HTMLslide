@@ -400,6 +400,83 @@ describe("CLI project helpers", () => {
     );
   });
 
+  it("lists MCP tools and reports project harness status from the CLI", async () => {
+    const toolsResult = await runCli(["mcp", "--list-tools", "--json"]);
+    const toolsPayload = JSON.parse(toolsResult.stdout) as {
+      command: string;
+      implementedToolCount: number;
+      status: string;
+      toolCount: number;
+      tools: Array<{ name: string; safety: string; description: string; implemented: boolean; deprecated?: boolean }>;
+    };
+
+    expect(toolsPayload.command).toBe("mcp list-tools");
+    expect(toolsPayload.status).toBe("passed");
+    expect(toolsPayload.toolCount).toBe(toolsPayload.tools.length);
+    expect(toolsPayload.implementedToolCount).toBe(toolsPayload.tools.filter((tool) => tool.implemented).length);
+    expect(toolsPayload.tools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          implemented: true,
+          name: "project_get_manifest",
+          safety: "read-only"
+        }),
+        expect.objectContaining({
+          implemented: true,
+          name: "slide_write",
+          safety: "project-write"
+        }),
+        expect.objectContaining({
+          implemented: false,
+          name: "checkpoint_revert",
+          safety: "dangerous"
+        }),
+        expect.objectContaining({
+          deprecated: true,
+          implemented: true,
+          name: "read_deck"
+        })
+      ])
+    );
+
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
+    try {
+      const project = await createProject(path.join(root, "demo"), "demo");
+      await expect(runCli(["mcp", project.projectPath, "--json"])).rejects.toMatchObject({
+        code: EXIT_CODES.generic,
+        stdout: expect.stringContaining('"code": "MCP_STDIO_NOT_IMPLEMENTED"')
+      });
+
+      const statusResult = await runCli(["mcp", project.projectPath, "--status", "--json"]);
+      const statusPayload = JSON.parse(statusResult.stdout) as {
+        command: string;
+        implementedToolCount: number;
+        mcpStatus: string;
+        projectRoot: string;
+        registeredToolCount: number;
+        status: string;
+        toolCount: number;
+        transport: string;
+        tools: Array<{ name: string }>;
+      };
+
+      expect(statusPayload).toMatchObject({
+        command: "mcp status",
+        implementedToolCount: toolsPayload.implementedToolCount,
+        mcpStatus: "started",
+        projectRoot: project.projectPath,
+        registeredToolCount: toolsPayload.tools.length,
+        status: "passed",
+        transport: "in-process",
+        toolCount: toolsPayload.tools.length
+      });
+      expect(statusPayload.tools.map((tool) => tool.name)).toContain("check_deck");
+      expect(statusPayload.tools.map((tool) => tool.name)).toContain("export_pdf");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("runs the mock agent through the CLI and returns deterministic JSON", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
     try {

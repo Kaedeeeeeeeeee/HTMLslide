@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import path from "node:path";
 import { Command } from "commander";
+import { ProjectLoadError } from "@htmlslide/core";
 import { listBuiltInDeckTemplates } from "@htmlslide/core/templates";
 import { HTMLSLIDE_APP_VERSION } from "@htmlslide/core/version";
+import { createHtmlslideMcpServer, htmlslideTools, summarizeHtmlslideMcpTools } from "@htmlslide/mcp-server";
 import {
   checkLoadedProject,
   createProject,
@@ -59,6 +61,11 @@ type CheckpointCommandOptions = JsonOption & {
   yes?: boolean;
 };
 
+type McpCommandOptions = JsonOption & {
+  listTools?: boolean;
+  status?: boolean;
+};
+
 type CliError = Error & {
   code?: string;
   exitCode?: number;
@@ -96,6 +103,15 @@ const fail = (error: unknown, json = false): never => {
     json
   );
   process.exit(exitCode);
+};
+
+const annotateProjectLoadError = (error: unknown): unknown => {
+  if (error instanceof ProjectLoadError) {
+    return Object.assign(error, {
+      exitCode: error.code === "PROJECT_NOT_FOUND" ? EXIT_CODES.projectNotFound : EXIT_CODES.validationFailed
+    });
+  }
+  return error;
 };
 
 const requireCheckpointReference = (options: CheckpointCommandOptions): void => {
@@ -402,6 +418,73 @@ checkpointCommand
       writeResult({ status: "passed", ...reverted }, json);
     } catch (error) {
       fail(error, json);
+    }
+  });
+
+program
+  .command("mcp")
+  .argument("[path]", "deck project path", process.cwd())
+  .option("--json", "print machine-readable JSON")
+  .option("--list-tools", "list registered HTMLslide MCP tools without opening a project")
+  .option("--status", "validate that the alpha in-process MCP harness can start for a deck project")
+  .description("Inspect the HTMLslide MCP server harness and registry.")
+  .action(async (projectPath: string, options: McpCommandOptions) => {
+    const json = Boolean(options.json ?? program.opts<JsonOption>().json);
+    try {
+      if (options.listTools) {
+        const toolSummary = summarizeHtmlslideMcpTools();
+        if (json) {
+          writeResult({
+            status: "passed",
+            command: "mcp list-tools",
+            ...toolSummary,
+            toolCount: toolSummary.registeredToolCount,
+            tools: htmlslideTools
+          }, true);
+          return;
+        }
+        writeResult(
+          htmlslideTools
+            .map((tool) => {
+              const lifecycle = tool.deprecated ? "deprecated" : "current";
+              const implementation = tool.implemented ? "implemented" : "planned";
+              return `${tool.name}\t${tool.safety}\t${implementation}\t${lifecycle}\t${tool.description}`;
+            })
+            .join("\n")
+        );
+        return;
+      }
+
+      if (!options.status) {
+        throw Object.assign(new Error("The real stdio MCP server is not implemented yet."), {
+          code: "MCP_STDIO_NOT_IMPLEMENTED",
+          exitCode: EXIT_CODES.generic,
+          suggestedFix: "Use `htmlslide mcp --list-tools --json` for registry discovery or `htmlslide mcp <project-path> --status --json` for the alpha in-process harness check."
+        });
+      }
+
+      const server = createHtmlslideMcpServer({
+        projectRoot: projectPath
+      });
+      const started = await server.start();
+      const tools = server.listTools();
+      if (json) {
+        const { status: mcpStatus, ...startedResult } = started;
+        writeResult({
+          status: "passed",
+          command: "mcp status",
+          transport: "in-process",
+          mcpStatus,
+          ...startedResult,
+          tools
+        }, true);
+        return;
+      }
+      writeResult(
+        `MCP alpha harness ready for ${started.projectRoot}\n${started.registeredToolCount} tools registered\n${started.implementedToolCount} tools implemented\ntransport: in-process`
+      );
+    } catch (error) {
+      fail(annotateProjectLoadError(error), json);
     }
   });
 

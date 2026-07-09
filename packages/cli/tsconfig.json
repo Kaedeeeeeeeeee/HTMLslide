@@ -10,6 +10,7 @@
     { "path": "../agent" },
     { "path": "../compiler" },
     { "path": "../core" },
-    { "path": "../linter" }
+    { "path": "../linter" },
+    { "path": "../mcp-server" }
   ]
 }

@@ -28,6 +28,20 @@ describe("HTMLslide MCP tool registry", () => {
     expect(toolNames).toContain("export_pdf");
     expect(toolNames).toContain("checkpoint_revert");
     expect(toolNames).toContain("read_deck");
+    expect(htmlslideTools.find((tool) => tool.name === "slide_write")).toMatchObject({
+      implemented: true
+    });
+    expect(htmlslideTools.find((tool) => tool.name === "render_slide")).toMatchObject({
+      implemented: false
+    });
+    expect(htmlslideTools.find((tool) => tool.name === "read_deck")).toMatchObject({
+      deprecated: true,
+      implemented: true
+    });
+    expect(htmlslideTools.find((tool) => tool.name === "export_deck")).toMatchObject({
+      deprecated: true,
+      implemented: false
+    });
   });
 
   it("marks destructive checkpoint revert as dangerous", () => {
@@ -42,7 +56,9 @@ describe("HTMLslide MCP in-process server", () => {
       const started = await server.start();
 
       expect(started).toMatchObject({
+        implementedToolCount: htmlslideTools.filter((tool) => tool.implemented).length,
         projectRoot: projectPath,
+        registeredToolCount: htmlslideTools.length,
         status: "started",
         toolCount: htmlslideTools.length
       });

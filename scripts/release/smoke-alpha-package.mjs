@@ -10,6 +10,7 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, "..", "..");
 const alphaDir = path.join(root, "dist", "alpha");
 const appName = "HTMLslide.app";
+const validFullFixturePath = path.join(root, "packages", "test-fixtures", "decks", "valid-full");
 
 function fail(message) {
   throw new Error(message);
@@ -85,6 +86,26 @@ function plistValue(plistPath, key) {
   return run("/usr/libexec/PlistBuddy", ["-c", `Print :${key}`, plistPath]).stdout.trim();
 }
 
+function packagedAppExecutablePath(appPath) {
+  const plistPath = path.join(appPath, "Contents", "Info.plist");
+  const executableName = plistValue(plistPath, "CFBundleExecutable");
+  const executablePath = path.join(appPath, "Contents", "MacOS", executableName);
+
+  if (!existsSync(executablePath)) {
+    fail(`Packaged app executable is missing: ${executablePath}`);
+  }
+
+  return executablePath;
+}
+
+function packagedCliPath(appPath) {
+  const cliPath = path.join(appPath, "Contents", "Resources", "app", "cli-runtime", "dist", "bin", "htmlslide.js");
+  if (!existsSync(cliPath)) {
+    fail(`Packaged CLI runtime is missing: ${cliPath}`);
+  }
+  return cliPath;
+}
+
 function assertDeckPackageDocumentType(appPath) {
   const plistPath = path.join(appPath, "Contents", "Info.plist");
   const bundleIdentifier = plistValue(plistPath, "CFBundleIdentifier");
@@ -132,16 +153,10 @@ function detachDmg(mountPoint) {
 }
 
 async function launchAppOnce(appPath, smokeRoot) {
-  const plistPath = path.join(appPath, "Contents", "Info.plist");
-  const executableName = plistValue(plistPath, "CFBundleExecutable");
-  const executablePath = path.join(appPath, "Contents", "MacOS", executableName);
+  const executablePath = packagedAppExecutablePath(appPath);
   const smokeReadyFile = path.join(smokeRoot, "startup", "ready.json");
   const firstRunCliTargetDir = path.join(smokeRoot, "first-run-bin");
   const firstRunHtmlslideHome = path.join(smokeRoot, "first-run-home");
-
-  if (!existsSync(executablePath)) {
-    fail(`Packaged app executable is missing: ${executablePath}`);
-  }
 
   await Promise.all([
     mkdir(path.join(smokeRoot, "home"), { recursive: true }),
@@ -208,6 +223,113 @@ async function launchAppOnce(appPath, smokeRoot) {
   await smokeFirstRunCliProvisioning(appPath, firstRunCliTargetDir, firstRunHtmlslideHome);
 }
 
+async function exportFixtureDeckPackageWithPackagedCli(appPath, smokeRoot) {
+  const projectPath = path.join(smokeRoot, "deckpkg-source", "valid-full");
+  await mkdir(path.dirname(projectPath), { recursive: true });
+  await cp(validFullFixturePath, projectPath, {
+    recursive: true,
+    verbatimSymlinks: true
+  });
+
+  const cliPath = packagedCliPath(appPath);
+  const result = run(process.execPath, [cliPath, "export", projectPath, "--json"], {
+    env: {
+      HTMLSLIDE_HOME: path.join(smokeRoot, "deckpkg-cli-home")
+    }
+  });
+  const exported = readJsonOutput(result, "packaged htmlslide export");
+  const deckpkgPath =
+    typeof exported.artifacts?.deckpkg === "string"
+      ? exported.artifacts.deckpkg
+      : path.join(projectPath, "exports", "valid-full-deck.deckpkg");
+
+  if (!existsSync(deckpkgPath)) {
+    fail(`Packaged CLI export did not create a deckpkg artifact: ${deckpkgPath}`);
+  }
+
+  return deckpkgPath;
+}
+
+async function launchAppWithDeckPackage(appPath, smokeRoot) {
+  const executablePath = packagedAppExecutablePath(appPath);
+  const deckpkgPath = await exportFixtureDeckPackageWithPackagedCli(appPath, smokeRoot);
+  const smokeReadyFile = path.join(smokeRoot, "deckpkg-open", "ready.json");
+  const smokeHome = path.join(smokeRoot, "deckpkg-home");
+  const smokeWorkspace = path.join(smokeRoot, "deckpkg-workspace");
+  const smokeUserData = path.join(smokeRoot, "deckpkg-user-data");
+
+  await Promise.all([
+    mkdir(smokeHome, { recursive: true }),
+    mkdir(smokeWorkspace, { recursive: true }),
+    mkdir(smokeUserData, { recursive: true })
+  ]);
+
+  const child = spawn(executablePath, [deckpkgPath], {
+    cwd: path.dirname(appPath),
+    env: {
+      ...process.env,
+      ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+      HOME: smokeHome,
+      HTMLSLIDE_CLI_TARGET_DIR: path.join(smokeRoot, "deckpkg-first-run-bin"),
+      HTMLSLIDE_DEFAULT_WORKSPACE: smokeWorkspace,
+      HTMLSLIDE_HOME: path.join(smokeRoot, "deckpkg-first-run-home"),
+      HTMLSLIDE_SMOKE_EXPECT_OPEN_DECKPKG_PATH: deckpkgPath,
+      HTMLSLIDE_SMOKE_QUIT_AFTER_READY: "1",
+      HTMLSLIDE_SMOKE_READY_FILE: smokeReadyFile,
+      HTMLSLIDE_USER_DATA_DIR: smokeUserData
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout?.on("data", (chunk) => {
+    stdout += String(chunk);
+  });
+  child.stderr?.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+
+  const exitCode = await new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      resolve("timeout");
+    }, 25_000);
+
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      resolve(error);
+    });
+
+    child.once("exit", (code, signal) => {
+      clearTimeout(timer);
+      resolve(signal ? `signal:${signal}` : code ?? 1);
+    });
+  });
+
+  const marker = existsSync(smokeReadyFile) ? JSON.parse(await readFile(smokeReadyFile, "utf8")) : undefined;
+  if (exitCode !== 0 || marker?.status !== "passed") {
+    fail([
+      `Packaged app did not open a deckpkg argument successfully: ${String(exitCode)}`,
+      marker ? `Smoke marker: ${JSON.stringify(marker)}` : "",
+      stdout ? `stdout:\n${stdout}` : "",
+      stderr ? `stderr:\n${stderr}` : ""
+    ].filter(Boolean).join("\n"));
+  }
+
+  const expectedDeckpkgPath = await realpath(deckpkgPath);
+  const actualDeckpkgPath = await realpath(String(marker.deckpkgPath));
+  const actualExpectedDeckpkgPath = await realpath(String(marker.expectedDeckpkgPath));
+  if (
+    marker.kind !== "deckpkg-open" ||
+    actualDeckpkgPath !== expectedDeckpkgPath ||
+    actualExpectedDeckpkgPath !== expectedDeckpkgPath ||
+    marker.title !== "Valid Full Deck" ||
+    marker.slideCount !== 2
+  ) {
+    fail(`Packaged deckpkg smoke marker did not match the expected deck: ${JSON.stringify(marker)}`);
+  }
+}
+
 async function smokeFirstRunCliProvisioning(appPath, targetDir, htmlslideHome) {
   const shimPath = path.join(targetDir, "htmlslide");
   const appPathJson = path.join(htmlslideHome, "app-path.json");
@@ -241,11 +363,7 @@ function readJsonOutput(result, label) {
 }
 
 async function smokeCliShim(appPath, smokeRoot) {
-  const cliPath = path.join(appPath, "Contents", "Resources", "app", "cli-runtime", "dist", "bin", "htmlslide.js");
-  if (!existsSync(cliPath)) {
-    fail(`Packaged CLI runtime is missing: ${cliPath}`);
-  }
-
+  const cliPath = packagedCliPath(appPath);
   const htmlslideHome = path.join(smokeRoot, "htmlslide-home");
   const shimPath = path.join(htmlslideHome, "bin", "htmlslide");
   const env = {
@@ -312,6 +430,7 @@ async function main() {
 
     assertDeckPackageDocumentType(installedAppPath);
     await launchAppOnce(installedAppPath, smokeRoot);
+    await launchAppWithDeckPackage(installedAppPath, smokeRoot);
     await smokeCliShim(installedAppPath, smokeRoot);
 
     process.stdout.write("Alpha package smoke passed.\n");

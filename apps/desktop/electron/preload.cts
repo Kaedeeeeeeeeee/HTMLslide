@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
     ipcRenderer.on("htmlslide:open-deckpkg", listener);
     return () => ipcRenderer.removeListener("htmlslide:open-deckpkg", listener);
   },
+  reportSmokeReady: (marker: unknown) => ipcRenderer.invoke("htmlslide:report-smoke-ready", marker),
   listPresenterDisplays: () => ipcRenderer.invoke("htmlslide:list-presenter-displays"),
   runMockAgent: (request: {
     projectPath: string;

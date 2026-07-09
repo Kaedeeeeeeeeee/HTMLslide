@@ -16,7 +16,8 @@ import {
   type DesktopMockAgentRunResult,
   type DesktopPresenterDeckResult,
   type DesktopProjectPreview,
-  type DesktopProjectRecord
+  type DesktopProjectRecord,
+  type DesktopSmokeReadyMarker
 } from "./desktop-api";
 import {
   buildNewDeckAgentBrief,
@@ -286,17 +287,25 @@ function App(): React.ReactNode {
   }, []);
 
   const openDeckPackagePath = useCallback(
-    async (deckpkgPath: string, baseProjects?: ProjectSummary[]): Promise<void> => {
+    async (deckpkgPath: string, baseProjects?: ProjectSummary[]): Promise<DesktopPresenterDeckResult | undefined> => {
       if (!desktopApi) {
         setOperationStatus({ kind: "failed", message: "Desktop API unavailable" });
-        return;
+        return undefined;
       }
 
       setOperationStatus({ kind: "running", message: "Opening deck package" });
       const result = await desktopApi.loadPresenterDeckPackage(deckpkgPath);
       applyDeckPackageOpenResult(result, baseProjects);
+      return result;
     },
     [applyDeckPackageOpenResult, desktopApi]
+  );
+
+  const reportSmokeReady = useCallback(
+    async (marker: DesktopSmokeReadyMarker): Promise<void> => {
+      await desktopApi?.reportSmokeReady(marker);
+    },
+    [desktopApi]
   );
 
   useEffect(() => {
@@ -329,10 +338,37 @@ function App(): React.ReactNode {
         });
 
         if (setup.initialOpen?.kind === "deckpkg") {
-          await openDeckPackagePath(setup.initialOpen.path, projectSummaries);
+          const openResult = await openDeckPackagePath(setup.initialOpen.path, projectSummaries);
+          if (setup.smoke?.expectOpenDeckpkgPath) {
+            await reportSmokeReady(
+              openResult?.ok
+                ? {
+                    status: "passed",
+                    kind: "deckpkg-open",
+                    deckpkgPath: openResult.deckpkgPath,
+                    expectedDeckpkgPath: setup.smoke.expectOpenDeckpkgPath,
+                    title: openResult.deck.title,
+                    slideCount: openResult.deck.slides.length
+                  }
+                : {
+                    status: "failed",
+                    kind: "deckpkg-open",
+                    deckpkgPath: setup.initialOpen.path,
+                    expectedDeckpkgPath: setup.smoke.expectOpenDeckpkgPath,
+                    error: openResult?.error ?? "Deck package did not open."
+                  }
+            );
+          }
           if (cancelled) {
             return;
           }
+        } else if (setup.smoke?.expectOpenDeckpkgPath) {
+          await reportSmokeReady({
+            status: "failed",
+            kind: "deckpkg-open",
+            expectedDeckpkgPath: setup.smoke.expectOpenDeckpkgPath,
+            error: "Packaged smoke expected an initial deckpkg open request."
+          });
         }
 
         return desktopApi.detectExternalAgents();
@@ -364,7 +400,7 @@ function App(): React.ReactNode {
     return () => {
       cancelled = true;
     };
-  }, [desktopApi, openDeckPackagePath]);
+  }, [desktopApi, openDeckPackagePath, reportSmokeReady]);
 
   useEffect(() => {
     if (!desktopApi) {

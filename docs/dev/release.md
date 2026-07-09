@@ -39,7 +39,7 @@ After packaging, run the package smoke:
 pnpm smoke:package:alpha
 ```
 
-The smoke mounts the DMG, copies `HTMLslide.app` into a temporary install directory, verifies the packaged app declares `.deckpkg` as an owned macOS document type, launches the packaged app with isolated user data, verifies packaged first-run CLI provisioning into an isolated target directory, installs a temporary HTMLslide-managed CLI shim, verifies `htmlslide doctor --json` through that shim, and uninstalls it. It never writes to real `/Applications` or the user's real `~/.htmlslide`.
+The smoke mounts the DMG, copies `HTMLslide.app` into a temporary install directory, verifies the packaged app declares `.deckpkg` as an owned macOS document type, launches the packaged app with isolated user data, verifies packaged first-run CLI provisioning into an isolated target directory, exports a fixture deck through the packaged CLI, launches the packaged app with that `.deckpkg` as a direct file argument, waits for the renderer to confirm presenter mode opened the expected deck, installs a temporary HTMLslide-managed CLI shim, verifies `htmlslide doctor --json` through that shim, and uninstalls it. It never writes to real `/Applications` or the user's real `~/.htmlslide`.
 
 ## Alpha Checklist
 
@@ -53,7 +53,7 @@ Before calling an alpha build public, verify:
 - Outline, visual directions, and full deck generation work.
 - Checks find `text-overflow`, missing asset, and missing notes issues.
 - PDF page count and PNG thumbnails match the deck.
-- deckpkg opens from a direct file argument, macOS `open-file` event, and Finder/LaunchServices manual test.
+- deckpkg opens from a direct file argument in both Electron E2E and packaged-app smoke, from a macOS `open-file` event in Electron E2E, and from Finder/LaunchServices in a manual test.
 - Rehearsal mode works.
 - Dual-screen presenter has been manually tested.
 - Fake external agent automation passes.

@@ -45,6 +45,9 @@ const smokeQuitAfterReady = process.env.HTMLSLIDE_SMOKE_QUIT_AFTER_READY === "1"
 const smokeReadyFile = process.env.HTMLSLIDE_SMOKE_READY_FILE
   ? resolve(process.env.HTMLSLIDE_SMOKE_READY_FILE)
   : undefined;
+const smokeExpectedOpenDeckPackagePath = isDeckPackagePath(process.env.HTMLSLIDE_SMOKE_EXPECT_OPEN_DECKPKG_PATH)
+  ? resolve(process.env.HTMLSLIDE_SMOKE_EXPECT_OPEN_DECKPKG_PATH)
+  : undefined;
 let pendingDeckPackagePath = initialDeckPackagePath();
 
 const writeSmokeMarker = async (marker: Record<string, unknown>) => {
@@ -55,10 +58,6 @@ const writeSmokeMarker = async (marker: Record<string, unknown>) => {
   await mkdir(dirname(smokeReadyFile), { recursive: true });
   await writeFile(smokeReadyFile, `${JSON.stringify(marker)}\n`);
 };
-
-if (smokeQuitAfterReady) {
-  void writeSmokeMarker({ status: "main-started" }).catch(() => undefined);
-}
 
 if (configuredUserDataPath) {
   app.setPath("userData", configuredUserDataPath);
@@ -164,6 +163,11 @@ function registerIpcHandlers(): void {
         cliPath: cliRuntime?.cliPath
       },
       cliIntegration,
+      smoke: smokeExpectedOpenDeckPackagePath
+        ? {
+            expectOpenDeckpkgPath: smokeExpectedOpenDeckPackagePath
+          }
+        : undefined,
       initialOpen: initialOpenDeckPackagePath
         ? {
             kind: "deckpkg",
@@ -323,6 +327,18 @@ function registerIpcHandlers(): void {
     loadDesktopPresenterDeckPackage(deckpkgPath)
   );
 
+  ipcMain.handle("htmlslide:report-smoke-ready", async (_event, marker: Record<string, unknown>) => {
+    if (!smokeReadyFile) {
+      return { ok: false };
+    }
+
+    await writeSmokeMarker(marker);
+    if (smokeQuitAfterReady) {
+      setTimeout(() => app.quit(), 100);
+    }
+    return { ok: true };
+  });
+
   ipcMain.handle("htmlslide:list-presenter-displays", async () => listDesktopPresenterDisplays(screen));
 
   ipcMain.handle(
@@ -423,7 +439,10 @@ function createWindow(): void {
 
     try {
       await load;
-      await writeSmokeMarker({ status: "passed" });
+      if (smokeExpectedOpenDeckPackagePath) {
+        return;
+      }
+      await writeSmokeMarker({ status: "passed", kind: "startup" });
       setTimeout(() => app.quit(), 100);
     } catch (error) {
       await writeSmokeMarker({
@@ -444,6 +463,13 @@ function createWindow(): void {
 }
 
 app.whenReady().then(async () => {
+  if (smokeQuitAfterReady) {
+    void writeSmokeMarker({
+      status: "main-started",
+      kind: smokeExpectedOpenDeckPackagePath ? "deckpkg-open" : "startup",
+      expectedDeckpkgPath: smokeExpectedOpenDeckPackagePath
+    }).catch(() => undefined);
+  }
   registerIpcHandlers();
   if (
     process.env.HTMLSLIDE_DISABLE_AUTO_CLI_PROVISIONING !== "1" &&

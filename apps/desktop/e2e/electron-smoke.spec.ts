@@ -1,5 +1,6 @@
 import { _electron as electron, expect, test } from "@playwright/test";
 import type { ElectronApplication, Page } from "@playwright/test";
+import { readDeckPackage } from "@htmlslide/presenter";
 import { execFile as execFileCallback } from "node:child_process";
 import { createRequire } from "node:module";
 import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -7,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { readPdfPageCount, readPngSize } from "../../../packages/compiler/src/index";
 
 const e2eDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(e2eDir, "..");
@@ -404,11 +406,28 @@ test.describe("HTMLslide desktop smoke", () => {
     await page.locator(".workspace-toolbar").getByRole("button", { name: "Export", exact: true }).click();
     await expect(page.locator(".toolbar-status").getByText("export: Export complete")).toBeVisible({ timeout: 30_000 });
     const deckpkgPath = path.join(projectPath, "exports", "valid-full-deck.deckpkg");
-    await expect(access(path.join(projectPath, "exports", "valid-full-deck.pdf"))).resolves.toBeUndefined();
-    await expect(access(path.join(projectPath, "exports", "valid-full-deck.html"))).resolves.toBeUndefined();
+    const pdfPath = path.join(projectPath, "exports", "valid-full-deck.pdf");
+    const htmlPath = path.join(projectPath, "exports", "valid-full-deck.html");
+    const notesPath = path.join(projectPath, "exports", "notes.json");
+    const deck = JSON.parse(await readFile(path.join(projectPath, "deck.json"), "utf8")) as {
+      slides: Array<{ id: string }>;
+    };
+    const expectedSlideCount = deck.slides.length;
+    await expect(access(pdfPath)).resolves.toBeUndefined();
+    await expect(access(htmlPath)).resolves.toBeUndefined();
     await expect(access(deckpkgPath)).resolves.toBeUndefined();
-    await expect(access(path.join(projectPath, "exports", "notes.json"))).resolves.toBeUndefined();
-    await expect(access(path.join(projectPath, "exports", "thumbnails", "001-title.png"))).resolves.toBeUndefined();
+    await expect(access(notesPath)).resolves.toBeUndefined();
+    expect(await readPdfPageCount(pdfPath)).toBe(expectedSlideCount);
+    const exportedPackage = await readDeckPackage(deckpkgPath);
+    expect(exportedPackage.manifest.slideCount).toBe(expectedSlideCount);
+    expect(exportedPackage.manifest.pageCount).toBe(expectedSlideCount);
+    expect(exportedPackage.manifest.slides.map((slide) => slide.id)).toEqual(deck.slides.map((slide) => slide.id));
+    expect(exportedPackage.slides).toHaveLength(expectedSlideCount);
+    for (const slide of deck.slides) {
+      const thumbnailPath = path.join(projectPath, "exports", "thumbnails", `${slide.id}.png`);
+      await expect(access(thumbnailPath)).resolves.toBeUndefined();
+      expect(readPngSize(await readFile(thumbnailPath))).toEqual({ width: 960, height: 540 });
+    }
     await rm(deckpkgPath, { force: true });
 
     await page.locator(".workspace-toolbar").getByRole("button", { name: "Present", exact: true }).click();

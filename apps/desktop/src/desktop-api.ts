@@ -20,6 +20,9 @@ export type DesktopSetupState = {
   libraryPath: string;
   workspacePath: string;
   initialOpen?: DesktopInitialOpenRequest;
+  smoke?: {
+    expectOpenDeckpkgPath?: string;
+  };
   cli: {
     available: boolean;
     mode: "development" | "packaged" | "missing";
@@ -32,6 +35,16 @@ export type DesktopSetupState = {
 export type DesktopInitialOpenRequest = {
   kind: "deckpkg";
   path: string;
+};
+
+export type DesktopSmokeReadyMarker = {
+  status: "passed" | "failed";
+  kind: "startup" | "deckpkg-open";
+  deckpkgPath?: string;
+  expectedDeckpkgPath?: string;
+  title?: string;
+  slideCount?: number;
+  error?: string;
 };
 
 export type DesktopCliIntegrationState = {
@@ -312,6 +325,7 @@ export type HtmlslideDesktopApi = {
   loadPresenterDeck(projectPath: string): Promise<DesktopPresenterDeckResult>;
   loadPresenterDeckPackage(deckpkgPath: string): Promise<DesktopPresenterDeckResult>;
   onOpenDeckPackage(handler: (request: DesktopInitialOpenRequest) => void): () => void;
+  reportSmokeReady(marker: DesktopSmokeReadyMarker): Promise<{ ok: boolean }>;
   listPresenterDisplays(): Promise<DesktopPresenterDisplay[]>;
   runMockAgent(request: DesktopMockAgentRunRequest): Promise<DesktopMockAgentRunResult>;
   runByokAgent(request: DesktopByokAgentRunRequest): Promise<DesktopByokAgentRunResult>;

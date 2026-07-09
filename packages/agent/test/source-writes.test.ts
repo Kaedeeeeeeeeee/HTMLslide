@@ -73,6 +73,7 @@ describe("agent source writes", () => {
       "",
       "../escape.html",
       "/tmp/escape.html",
+      "slides/\0escape.html",
       "slides/../escape.html",
       "slides\\001-title.html",
       "slides:001-title.html",

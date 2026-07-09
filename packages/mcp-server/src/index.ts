@@ -221,7 +221,29 @@ export const isProjectRelativePathSafe = (relativePath: string): boolean => {
   if (relativePath.trim() !== relativePath || relativePath.length === 0) {
     return false;
   }
-  if (relativePath.startsWith("/") || relativePath.includes("\\") || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(relativePath)) {
+  if (
+    relativePath.includes("\0") ||
+    relativePath.startsWith("/") ||
+    relativePath.includes("\\") ||
+    /^[A-Za-z][A-Za-z0-9+.-]*:/.test(relativePath)
+  ) {
+    return false;
+  }
+  if (relativePath.includes("%")) {
+    try {
+      const decodedPath = decodeURIComponent(relativePath);
+      if (decodedPath !== relativePath && !isPlainProjectRelativePathSafe(decodedPath)) {
+        return false;
+      }
+    } catch {
+      return false;
+    }
+  }
+  return isPlainProjectRelativePathSafe(relativePath);
+};
+
+const isPlainProjectRelativePathSafe = (relativePath: string): boolean => {
+  if (relativePath.includes("\0")) {
     return false;
   }
   return !relativePath.split("/").some((part) => part.length === 0 || part === "." || part === "..");

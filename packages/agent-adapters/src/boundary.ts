@@ -1,4 +1,5 @@
 import path from "node:path";
+import { realpath } from "node:fs/promises";
 
 import { AgentAdapterFailureError, createAgentAdapterFailure } from "./failures.js";
 
@@ -9,6 +10,10 @@ export function resolveProjectPath(projectRoot: string, candidatePath: string): 
 }
 
 export function isPathInsideProject(projectRoot: string, candidatePath: string): boolean {
+  if (projectRoot.includes("\0") || candidatePath.includes("\0")) {
+    return false;
+  }
+
   const root = path.resolve(projectRoot);
   const candidate = resolveProjectPath(root, candidatePath);
   const relativePath = path.relative(root, candidate);
@@ -101,6 +106,39 @@ export function validateReportedFileWrites(projectRoot: string, reportedWrites: 
   return normalizedWrites;
 }
 
+export async function validateReportedFileWritesOnDisk(
+  projectRoot: string,
+  reportedWrites: readonly string[]
+): Promise<string[]> {
+  const normalizedWrites = validateReportedFileWrites(projectRoot, reportedWrites);
+  const realProjectRoot = await realpath(projectRoot);
+
+  for (const reportedWrite of normalizedWrites) {
+    let realWritePath: string;
+    try {
+      realWritePath = await realpath(reportedWrite);
+    } catch {
+      throw new AgentAdapterFailureError(
+        createAgentAdapterFailure("forbidden-file-write", {
+          detail: "External agents must report files that exist inside the project after the command completes.",
+          path: reportedWrite
+        })
+      );
+    }
+
+    if (!isResolvedPathInsideRoot(realProjectRoot, realWritePath)) {
+      throw new AgentAdapterFailureError(
+        createAgentAdapterFailure("forbidden-file-write", {
+          detail: "External agent write resolves outside the HTMLslide project after following symlinks.",
+          path: realWritePath
+        })
+      );
+    }
+  }
+
+  return normalizedWrites;
+}
+
 export function isEditableProjectSourcePath(projectRoot: string, candidatePath: string): boolean {
   if (!isPathInsideProject(projectRoot, candidatePath)) {
     return false;
@@ -125,4 +163,11 @@ export function isEditableProjectSourcePath(projectRoot: string, candidatePath: 
     relativePath.startsWith("theme/") ||
     relativePath.startsWith("assets/")
   );
+}
+
+function isResolvedPathInsideRoot(projectRoot: string, candidatePath: string): boolean {
+  const root = path.resolve(projectRoot);
+  const candidate = path.resolve(candidatePath);
+  const relativePath = path.relative(root, candidate);
+  return relativePath === "" || (relativePath.length > 0 && !relativePath.startsWith("..") && !path.isAbsolute(relativePath));
 }

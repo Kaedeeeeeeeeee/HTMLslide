@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createMockPassedCheck, createMockProvider, type FetchLike, type ModelProvider } from "@htmlslide/agent";
@@ -399,6 +399,31 @@ async function writeExternalAgentScript(projectPath: string, name: string, sourc
   await mkdir(path.dirname(scriptFile), { recursive: true });
   await writeFile(scriptFile, source.trimStart(), "utf8");
   return scriptFile;
+}
+
+async function readProjectTextFiles(projectPath: string): Promise<Array<{ path: string; text: string }>> {
+  const files: Array<{ path: string; text: string }> = [];
+
+  async function walk(directoryPath: string): Promise<void> {
+    for (const entry of await readdir(directoryPath, { withFileTypes: true })) {
+      const entryPath = path.join(directoryPath, entry.name);
+      if (entry.isDirectory()) {
+        await walk(entryPath);
+        continue;
+      }
+      if (!entry.isFile()) {
+        continue;
+      }
+
+      files.push({
+        path: path.relative(projectPath, entryPath),
+        text: await readFile(entryPath, "utf8")
+      });
+    }
+  }
+
+  await walk(projectPath);
+  return files;
 }
 
 describe("desktop services", () => {
@@ -1080,6 +1105,9 @@ describe("desktop services", () => {
     expect(reportText).not.toContain("Provider source write");
     expect(reportText).not.toContain("Generated through provider source writes");
     expect(reportText).not.toContain('"content":');
+    for (const file of await readProjectTextFiles(projectPath)) {
+      expect(file.text, file.path).not.toContain("sk-openai-secret");
+    }
     expect(providerFetch.calls[0]).toMatchObject({
       method: "GET",
       url: "https://api.openai.com/v1/models/gpt-5-mini"
@@ -1736,11 +1764,14 @@ const projectRoot = requireArg(args, "--project");
 const promptFile = requireArg(args, "--prompt-file");
 const manifestFile = requireArg(args, "--writes-manifest");
 const slideFile = path.join(projectRoot, "slides", "001-title.html");
+const leakedKey = "sk-" + "external-secret123456";
 console.log("external stream started");
+console.log("api_key=" + leakedKey);
 fs.readFileSync(promptFile, "utf8");
 fs.writeFileSync(slideFile, '<section class="slide" data-slide-id="001-title"><h1>Edited externally</h1><ul><li>External point</li></ul></section>\\n');
 fs.writeFileSync(manifestFile, JSON.stringify({ writes: ["slides/001-title.html"] }));
 console.error("external stream wrote manifest");
+console.error("Bearer " + leakedKey);
 function readPairs(argv) {
   const pairs = new Map();
   for (let index = 0; index < argv.length; index += 2) {
@@ -1819,6 +1850,13 @@ function requireArg(args, name) {
     expect(result.ok).toBe(true);
     expect(result.providerId).toBe("external-generic");
     expect(result.adapter?.ok).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("sk-external-secret123456");
+    if (result.adapter?.ok === true) {
+      expect(result.adapter.stdout).toContain("api_key=[redacted]");
+      expect(result.adapter.stderr).toContain("Bearer [redacted]");
+      expect(result.adapter.stdout).not.toContain("sk-external-secret123456");
+      expect(result.adapter.stderr).not.toContain("sk-external-secret123456");
+    }
     expect(result.summary).toMatchObject({
       checkStatus: "passed",
       exportStatus: "passed",
@@ -1847,15 +1885,17 @@ function requireArg(args, name) {
           stage: "build"
         }),
         expect.objectContaining({
-          level: "warning",
-          message: "external stream wrote manifest",
+          level: "info",
+          message: "api_key=[redacted]",
           metadata: {
-            stream: "stderr"
+            stream: "stdout"
           },
           stage: "build"
         })
       ])
     );
+    expect(result.logs.map((log) => log.message).join("\n")).toContain("external stream wrote manifest");
+    expect(result.logs.map((log) => log.message).join("\n")).toContain("Bearer [redacted]");
     expect(calls).toEqual([
       ["check", projectPath, "--json"],
       ["export", projectPath, "--json"]
@@ -1864,6 +1904,9 @@ function requireArg(args, name) {
     const prompt = await readFile(path.join(projectPath, ".htmlslide", "runs", "run-external-test", "prompt.md"), "utf8");
     expect(prompt).toContain("Tighten the title slide.");
     expect(prompt).toContain("deck.json, slides/, notes/, theme/, or assets/");
+    for (const file of await readProjectTextFiles(projectPath)) {
+      expect(file.text, file.path).not.toContain("sk-external-secret123456");
+    }
   });
 
   it("blocks external agent runs until Generic command is selected and configured", async () => {

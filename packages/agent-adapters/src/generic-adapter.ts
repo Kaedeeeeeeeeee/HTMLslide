@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { assertPathInsideProject, validateReportedFileWrites } from "./boundary.js";
+import { assertPathInsideProject, validateReportedFileWritesOnDisk } from "./boundary.js";
 import { AgentAdapterFailureError, createAgentAdapterFailure, toAgentAdapterFailure } from "./failures.js";
 import { runCommand } from "./runner.js";
 import { renderCommandTemplate } from "./template.js";
@@ -81,7 +81,7 @@ export async function runGenericAgentAdapter(options: GenericAgentRunOptions): P
     }
 
     reportedWrites = options.readReportedFileWrites === undefined ? [] : await options.readReportedFileWrites();
-    const normalizedWrites = validateReportedFileWrites(projectRoot, reportedWrites);
+    const normalizedWrites = await validateReportedFileWritesOnDisk(projectRoot, reportedWrites);
 
     return {
       ok: true,

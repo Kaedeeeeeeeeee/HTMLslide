@@ -32,7 +32,7 @@ Use deterministic fixtures and avoid real provider credentials in automated test
 - MCP tests: verify server startup, tool listing, path boundary enforcement, schema-valid reports, and artifact creation.
 - Electron and presenter tests: cover onboarding, workspace choice, mock agent deck creation, preview, checks, export, rehearsal mode, settings, notes, next/previous navigation, timer, and keyboard shortcuts.
 - Packaging tests: unsigned CI build, signed/notarized release workflow contract, DMG/package smoke checks, first-run setup, official skill installation, CLI shim install/repair/uninstall, and `htmlslide doctor`.
-- Security tests: API keys absent from logs/project files/settings JSON, credential-store save/clear behavior through injected fakes, protected-mode write boundaries, MCP traversal denial, third-party skill warnings, remote asset detection, malformed deckpkg rejection.
+- Security tests: API keys absent from logs/project files/settings JSON, credential-store save/clear behavior through injected fakes, protected write-manifest boundaries including symlink escapes, MCP traversal denial, third-party skill warnings, remote asset detection, malformed deckpkg rejection.
 - Performance tests: track warm project open, single-slide render, 20-slide export, 20-slide check, and presenter next-slide latency.
 
 ## Desktop E2E Smoke

@@ -24,6 +24,7 @@ import {
   recordCheckpointChanges,
   revertFileCopyCheckpoint,
   runAgent,
+  sanitizeProviderText,
   type AgentSourceWrite,
   type AgentRunEvent,
   type AgentRunLog,
@@ -1911,27 +1912,29 @@ export async function runDesktopExternalAgent(
     nextAction: "Wait for reported writes"
   });
 
-  const adapter = await runGenericAgentAdapter({
-    adapter: adapterConfig,
-    projectRoot: projectPath,
-    promptFile,
-    variables: {
-      writeManifest
-    },
-    onOutput: (chunk) => {
-      const message = chunk.text.trim();
-      if (message.length === 0) {
-        return;
-      }
+  const adapter = sanitizeAgentAdapterRunResult(
+    await runGenericAgentAdapter({
+      adapter: adapterConfig,
+      projectRoot: projectPath,
+      promptFile,
+      variables: {
+        writeManifest
+      },
+      onOutput: (chunk) => {
+        const message = chunk.text.trim();
+        if (message.length === 0) {
+          return;
+        }
 
-      addLog(chunk.stream === "stdout" ? "info" : "warning", message, "build", {
-        stream: chunk.stream
-      });
-    },
-    runner: options.agentRunner,
-    timeoutMs: options.timeoutMs,
-    readReportedFileWrites: () => readJsonFileWriteManifest(projectPath, writeManifest)
-  });
+        addLog(chunk.stream === "stdout" ? "info" : "warning", message, "build", {
+          stream: chunk.stream
+        });
+      },
+      runner: options.agentRunner,
+      timeoutMs: options.timeoutMs,
+      readReportedFileWrites: () => readJsonFileWriteManifest(projectPath, writeManifest)
+    })
+  );
 
   if (!adapter.ok) {
     const error = adapter.failure.detail ?? adapter.failure.message;
@@ -2903,11 +2906,36 @@ function createDesktopAgentLogRecorder(logs: AgentRunLog[], runId: string) {
     logs.push({
       createdAt: new Date().toISOString(),
       level,
-      message,
+      message: sanitizeDesktopAgentText(message),
       runId,
       stage,
       metadata
     });
+  };
+}
+
+function sanitizeDesktopAgentText(value: string): string {
+  return sanitizeProviderText(value);
+}
+
+function sanitizeAgentAdapterRunResult(adapter: AgentAdapterRunResult): AgentAdapterRunResult {
+  if (adapter.ok) {
+    return {
+      ...adapter,
+      stderr: sanitizeDesktopAgentText(adapter.stderr),
+      stdout: sanitizeDesktopAgentText(adapter.stdout)
+    };
+  }
+
+  return {
+    ...adapter,
+    failure: {
+      ...adapter.failure,
+      detail: adapter.failure.detail === undefined ? undefined : sanitizeDesktopAgentText(adapter.failure.detail),
+      message: sanitizeDesktopAgentText(adapter.failure.message)
+    },
+    stderr: adapter.stderr === undefined ? undefined : sanitizeDesktopAgentText(adapter.stderr),
+    stdout: adapter.stdout === undefined ? undefined : sanitizeDesktopAgentText(adapter.stdout)
   };
 }
 

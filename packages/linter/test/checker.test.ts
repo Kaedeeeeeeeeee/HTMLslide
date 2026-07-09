@@ -157,6 +157,41 @@ describe("HTMLslide linter", () => {
     expectMachineRepairableIssues(report.issues);
   });
 
+  it("detects remote assets and scripts as local-first security issues", async () => {
+    await withTempFixture("linter-valid-clean", async (projectPath) => {
+      await writeFile(
+        path.join(projectPath, "slides", "001-clean.html"),
+        `<!doctype html>
+<section class="slide" data-slide-id="001-clean">
+  <style>@import url("https://cdn.example.test/theme.css");</style>
+  <img src="https://cdn.example.test/photo.png" alt="Remote" />
+  <script src="https://cdn.example.test/app.js"></script>
+  <h1>Remote asset test</h1>
+</section>
+`,
+        "utf8"
+      );
+
+      const report = await checkProject(projectPath);
+
+      expect(report.status).toBe("failed");
+      expect(report.issues.map((issue) => issue.type)).toEqual(
+        expect.arrayContaining(["remote-asset", "remote-script"])
+      );
+      expect(report.issues.filter((issue) => issue.type === "remote-script")).toEqual([
+        expect.objectContaining({
+          severity: "error",
+          measurement: {
+            url: "https://cdn.example.test/app.js"
+          }
+        })
+      ]);
+      expect(report.issues.filter((issue) => issue.type === "remote-asset").map((issue) => issue.measurement?.url)).toEqual(
+        expect.arrayContaining(["https://cdn.example.test/photo.png", "https://cdn.example.test/theme.css"])
+      );
+    });
+  });
+
   it("detects slides without speaker notes in an independent fixture", async () => {
     const report = await checkProject(fixturePath("linter-missing-notes"));
     const notesIssue = report.issues.find((issue) => issue.type === "missing-notes");

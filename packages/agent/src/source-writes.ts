@@ -114,6 +114,7 @@ export function resolveAgentSourceWritePath(projectPath: string, projectRelative
 function assertSafeAgentSourceWritePath(projectRelativePath: string): void {
   if (
     projectRelativePath.length === 0 ||
+    projectRelativePath.includes("\0") ||
     projectRelativePath.includes("\\") ||
     projectRelativePath.includes(":") ||
     path.posix.isAbsolute(projectRelativePath)

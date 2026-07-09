@@ -30,9 +30,10 @@ Each placeholder value renders as one argv token, even when it contains spaces. 
 
 Adapters must not execute generated shell text. Tests should use injected runners or controlled Node fake commands in temporary project directories.
 
-Generic command runs can stream raw stdout/stderr chunks through the adapter while still returning the complete
-stdout/stderr buffers when the process exits. The desktop external-agent path records those chunks as build-stage run
-logs so long-running local commands can surface progress before check/export gates run.
+Generic command runs can stream stdout/stderr chunks through the adapter while still returning the complete stdout/stderr
+buffers when the process exits. The desktop external-agent path records redacted chunks as build-stage run logs so
+long-running local commands can surface progress before check/export gates run without persisting API keys or bearer
+tokens.
 
 ## Desktop Generic Command Runs
 
@@ -44,7 +45,7 @@ Claude Code and Codex CLI are detection-only until their headless command templa
 
 ## Project Boundary
 
-External agents may edit source areas described by the project-structure spec, but they must not write outside the project root. Runs can provide a write manifest, and adapter code rejects any reported write whose resolved path escapes the project.
+External agents may edit source areas described by the project-structure spec, but they must not report writes outside the project root. Runs provide a write manifest, and adapter code rejects any reported write whose resolved path escapes the project, including symlink escapes after the command completes.
 
 For desktop headless runs, reported writes are further restricted to deck source files covered by checkpoint/revert: `deck.json`, `slides/`, `notes/`, `theme/`, and `assets/`. Reported writes to `exports/` or `.htmlslide/` fail the run even if the command exits successfully.
 

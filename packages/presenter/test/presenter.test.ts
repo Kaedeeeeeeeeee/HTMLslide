@@ -119,10 +119,10 @@ const settings = {
 
 const writeFixtureDeckPackage = async (
   deckpkgPath: string,
-  options: { omitSecondThumbnail?: boolean; notesOverride?: unknown } = {}
+  options: { manifestOverride?: unknown; omitSecondThumbnail?: boolean; notesOverride?: unknown } = {}
 ): Promise<void> => {
   const zip = new JSZip();
-  zip.file("manifest.json", `${JSON.stringify(manifest, null, 2)}\n`, { date: ZIP_DATE });
+  zip.file("manifest.json", `${JSON.stringify(options.manifestOverride ?? manifest, null, 2)}\n`, { date: ZIP_DATE });
   zip.file("deck.html", "<!doctype html><title>Presenter Fixture</title>\n", { date: ZIP_DATE });
   zip.file("deck.pdf", PDF_BYTES, { date: ZIP_DATE });
   zip.file("notes.json", `${JSON.stringify(options.notesOverride ?? notes, null, 2)}\n`, { date: ZIP_DATE });
@@ -147,7 +147,7 @@ const writeFixtureDeckPackage = async (
 
 const withFixtureDeckPackage = async <T>(
   test: (deckpkgPath: string) => Promise<T>,
-  options: { omitSecondThumbnail?: boolean; notesOverride?: unknown } = {}
+  options: { manifestOverride?: unknown; omitSecondThumbnail?: boolean; notesOverride?: unknown } = {}
 ): Promise<T> => {
   const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-presenter-"));
   try {
@@ -187,6 +187,51 @@ describe("@htmlslide/presenter deckpkg reader", () => {
         expect(result.issues.some((issue) => issue.path === "thumbnails/002-plan.png")).toBe(true);
       },
       { omitSecondThumbnail: true }
+    );
+  });
+
+  it("rejects non-zip deckpkg files as malformed archives", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-presenter-"));
+    try {
+      const deckpkgPath = path.join(root, "not-a-zip.deckpkg");
+      await writeFile(deckpkgPath, "not a zip archive", "utf8");
+
+      const result = await validateDeckPackage(deckpkgPath);
+
+      expect(result.status).toBe("failed");
+      expect(result.issues.map((issue) => issue.type)).toContain("invalid-deckpkg-archive");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects deckpkg manifests that reference traversal paths", async () => {
+    await withFixtureDeckPackage(
+      async (deckpkgPath) => {
+        const result = await validateDeckPackage(deckpkgPath);
+
+        expect(result.status).toBe("failed");
+        expect(result.issues).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              path: "manifest.json#/slides/0/thumbnail",
+              type: "invalid-manifest-path"
+            })
+          ])
+        );
+      },
+      {
+        manifestOverride: {
+          ...manifest,
+          slides: [
+            {
+              ...manifest.slides[0],
+              thumbnail: "../outside.png"
+            },
+            manifest.slides[1]
+          ]
+        }
+      }
     );
   });
 

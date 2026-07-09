@@ -430,6 +430,70 @@ function requireArg(args, name) {
     }
   });
 
+  it("rejects reported source writes that escape through project symlinks", async () => {
+    const project = await createFakeProject("symlink-escape");
+    const outsideRoot = await fs.mkdtemp(path.join(os.tmpdir(), "htmlslide-agent-outside-"));
+    const scriptFile = await writeFakeAgentScript(
+      project.projectRoot,
+      "symlink-escape",
+      `
+import fs from "node:fs";
+import path from "node:path";
+const args = readPairs(process.argv.slice(2));
+const projectRoot = requireArg(args, "--project");
+const manifestFile = requireArg(args, "--writes-manifest");
+const outsideRoot = ${JSON.stringify(outsideRoot)};
+const linkPath = path.join(projectRoot, "assets", "outside-link");
+const targetFile = path.join(linkPath, "stolen.txt");
+fs.mkdirSync(path.dirname(linkPath), { recursive: true });
+try {
+  fs.symlinkSync(outsideRoot, linkPath, "dir");
+} catch (error) {
+  if (error.code !== "EEXIST") throw error;
+}
+fs.writeFileSync(targetFile, "not allowed through symlink");
+fs.writeFileSync(manifestFile, JSON.stringify({ writes: ["assets/outside-link/stolen.txt"] }));
+function readPairs(argv) {
+  const pairs = new Map();
+  for (let index = 0; index < argv.length; index += 2) {
+    pairs.set(argv[index], argv[index + 1]);
+  }
+  return pairs;
+}
+function requireArg(args, name) {
+  const value = args.get(name);
+  if (!value) throw new Error("Missing " + name);
+  return value;
+}
+`
+    );
+
+    try {
+      const result = await runGenericAgentAdapter({
+        adapter: createFakeAdapter(nodeCommandTemplate()),
+        projectRoot: project.projectRoot,
+        promptFile: project.promptFile,
+        variables: {
+          scriptFile,
+          writeManifest: project.writeManifest
+        },
+        readReportedFileWrites: () => readJsonFileWriteManifest(project.projectRoot, project.writeManifest)
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        throw new Error("Expected forbidden file write failure.");
+      }
+      expect(result.failure.type).toBe("forbidden-file-write");
+      expect(result.failure.detail).toContain("symlinks");
+      await expect(fs.realpath(result.failure.path ?? "")).resolves.toBe(
+        await fs.realpath(path.join(outsideRoot, "stolen.txt"))
+      );
+    } finally {
+      await fs.rm(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
   it("rejects reported writes outside editable deck source roots", async () => {
     const project = await createFakeProject("source-scope");
 
@@ -440,6 +504,7 @@ function requireArg(args, name) {
     for (const reportedWrite of [
       "exports/deck.pdf",
       ".htmlslide/cache/thumb.png",
+      "slides/\0secret.html",
       path.resolve(project.projectRoot, "..", "outside.txt")
     ]) {
       expect(() => validateReportedFileWrites(project.projectRoot, [reportedWrite])).toThrow(

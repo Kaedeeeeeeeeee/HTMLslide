@@ -270,7 +270,8 @@ export function extractErrorMessage(value: unknown, secrets: readonly string[] =
 export function sanitizeProviderText(value: string, secrets: readonly string[] = []): string {
   let sanitized = value
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gu, "Bearer [redacted]")
-    .replace(/\bsk-[A-Za-z0-9_-]{6,}\b/gu, "sk-[redacted]");
+    .replace(/\bsk-[A-Za-z0-9_-]{6,}\b/gu, "sk-[redacted]")
+    .replace(/\b(api[_-]?key|access[_-]?token|token|secret)=([^\s"'&]+)/giu, "$1=[redacted]");
 
   for (const secret of secrets) {
     const trimmedSecret = secret.trim();

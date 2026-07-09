@@ -221,12 +221,12 @@ export async function readDeckPackageBytes(
   }
 
   const htmlText = await readPackageText(zip, manifest.html);
-  const slideHtmlById = extractSlideHtmlById(htmlText);
   const pdfBytes = await readPackageBytes(zip, manifest.pdf);
   const thumbnails: PresenterThumbnail[] = [];
   if (htmlText.trim().length === 0) {
     pushIssue(issues, "empty-package-file", "deck.html must not be empty.", manifest.html);
   }
+  validatePackageAssetUrls(zip, htmlText, issues);
   if (pdfBytes.byteLength === 0) {
     pushIssue(issues, "empty-package-file", "deck.pdf must not be empty.", manifest.pdf);
   }
@@ -248,6 +248,8 @@ export async function readDeckPackageBytes(
     failValidation(issues, options.sourcePath);
   }
 
+  const previewHtmlText = await inlinePackageAssetUrls(zip, htmlText);
+  const slideHtmlById = extractSlideHtmlById(previewHtmlText);
   const slides = manifest.slides.map<PresenterSlide>((slide, index) => {
     const notesSlide = notes.slides[index];
     const thumbnail = thumbnails[index];
@@ -739,6 +741,170 @@ const readPackageBytes = async (zip: JSZip, filePath: string): Promise<Uint8Arra
     throw new Error(`Validated deck package is missing ${filePath}.`);
   }
   return file.async("uint8array");
+};
+
+const validatePackageAssetUrls = (zip: JSZip, html: string, issues: HtmlslideIssue[]): void => {
+  for (const assetPath of collectPackageAssetUrls(html)) {
+    if (!zip.file(assetPath)) {
+      pushIssue(issues, "missing-package-file", `Package HTML references missing asset: ${assetPath}.`, assetPath);
+    }
+  }
+};
+
+const inlinePackageAssetUrls = async (zip: JSZip, html: string): Promise<string> => {
+  const assetUrls = collectPackageAssetUrls(html);
+  if (assetUrls.size === 0) {
+    return html;
+  }
+
+  const dataUrlByPath = new Map<string, string>();
+  await Promise.all([...assetUrls].map(async (assetPath) => {
+    const file = zip.file(assetPath);
+    if (!file) {
+      return;
+    }
+    const bytes = await file.async("uint8array");
+    if (bytes.byteLength === 0) {
+      return;
+    }
+    dataUrlByPath.set(assetPath, toDataUrl(assetPath, bytes));
+  }));
+
+  if (dataUrlByPath.size === 0) {
+    return html;
+  }
+
+  return rewriteHtmlPackageAssetUrls(html, (assetPath) => dataUrlByPath.get(assetPath));
+};
+
+const collectPackageAssetUrls = (html: string): Set<string> => {
+  const assetUrls = new Set<string>();
+  rewriteHtmlPackageAssetUrls(html, (assetPath) => {
+    assetUrls.add(assetPath);
+    return undefined;
+  });
+  return assetUrls;
+};
+
+const rewriteHtmlPackageAssetUrls = (
+  html: string,
+  resolveAssetUrl: (assetPath: string) => string | undefined
+): string =>
+  html
+    .replace(/\b(src|href|poster|srcset)\s*=\s*(["'])([^"']+)\2/giu, (match, attr: string, quote: string, value: string) => {
+      const rewrittenValue = attr.toLowerCase() === "srcset"
+        ? rewriteSrcsetPackageAssetUrls(value, resolveAssetUrl)
+        : rewritePackageAssetUrl(value, resolveAssetUrl);
+      return rewrittenValue === value ? match : `${attr}=${quote}${rewrittenValue}${quote}`;
+    })
+    .replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/giu, (match, quote: string, value: string) => {
+      const rewrittenValue = rewritePackageAssetUrl(value, resolveAssetUrl);
+      return rewrittenValue === value ? match : `url(${quote}${rewrittenValue}${quote})`;
+    });
+
+const rewriteSrcsetPackageAssetUrls = (
+  rawValue: string,
+  resolveAssetUrl: (assetPath: string) => string | undefined
+): string =>
+  rawValue
+    .split(",")
+    .map((candidate) => {
+      const trimmed = candidate.trim();
+      if (trimmed.length === 0) {
+        return trimmed;
+      }
+      const [url, ...descriptor] = trimmed.split(/\s+/);
+      if (!url) {
+        return trimmed;
+      }
+      return [rewritePackageAssetUrl(url, resolveAssetUrl), ...descriptor].join(" ");
+    })
+    .join(", ");
+
+const rewritePackageAssetUrl = (
+  rawValue: string,
+  resolveAssetUrl: (assetPath: string) => string | undefined
+): string => {
+  const assetUrl = packageAssetUrlFromUrl(rawValue);
+  if (!assetUrl) {
+    return rawValue;
+  }
+  const rewrittenUrl = resolveAssetUrl(assetUrl.assetPath);
+  return rewrittenUrl ? `${rewrittenUrl}${assetUrl.fragment}` : rawValue;
+};
+
+const packageAssetUrlFromUrl = (rawValue: string): { assetPath: string; fragment: string } | undefined => {
+  const trimmedValue = rawValue.trim();
+  if (trimmedValue.length === 0 || hasExternalOrAbsoluteUrl(trimmedValue)) {
+    return undefined;
+  }
+
+  const { pathname, suffix } = splitUrlSuffix(trimmedValue);
+  if (!isSafeDeckPackagePath(pathname)) {
+    return undefined;
+  }
+
+  const fragmentIndex = suffix.indexOf("#");
+  return {
+    assetPath: pathname,
+    fragment: fragmentIndex >= 0 ? suffix.slice(fragmentIndex) : ""
+  };
+};
+
+const hasExternalOrAbsoluteUrl = (value: string): boolean =>
+  /^(?:[a-z][a-z0-9+.-]*:|\/\/|#|\/)/iu.test(value.trim());
+
+const splitUrlSuffix = (value: string): { pathname: string; suffix: string } => {
+  const queryIndex = value.indexOf("?");
+  const hashIndex = value.indexOf("#");
+  let suffixIndex = value.length;
+  if (queryIndex >= 0) {
+    suffixIndex = Math.min(suffixIndex, queryIndex);
+  }
+  if (hashIndex >= 0) {
+    suffixIndex = Math.min(suffixIndex, hashIndex);
+  }
+
+  return {
+    pathname: value.slice(0, suffixIndex),
+    suffix: value.slice(suffixIndex)
+  };
+};
+
+const toDataUrl = (assetPath: string, bytes: Uint8Array): string =>
+  `data:${mimeTypeForAssetPath(assetPath)};base64,${Buffer.from(bytes).toString("base64")}`;
+
+const mimeTypeForAssetPath = (assetPath: string): string => {
+  const extension = assetPath.toLowerCase().split(".").pop() ?? "";
+  switch (extension) {
+    case "avif":
+      return "image/avif";
+    case "css":
+      return "text/css";
+    case "gif":
+      return "image/gif";
+    case "jpeg":
+    case "jpg":
+      return "image/jpeg";
+    case "json":
+      return "application/json";
+    case "otf":
+      return "font/otf";
+    case "png":
+      return "image/png";
+    case "svg":
+      return "image/svg+xml";
+    case "ttf":
+      return "font/ttf";
+    case "webp":
+      return "image/webp";
+    case "woff":
+      return "font/woff";
+    case "woff2":
+      return "font/woff2";
+    default:
+      return "application/octet-stream";
+  }
 };
 
 type ExtractedSlideHtml = {

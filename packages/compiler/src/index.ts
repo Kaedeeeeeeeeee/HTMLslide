@@ -117,12 +117,15 @@ type PreparedSlide = CompilerSlideInput & {
   pdfPage: number;
   sourceHtml: string;
   exportHtml: string;
+  packageHtml: string;
   notes: string;
   durationSec: number;
 };
 
 type PreparedProject = {
   renderable: RenderDeck;
+  packageRenderable: RenderDeck;
+  packageAssetPaths: Set<string>;
   slides: PreparedSlide[];
 };
 
@@ -132,6 +135,11 @@ type ThumbnailEntry = {
   exportPath: string;
   cachePath: string;
   bytes: Buffer;
+};
+
+type PackageAssetEntry = {
+  packagePath: string;
+  bytes: Uint8Array;
 };
 
 const DEFAULT_OPTIONS = {
@@ -162,6 +170,7 @@ const PACKAGE_PDF_PATH = "deck.pdf";
 const PACKAGE_NOTES_PATH = "notes.json";
 const PACKAGE_PRESENTER_SETTINGS_PATH = "presenter-settings.json";
 const PROJECT_TOP_LEVEL_DIRS = new Set(["assets", "slides", "notes", "theme", "skills", ".htmlslide"]);
+const PACKAGE_ASSET_TOP_LEVEL_DIRS = new Set(["assets", "slides", "theme"]);
 
 const fileExistsText = async (filePath: string): Promise<string> => {
   try {
@@ -202,14 +211,25 @@ const splitUrlSuffix = (value: string): { pathname: string; suffix: string } => 
 };
 
 const toExportRelativeUrl = (sourcePath: string, rawValue: string): string => {
-  const trimmedValue = rawValue.trim();
-  if (trimmedValue.length === 0 || hasExternalOrAbsoluteUrl(trimmedValue)) {
+  const target = resolveProjectRelativeUrl(sourcePath, rawValue);
+  if (!target) {
     return rawValue;
   }
 
+  return `../${target.projectRelativePath}${target.suffix}`;
+};
+
+const resolveProjectRelativeUrl = (
+  sourcePath: string,
+  rawValue: string
+): { projectRelativePath: string; suffix: string } | undefined => {
+  const trimmedValue = rawValue.trim();
+  if (trimmedValue.length === 0 || hasExternalOrAbsoluteUrl(trimmedValue)) {
+    return undefined;
+  }
   const { pathname, suffix } = splitUrlSuffix(trimmedValue);
   if (pathname.length === 0) {
-    return rawValue;
+    return undefined;
   }
 
   const normalizedSource = normalizeProjectPath(sourcePath);
@@ -220,10 +240,13 @@ const toExportRelativeUrl = (sourcePath: string, rawValue: string): string => {
     : path.posix.normalize(path.posix.join(sourceDir, pathname));
 
   if (projectRelativeTarget.startsWith("../") || projectRelativeTarget === "..") {
-    return rawValue;
+    return undefined;
   }
 
-  return `../${projectRelativeTarget}${suffix}`;
+  return {
+    projectRelativePath: projectRelativeTarget,
+    suffix
+  };
 };
 
 const rewriteSrcsetForExport = (sourcePath: string, rawValue: string): string =>
@@ -259,9 +282,65 @@ const rewriteCssUrlsForExport = (sourcePath: string, css: string): string =>
     return `url(${quote}${rewrittenValue}${quote})`;
   });
 
+const toPackageRelativeUrl = (sourcePath: string, rawValue: string, assetPaths: Set<string>): string => {
+  const target = resolveProjectRelativeUrl(sourcePath, rawValue);
+  if (!target) {
+    return rawValue;
+  }
+
+  const firstSegment = target.projectRelativePath.split("/")[0] ?? "";
+  if (PACKAGE_ASSET_TOP_LEVEL_DIRS.has(firstSegment)) {
+    assetPaths.add(target.projectRelativePath);
+  }
+
+  return `${target.projectRelativePath}${target.suffix}`;
+};
+
+const rewriteSrcsetForPackage = (sourcePath: string, rawValue: string, assetPaths: Set<string>): string =>
+  rawValue
+    .split(",")
+    .map((candidate) => {
+      const trimmed = candidate.trim();
+      if (trimmed.length === 0) {
+        return trimmed;
+      }
+      const [url, ...descriptor] = trimmed.split(/\s+/);
+      if (!url) {
+        return trimmed;
+      }
+      return [toPackageRelativeUrl(sourcePath, url, assetPaths), ...descriptor].join(" ");
+    })
+    .join(", ");
+
+const rewriteHtmlUrlsForPackage = (sourcePath: string, html: string, assetPaths: Set<string>): string =>
+  html
+    .replace(/\b(src|href|poster|srcset)\s*=\s*(["'])([^"']+)\2/gi, (match, attr: string, quote: string, value: string) => {
+      const rewrittenValue = attr.toLowerCase() === "srcset"
+        ? rewriteSrcsetForPackage(sourcePath, value, assetPaths)
+        : toPackageRelativeUrl(sourcePath, value, assetPaths);
+      return `${attr}=${quote}${rewrittenValue}${quote}`;
+    })
+    .replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (_match, quote: string, value: string) => {
+      const rewrittenValue = toPackageRelativeUrl(sourcePath, value, assetPaths);
+      return `url(${quote}${rewrittenValue}${quote})`;
+    });
+
+const rewriteCssUrlsForPackage = (sourcePath: string, css: string, assetPaths: Set<string>): string =>
+  css.replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (_match, quote: string, value: string) => {
+    const rewrittenValue = toPackageRelativeUrl(sourcePath, value, assetPaths);
+    return `url(${quote}${rewrittenValue}${quote})`;
+  });
+
 const buildPreparedProject = async (project: CompilerProjectInput): Promise<PreparedProject> => {
+  const packageAssetPaths = new Set<string>();
+  const rawThemeCss = project.themeCssPath
+    ? await fileExistsText(path.resolve(project.projectPath, project.themeCssPath))
+    : undefined;
   const themeCss = project.themeCssPath
-    ? rewriteCssUrlsForExport(project.themeCssPath, await fileExistsText(path.resolve(project.projectPath, project.themeCssPath)))
+    ? rewriteCssUrlsForExport(project.themeCssPath, rawThemeCss ?? "")
+    : undefined;
+  const packageThemeCss = project.themeCssPath
+    ? rewriteCssUrlsForPackage(project.themeCssPath, rawThemeCss ?? "", packageAssetPaths)
     : undefined;
 
   const slides = await Promise.all(
@@ -277,6 +356,7 @@ const buildPreparedProject = async (project: CompilerProjectInput): Promise<Prep
         durationSec: slide.durationSec ?? 60,
         sourceHtml,
         exportHtml: rewriteHtmlUrlsForExport(slide.sourcePath, sourceHtml),
+        packageHtml: rewriteHtmlUrlsForPackage(slide.sourcePath, sourceHtml, packageAssetPaths),
         notes
       };
     })
@@ -296,12 +376,26 @@ const buildPreparedProject = async (project: CompilerProjectInput): Promise<Prep
         notes: slide.notes
       }))
     },
+    packageRenderable: {
+      title: project.title,
+      language: project.language,
+      viewport: project.viewport,
+      safeArea: project.safeArea,
+      themeCss: packageThemeCss,
+      slides: slides.map((slide) => ({
+        id: slide.id,
+        title: slide.title,
+        html: slide.packageHtml,
+        notes: slide.notes
+      }))
+    },
+    packageAssetPaths,
     slides
   };
 };
 
-const buildStandaloneHtml = (prepared: PreparedProject): string =>
-  `${buildDeckHtml(prepared.renderable, {
+const buildStandaloneHtml = (renderable: RenderDeck): string =>
+  `${buildDeckHtml(renderable, {
     mode: "print",
     includeRuntimeScript: true,
     includeNotesPanel: true
@@ -757,6 +851,67 @@ const addZipDirectory = (zip: JSZip, directoryPath: string): void => {
   });
 };
 
+const readPackageAssetEntries = async (
+  projectPath: string,
+  assetPaths: Iterable<string>
+): Promise<PackageAssetEntry[]> => {
+  const root = path.resolve(projectPath);
+  const entries: PackageAssetEntry[] = [];
+
+  for (const assetPath of [...assetPaths].sort()) {
+    if (!isSafePackageAssetPath(assetPath)) {
+      throw new Error(`Unsafe package asset path: ${assetPath}`);
+    }
+
+    const resolvedAssetPath = path.resolve(root, assetPath);
+    if (resolvedAssetPath !== root && !resolvedAssetPath.startsWith(`${root}${path.sep}`)) {
+      throw new Error(`Package asset escapes project root: ${assetPath}`);
+    }
+
+    try {
+      entries.push({
+        packagePath: assetPath,
+        bytes: await readFile(resolvedAssetPath)
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Unknown read failure.";
+      throw new Error(`Unable to read package asset ${assetPath}: ${detail}`);
+    }
+  }
+
+  return entries;
+};
+
+const isSafePackageAssetPath = (assetPath: string): boolean => {
+  if (assetPath.length === 0 || assetPath.includes("\\") || path.posix.isAbsolute(assetPath)) {
+    return false;
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(assetPath)) {
+    return false;
+  }
+  const segments = assetPath.split("/");
+  if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) {
+    return false;
+  }
+  const firstSegment = segments[0] ?? "";
+  return PACKAGE_ASSET_TOP_LEVEL_DIRS.has(firstSegment);
+};
+
+const addZipFileWithDirectories = (zip: JSZip, filePath: string, content: string | Uint8Array, directories: Set<string>): void => {
+  const directoryParts = path.posix.dirname(filePath).split("/");
+  if (directoryParts[0] !== ".") {
+    let current = "";
+    for (const part of directoryParts) {
+      current = current ? `${current}/${part}` : part;
+      if (!directories.has(current)) {
+        addZipDirectory(zip, current);
+        directories.add(current);
+      }
+    }
+  }
+  addZipFile(zip, filePath, content);
+};
+
 export const exportDeck = async (
   project: CompilerProjectInput,
   options: ExportOptions = DEFAULT_OPTIONS
@@ -773,7 +928,8 @@ export const exportDeck = async (
 
   const baseName = slugFileName(project.title);
   const prepared = await buildPreparedProject(project);
-  const html = buildStandaloneHtml(prepared);
+  const html = buildStandaloneHtml(prepared.renderable);
+  const packageHtml = resolvedOptions.deckpkg ? buildStandaloneHtml(prepared.packageRenderable) : undefined;
   const notesSidecar = buildNotesSidecarFromPrepared(project, prepared);
   const notesPath = path.join(exportsPath, "notes.json");
   const notesJson = await writeJson(notesPath, notesSidecar);
@@ -825,19 +981,25 @@ export const exportDeck = async (
       throw new Error("deckpkg export requires one thumbnail per slide.");
     }
 
+    const packageAssets = await readPackageAssetEntries(project.projectPath, prepared.packageAssetPaths);
     const zip = new JSZip();
+    const packageDirectories = new Set<string>();
     const manifest = buildDeckPackageManifest(project, {
       thumbnailSize: resolvedOptions.thumbnailSize,
       pageCount: verification.pdfPageCount
     });
     addZipFile(zip, "manifest.json", `${JSON.stringify(manifest, null, 2)}\n`);
-    addZipFile(zip, PACKAGE_HTML_PATH, html);
+    addZipFile(zip, PACKAGE_HTML_PATH, packageHtml ?? html);
     addZipFile(zip, PACKAGE_PDF_PATH, pdfBytes);
     addZipFile(zip, PACKAGE_NOTES_PATH, notesJson);
     addZipFile(zip, PACKAGE_PRESENTER_SETTINGS_PATH, `${JSON.stringify(presenterSettings, null, 2)}\n`);
     addZipDirectory(zip, "thumbnails");
+    packageDirectories.add("thumbnails");
     for (const thumbnail of thumbnailEntries) {
       addZipFile(zip, thumbnail.packagePath, thumbnail.bytes);
+    }
+    for (const asset of packageAssets) {
+      addZipFileWithDirectories(zip, asset.packagePath, asset.bytes, packageDirectories);
     }
 
     const deckpkgPath = path.join(exportsPath, `${baseName}.deckpkg`);

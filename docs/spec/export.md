@@ -27,7 +27,7 @@ The HTML artifact is a complete document with:
 - keyboard navigation for standalone review
 - a speaker notes panel that is hidden by default
 
-Local slide and theme asset URLs are rewritten so an HTML file opened from `exports/` can resolve project-local assets without a dev server.
+Local slide and theme asset URLs are rewritten so an HTML file opened from `exports/` can resolve project-local assets without a dev server. For example, a slide reference to `../assets/accent.svg` becomes `../assets/accent.svg` in `exports/<deck-slug>.html`.
 
 ## Notes Sidecar
 
@@ -79,8 +79,11 @@ deck.html
 deck.pdf
 notes.json
 presenter-settings.json
+assets/<referenced-local-asset>
 thumbnails/<slide-id>.png
 ```
+
+Package `deck.html` uses package-local URLs for copied local assets. For example, the same slide reference that becomes `../assets/accent.svg` in standalone HTML becomes `assets/accent.svg` inside `deck.html`, and `assets/accent.svg` is copied into the ZIP. Remote, absolute, fragment-only, and `data:` URLs are not copied into the package; they remain subject to checker warnings and release policy.
 
 `manifest.json` uses this shape:
 

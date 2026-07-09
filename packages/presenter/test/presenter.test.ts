@@ -38,6 +38,7 @@ import {
 const ZIP_DATE = new Date("2000-01-01T00:00:00.000Z");
 const PNG_BYTES = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 const PDF_BYTES = new TextEncoder().encode("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n");
+const SVG_BYTES = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="#2563eb"/></svg>');
 
 const manifest = {
   schemaVersion: "0.1.0",
@@ -122,12 +123,12 @@ const deckHtml = `<!doctype html>
   <head>
     <meta charset="utf-8" />
     <title>Presenter Fixture</title>
-    <style>.htmlslide-page { width: 1920px; height: 1080px; }</style>
+    <style>.htmlslide-page { width: 1920px; height: 1080px; } .asset-bg { background-image: url("assets/accent.svg#bg"); }</style>
   </head>
   <body data-htmlslide-mode="print" data-htmlslide-notes="closed">
     <main class="htmlslide-deck" aria-label="Presenter Fixture">
 <article class="htmlslide-page" data-slide-id="001-title" data-slide-index="0" data-slide-title="Opening" aria-current="true" tabindex="-1">
-<section class="slide" data-slide-id="001-title"><h1>Package HTML title</h1></section>
+<section class="slide asset-bg" data-slide-id="001-title"><h1>Package HTML title</h1><img src="assets/accent.svg#shape" alt="" /></section>
 </article>
 <article class="htmlslide-page" data-slide-id="002-plan" data-slide-index="1" data-slide-title="Plan" aria-current="false" tabindex="-1">
 <section class="slide" data-slide-id="002-plan"><h2>Package HTML plan</h2></section>
@@ -138,7 +139,12 @@ const deckHtml = `<!doctype html>
 
 const writeFixtureDeckPackage = async (
   deckpkgPath: string,
-  options: { manifestOverride?: unknown; omitSecondThumbnail?: boolean; notesOverride?: unknown } = {}
+  options: {
+    manifestOverride?: unknown;
+    notesOverride?: unknown;
+    omitAccentAsset?: boolean;
+    omitSecondThumbnail?: boolean;
+  } = {}
 ): Promise<void> => {
   const zip = new JSZip();
   zip.file("manifest.json", `${JSON.stringify(options.manifestOverride ?? manifest, null, 2)}\n`, { date: ZIP_DATE });
@@ -146,6 +152,9 @@ const writeFixtureDeckPackage = async (
   zip.file("deck.pdf", PDF_BYTES, { date: ZIP_DATE });
   zip.file("notes.json", `${JSON.stringify(options.notesOverride ?? notes, null, 2)}\n`, { date: ZIP_DATE });
   zip.file("presenter-settings.json", `${JSON.stringify(settings, null, 2)}\n`, { date: ZIP_DATE });
+  if (!options.omitAccentAsset) {
+    zip.file("assets/accent.svg", SVG_BYTES, { date: ZIP_DATE });
+  }
   zip.file("thumbnails/001-title.png", PNG_BYTES, { date: ZIP_DATE });
   if (!options.omitSecondThumbnail) {
     zip.file("thumbnails/002-plan.png", PNG_BYTES, { date: ZIP_DATE });
@@ -166,7 +175,12 @@ const writeFixtureDeckPackage = async (
 
 const withFixtureDeckPackage = async <T>(
   test: (deckpkgPath: string) => Promise<T>,
-  options: { manifestOverride?: unknown; omitSecondThumbnail?: boolean; notesOverride?: unknown } = {}
+  options: {
+    manifestOverride?: unknown;
+    notesOverride?: unknown;
+    omitAccentAsset?: boolean;
+    omitSecondThumbnail?: boolean;
+  } = {}
 ): Promise<T> => {
   const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-presenter-"));
   try {
@@ -187,7 +201,11 @@ describe("@htmlslide/presenter deckpkg reader", () => {
       expect(deckPackage.manifest.title).toBe("Presenter Fixture");
       expect(deckPackage.artifacts.html.text).toContain("<title>Presenter Fixture</title>");
       expect(deckPackage.slides[0]?.html).toContain("Package HTML title");
+      expect(deckPackage.slides[0]?.html).toContain("data:image/svg+xml;base64,");
+      expect(deckPackage.slides[0]?.html).toContain("#shape");
       expect(deckPackage.slides[0]?.htmlDocument).toContain('data-htmlslide-mode="present"');
+      expect(deckPackage.slides[0]?.htmlDocument).toContain("data:image/svg+xml;base64,");
+      expect(deckPackage.slides[0]?.htmlDocument).toContain("#bg");
       expect(deckPackage.slides[1]?.htmlDocument).toContain('aria-current="true"');
       expect(deckPackage.artifacts.pdf.bytes.byteLength).toBeGreaterThan(0);
       expect(deckPackage.slides.map((slide) => [slide.id, slide.slideNumber, slide.notesMarkdown])).toEqual([
@@ -209,6 +227,25 @@ describe("@htmlslide/presenter deckpkg reader", () => {
         expect(result.issues.some((issue) => issue.path === "thumbnails/002-plan.png")).toBe(true);
       },
       { omitSecondThumbnail: true }
+    );
+  });
+
+  it("returns validation issues for missing package-local HTML assets", async () => {
+    await withFixtureDeckPackage(
+      async (deckpkgPath) => {
+        const result = await validateDeckPackage(deckpkgPath);
+
+        expect(result.status).toBe("failed");
+        expect(result.issues).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              path: "assets/accent.svg",
+              type: "missing-package-file"
+            })
+          ])
+        );
+      },
+      { omitAccentAsset: true }
     );
   });
 

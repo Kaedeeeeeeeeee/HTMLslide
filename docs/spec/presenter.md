@@ -15,7 +15,7 @@ presenter-settings.json
 thumbnails/<slide-id>.png
 ```
 
-`manifest.json` is authoritative for slide order, PDF page mapping, thumbnail paths, speaker-note sidecar path, and duration estimates. Presenter validation rejects unsafe package paths, missing package files, duplicate slide ids, duplicate PDF pages, slide-index mismatches, and notes sidecars that do not align with manifest slide order.
+`manifest.json` is authoritative for slide order, PDF page mapping, thumbnail paths, speaker-note sidecar path, and duration estimates. Presenter validation rejects unsafe package paths, missing package files including package-local HTML assets, duplicate slide ids, duplicate PDF pages, slide-index mismatches, and notes sidecars that do not align with manifest slide order.
 
 ## Runtime Package API
 
@@ -100,8 +100,8 @@ display. The renderer session remains the source of truth: slide navigation, jum
 are pushed to the audience window as sanitized slide payloads. When source HTML is available, the audience window renders
 the slide fragment full bleed. Package-backed sessions extract per-slide HTML from `deck.html`, render the single-slide
 document in sandboxed frames for Presenter and Audience views, and keep the package's validated PNG thumbnails as the
-fallback when package HTML is unavailable. Standalone package parity still depends on asset embedding for local
-images/fonts referenced by the exported HTML.
+fallback when package HTML is unavailable. Package-local image and font assets are copied into `.deckpkg` and inlined
+into the sandboxed Presenter/Audience document when the package reader prepares slide previews.
 
 ## Keyboard Controls
 

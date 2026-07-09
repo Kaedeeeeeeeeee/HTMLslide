@@ -11,6 +11,7 @@ const root = path.resolve(scriptDir, "..", "..");
 const alphaDir = path.join(root, "dist", "alpha");
 const appName = "HTMLslide.app";
 const validFullFixturePath = path.join(root, "packages", "test-fixtures", "decks", "valid-full");
+const deckpkgSmokeFixturePath = path.join(root, "packages", "test-fixtures", "decks", "golden-export-basic");
 
 function fail(message) {
   throw new Error(message);
@@ -279,9 +280,9 @@ async function launchAppOnce(appPath, smokeRoot) {
 }
 
 async function exportFixtureDeckPackageWithPackagedCli(appPath, smokeRoot) {
-  const projectPath = path.join(smokeRoot, "deckpkg-source", "valid-full");
+  const projectPath = path.join(smokeRoot, "deckpkg-source", "golden-export-basic");
   await mkdir(path.dirname(projectPath), { recursive: true });
-  await cp(validFullFixturePath, projectPath, {
+  await cp(deckpkgSmokeFixturePath, projectPath, {
     recursive: true,
     verbatimSymlinks: true
   });
@@ -296,13 +297,30 @@ async function exportFixtureDeckPackageWithPackagedCli(appPath, smokeRoot) {
   const deckpkgPath =
     typeof exported.artifacts?.deckpkg === "string"
       ? exported.artifacts.deckpkg
-      : path.join(projectPath, "exports", "valid-full-deck.deckpkg");
+      : path.join(projectPath, "exports", "golden-export-basic.deckpkg");
 
   if (!existsSync(deckpkgPath)) {
     fail(`Packaged CLI export did not create a deckpkg artifact: ${deckpkgPath}`);
   }
+  assertPackagedDeckPackageAssets(deckpkgPath);
 
   return deckpkgPath;
+}
+
+function assertPackagedDeckPackageAssets(deckpkgPath) {
+  const entries = run("unzip", ["-Z1", deckpkgPath]).stdout.split(/\r?\n/u).filter(Boolean);
+  if (!entries.includes("assets/accent.svg")) {
+    fail(`Packaged deckpkg does not include package-local asset assets/accent.svg: ${deckpkgPath}`);
+  }
+
+  const deckHtml = run("unzip", ["-p", deckpkgPath, "deck.html"]).stdout;
+  if (
+    !deckHtml.includes('src="assets/accent.svg"') ||
+    !deckHtml.includes('url("assets/accent.svg")') ||
+    deckHtml.includes("../assets/")
+  ) {
+    fail("Packaged deckpkg deck.html does not use package-local asset URLs.");
+  }
 }
 
 async function launchAppWithDeckPackage(appPath, smokeRoot) {
@@ -530,7 +548,7 @@ async function assertDeckPackageSmokeMarker(marker, deckpkgPath, label) {
     marker.kind !== "deckpkg-open" ||
     actualDeckpkgPath !== expectedDeckpkgPath ||
     actualExpectedDeckpkgPath !== expectedDeckpkgPath ||
-    marker.title !== "Valid Full Deck" ||
+    marker.title !== "Golden Export Basic" ||
     marker.slideCount !== 2
   ) {
     fail(`${label} smoke marker did not match the expected deck: ${JSON.stringify(marker)}`);

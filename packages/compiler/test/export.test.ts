@@ -178,8 +178,16 @@ describe("exportDeck", () => {
       expect(deckpkg.file("deck.pdf")).toBeTruthy();
       expect(deckpkg.file("notes.json")).toBeTruthy();
       expect(deckpkg.file("presenter-settings.json")).toBeTruthy();
+      expect(deckpkg.file("assets/accent.svg")).toBeTruthy();
       expect(deckpkg.file("thumbnails/001-title.png")).toBeTruthy();
       expect(deckpkg.file("thumbnails/002-artifacts.png")).toBeTruthy();
+      expect(Buffer.from(await zipBytes(deckpkg, "assets/accent.svg")).equals(
+        await readFile(path.join(projectPath, "assets", "accent.svg"))
+      )).toBe(true);
+      const packageHtml = await zipText(deckpkg, "deck.html");
+      expect(packageHtml).toContain('src="assets/accent.svg"');
+      expect(packageHtml).toContain('url("assets/accent.svg")');
+      expect(packageHtml).not.toContain("../assets/");
 
       const manifest = JSON.parse(await zipText(deckpkg, "manifest.json"));
       expect(manifest).toMatchObject({

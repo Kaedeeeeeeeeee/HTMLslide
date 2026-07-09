@@ -22,4 +22,4 @@ For live use, manually validate the exact dual-screen setup, including cable or 
 
 ## deckpkg
 
-Standalone `.deckpkg` files can open directly into Presenter Mode. Package-backed sessions extract each slide from `deck.html` and render the current Presenter and Audience view from the package HTML, with validated PNG thumbnails retained as a fallback. Local image/font assets referenced by the exported HTML are still a release-readiness check until package asset embedding is complete.
+Standalone `.deckpkg` files can open directly into Presenter Mode. Package-backed sessions extract each slide from `deck.html` and render the current Presenter and Audience view from the package HTML, with package-local assets inlined for the sandboxed preview and validated PNG thumbnails retained as a fallback.

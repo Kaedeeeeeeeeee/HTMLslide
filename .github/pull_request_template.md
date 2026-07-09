@@ -7,6 +7,7 @@
 - [ ] `pnpm lint`
 - [ ] `pnpm typecheck`
 - [ ] `pnpm test`
+- [ ] `pnpm docs:build`
 - [ ] `pnpm build`
 - [ ] Relevant E2E, visual regression, packaging, or manual checks:
 

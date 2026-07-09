@@ -29,7 +29,7 @@ jobs:
           set -euo pipefail
 
           if [[ ! -f package.json ]]; then
-            echo "::error title=Missing package.json::CI expects a root package.json with packageManager set to pnpm and scripts: docs:check, lint, typecheck, test, build."
+            echo "::error title=Missing package.json::CI expects a root package.json with packageManager set to pnpm and scripts: docs:check, docs:build, lint, typecheck, test, build."
             exit 1
           fi
 
@@ -41,7 +41,7 @@ jobs:
           node <<'NODE'
           const fs = require('fs');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          const requiredScripts = ['docs:check', 'lint', 'typecheck', 'test', 'perf:smoke', 'security:check', 'build', 'e2e:desktop'];
+          const requiredScripts = ['docs:check', 'docs:build', 'lint', 'typecheck', 'test', 'perf:smoke', 'security:check', 'build', 'e2e:desktop'];
           const missing = requiredScripts.filter((name) => !pkg.scripts || !pkg.scripts[name]);
 
           if (missing.length > 0) {
@@ -70,6 +70,9 @@ jobs:
 
       - name: Check public docs
         run: pnpm docs:check
+
+      - name: Build docs site
+        run: pnpm docs:build
 
       - name: Lint
         run: pnpm lint

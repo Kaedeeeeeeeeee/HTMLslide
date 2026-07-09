@@ -1,0 +1,95 @@
+name: Docs Pages
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: docs-pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Publish documentation site
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate docs publish contract
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! -f package.json ]]; then
+            echo "::error title=Missing package.json::Docs publishing expects root package scripts: docs:check and docs:build."
+            exit 1
+          fi
+
+          if [[ ! -f pnpm-lock.yaml ]]; then
+            echo "::error title=Missing pnpm-lock.yaml::Docs publishing uses pnpm install --frozen-lockfile."
+            exit 1
+          fi
+
+          node <<'NODE'
+          const fs = require('fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const requiredScripts = ['docs:check', 'docs:build'];
+          const missing = requiredScripts.filter((name) => !pkg.scripts || !pkg.scripts[name]);
+
+          if (missing.length > 0) {
+            console.error(`::error title=Missing docs scripts::Add package.json scripts: ${missing.join(', ')}`);
+            process.exit(1);
+          }
+
+          if (!pkg.packageManager || !pkg.packageManager.startsWith('pnpm@')) {
+            console.warn('::warning title=Missing packageManager::Pin pnpm with packageManager, for example "pnpm@9.x".');
+          }
+          NODE
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check public docs
+        run: pnpm docs:check
+
+      - name: Build docs site
+        run: pnpm docs:build
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/docs-site
+
+      - name: Deploy Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

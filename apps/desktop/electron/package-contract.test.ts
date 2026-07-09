@@ -19,6 +19,7 @@ describe("macOS alpha packaging contract", () => {
     const packageJson = await readJson<{ scripts?: Record<string, string> }>("package.json");
 
     expect(packageJson.scripts).toMatchObject({
+      "docs:build": "node scripts/docs/build-docs-site.mjs",
       "package:alpha": "node scripts/release/package-alpha.mjs",
       "package:release:macos": "node scripts/release/package-release-macos.mjs",
       "release:notes": "node scripts/release/create-release-notes.mjs",
@@ -112,6 +113,8 @@ describe("macOS alpha packaging contract", () => {
 
     expect(workflow).toContain("runs-on: macos-latest");
     expect(workflow).toContain("CSC_IDENTITY_AUTO_DISCOVERY: \"false\"");
+    expect(workflow).toContain("'docs:check', 'docs:build'");
+    expect(workflow).toContain("pnpm docs:build");
     expect(packageIndex).toBeGreaterThan(-1);
     expect(smokeIndex).toBeGreaterThan(packageIndex);
     expect(workflow).toContain("*.dmg");
@@ -126,6 +129,8 @@ describe("macOS alpha packaging contract", () => {
     expect(workflow).toContain("runs-on: macos-latest");
     expect(workflow).toContain("fetch-depth: 0");
     expect(workflow).toContain("contents: write");
+    expect(workflow).toContain("docs:build");
+    expect(workflow).toContain("pnpm docs:build");
     expect(workflow).toContain("package:release:macos");
     expect(workflow).toContain("release:notes");
     expect(workflow).toContain("APPLE_DEVELOPER_ID_APPLICATION");
@@ -141,5 +146,44 @@ describe("macOS alpha packaging contract", () => {
     expect(workflow).toContain("gh release edit \"$tag\" --title \"HTMLslide $tag\" --notes-file release-artifacts/RELEASE_NOTES.md");
     expect(workflow).toContain("name: htmlslide-signed-notarized-${{ github.run_number }}");
     expect(workflow).toContain("gh release upload");
+  });
+
+  it("keeps CI building the publishable docs site", async () => {
+    const workflow = await readText(".github/workflows/ci.yml");
+
+    expect(workflow).toContain("'docs:check', 'docs:build'");
+    expect(workflow).toContain("run: pnpm docs:check");
+    expect(workflow).toContain("run: pnpm docs:build");
+  });
+
+  it("keeps docs site generation deterministic and Pages-ready", async () => {
+    const buildScript = await readText("scripts/docs/build-docs-site.mjs");
+
+    expect(buildScript).toContain("dist\", \"docs-site");
+    expect(buildScript).toContain(".nojekyll");
+    expect(buildScript).toContain("favicon.svg");
+    expect(buildScript).toContain("HTMLslide Documentation");
+    expect(buildScript).toContain("validateGeneratedLinks");
+    expect(buildScript).toContain("copyAsset");
+    expect(buildScript).toContain("!file.endsWith(\".md\")");
+  });
+
+  it("keeps the docs Pages workflow deployable", async () => {
+    const workflow = await readText(".github/workflows/docs-pages.yml");
+
+    expect(workflow).toContain("name: Docs Pages");
+    expect(workflow).toContain("branches:");
+    expect(workflow).toContain("- main");
+    expect(workflow).toContain("tags:");
+    expect(workflow).toContain("- \"v*\"");
+    expect(workflow).toContain("pages: write");
+    expect(workflow).toContain("id-token: write");
+    expect(workflow).toContain("name: github-pages");
+    expect(workflow).toContain("run: pnpm docs:check");
+    expect(workflow).toContain("run: pnpm docs:build");
+    expect(workflow).toContain("actions/configure-pages@v5");
+    expect(workflow).toContain("actions/upload-pages-artifact@v3");
+    expect(workflow).toContain("path: dist/docs-site");
+    expect(workflow).toContain("actions/deploy-pages@v4");
   });
 });

@@ -13,9 +13,15 @@ A production release uses the `Release macOS` GitHub Actions workflow and `pnpm 
 The signed workflow writes `signed-notarized` DMG and manifest artifacts, uploads them as workflow artifacts, and attaches them to the matching GitHub Release when run from a `v*` tag.
 Tag releases generate `RELEASE_NOTES.md` from git history with `pnpm release:notes` and use that file as the GitHub Release body.
 
+## GitHub Pages docs
+
+Public documentation is published by the `Docs Pages` GitHub Actions workflow. It runs `pnpm docs:check` and `pnpm docs:build`, uploads `dist/docs-site` as a Pages artifact, and deploys it with GitHub Pages. The workflow runs on pushes to `main`, `v*` tags, and manual dispatch.
+
+The docs build writes `.nojekyll`, renders Markdown from `docs/` into static HTML, copies static assets, and validates generated local links before upload.
+
 ## GitHub Actions
 
-CI runs lint, typecheck, tests, performance smoke, security checks, build, docs checks, and Electron E2E. The alpha package workflow runs the package smoke before uploading unsigned artifacts. The release workflow runs the same quality gates before signing and notarization.
+CI runs lint, typecheck, tests, performance smoke, security checks, build, docs checks, docs build, and Electron E2E. The alpha package workflow runs the package smoke before uploading unsigned artifacts. The release workflow runs the same quality gates before signing and notarization.
 
 Every release candidate must also have a completed manual acceptance checklist generated with `pnpm rc:checklist`. The generated checklist is release evidence, not source code, and should be attached to the candidate notes.
 

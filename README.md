@@ -22,14 +22,16 @@ pnpm install --frozen-lockfile
 pnpm lint
 pnpm typecheck
 pnpm test
+pnpm docs:build
 pnpm build
 pnpm e2e:desktop
 ```
 
-Public documentation is checked with:
+Public documentation is checked and built with:
 
 ```bash
 pnpm docs:check
+pnpm docs:build
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and [docs/testing.md](docs/testing.md).

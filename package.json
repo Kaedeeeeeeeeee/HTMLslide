@@ -22,6 +22,7 @@
     "security:audit": "pnpm audit --audit-level high",
     "security:check": "pnpm security:secrets && pnpm security:audit",
     "docs:check": "node scripts/docs/check-public-alpha-docs.mjs",
+    "docs:build": "node scripts/docs/build-docs-site.mjs",
     "e2e:desktop": "pnpm --filter @htmlslide/desktop e2e",
     "e2e:desktop:headed": "pnpm --filter @htmlslide/desktop e2e:headed",
     "package:alpha": "node scripts/release/package-alpha.mjs",

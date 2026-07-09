@@ -20,6 +20,7 @@ Run the narrowest relevant command first, then the broader suite when practical:
 
 ```bash
 pnpm docs:check
+pnpm docs:build
 pnpm lint
 pnpm typecheck
 pnpm test

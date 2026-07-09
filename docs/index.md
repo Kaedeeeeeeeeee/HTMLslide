@@ -7,6 +7,7 @@ This is the public alpha documentation for HTMLslide.
 - [Install](install.md)
 - [Getting Started](getting-started.md)
 - [Create Your First Deck](create-your-first-deck.md)
+- [First Presentation Walkthrough](examples/first-presentation.md)
 - [Alpha Readiness](alpha-readiness.md)
 - [AI Engines](ai-engines.md)
 - [Troubleshooting](troubleshooting.md)

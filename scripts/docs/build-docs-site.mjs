@@ -17,6 +17,7 @@ const sidebarSections = [
       ["Alpha Readiness", "alpha-readiness.md"],
       ["Getting Started", "getting-started.md"],
       ["First Deck", "create-your-first-deck.md"],
+      ["First Presentation", "examples/first-presentation.md"],
       ["Troubleshooting", "troubleshooting.md"]
     ]
   },

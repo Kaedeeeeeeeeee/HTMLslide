@@ -2,6 +2,8 @@
 
 This alpha flow uses Local Mock so it can run without credentials.
 
+For a more detailed example with a concrete brief, Check commands, export artifacts, rehearsal checks, and bug-report diagnostics, see [First Presentation Walkthrough](examples/first-presentation.md).
+
 ## Steps
 
 1. Open HTMLslide.

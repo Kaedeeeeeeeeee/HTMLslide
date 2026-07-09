@@ -11,11 +11,12 @@ const requiredFiles = {
   "CONTRIBUTING.md": ["Contributing", "docs:check", "version:check", "security:check", "Issues", "Code of Conduct"],
   "CODE_OF_CONDUCT.md": ["Code of Conduct", "Expected Behavior", "Unacceptable Behavior", "Reporting"],
   "SECURITY.md": ["Security Policy", "Reporting a Vulnerability", "Security Requirements"],
-  "docs/index.md": ["HTMLslide Documentation", "Install", "Alpha Readiness", "No AI", "BYOK", "External agents"],
+  "docs/index.md": ["HTMLslide Documentation", "Install", "First Presentation", "Alpha Readiness", "No AI", "BYOK", "External agents"],
   "docs/alpha-readiness.md": ["Alpha Readiness", "Current Verdict", "Automated Evidence", "Manual Release-Candidate Evidence", "Not Yet Claimed", "pnpm rc:checklist"],
   "docs/install.md": ["Install HTMLslide", "unsigned alpha", "not Developer ID signed", "not notarized", "CLI shim"],
-  "docs/getting-started.md": ["Getting Started", "No AI", "Local Mock", "Export"],
+  "docs/getting-started.md": ["Getting Started", "No AI", "Local Mock", "first presentation", "Export"],
   "docs/create-your-first-deck.md": ["Create Your First Deck", "New Deck", "Local Mock", "Check", "Export"],
+  "docs/examples/first-presentation.md": ["First Presentation", "Local Mock", "New Deck", "Check", "Export PDF", "deckpkg", "Presenter Mode", "Rehearsal", "Audience window", "exports/", "Do not edit", "bug report", "htmlslide check", "htmlslide doctor"],
   "docs/ai-engines.md": ["AI Engines", "No AI", "HTMLslide Agent", "External agent"],
   "docs/byok.md": ["BYOK", "provider", "API key", "Keychain", "You pay your provider directly"],
   "docs/connect-claude-code.md": ["Claude Code", "detection", "Generic", "manual validation"],
@@ -27,9 +28,9 @@ const requiredFiles = {
   "docs/skills.md": ["Skills", "official skills", "SKILL.md", "license"],
   "docs/design-skills.md": ["Design Skills", "fixed 1920x1080", "swiss-editorial", "data-report"],
   "docs/spec/templates.md": ["HTMLslide Templates Spec", "swiss-editorial", "consulting-clean", "technical-dark", "product-launch", "data-report"],
-  "docs/presenter-mode.md": ["Presenter Mode", "Rehearsal", "Audience window", "dual-screen"],
-  "docs/exporting.md": ["Exporting", "PDF", "deckpkg", "thumbnails", "notes.json"],
-  "docs/troubleshooting.md": ["Troubleshooting", "Gatekeeper", "CLI", "provider", "deckpkg", "Reporting bugs"],
+  "docs/presenter-mode.md": ["Presenter Mode", "Rehearsal", "Audience window", "keyboard", "black screen", "white screen", "dual-screen", "manual validation"],
+  "docs/exporting.md": ["Exporting", "PDF", "deckpkg", "thumbnails", "notes.json", "PDF page count", "thumbnail count", "deckpkg open", "exports/"],
+  "docs/troubleshooting.md": ["Troubleshooting", "Gatekeeper", "CLI", "provider", "New Deck", "export failed", "Presenter", "htmlslide doctor --json", "htmlslide check <project> --json", "Do not paste API keys", "Reporting bugs"],
   "docs/contributing.md": ["Contributing", "development contract", "no secrets", "issue templates", "conduct", "tests", "docs:build", "version:check"],
   "docs/code-of-conduct.md": ["Code of Conduct", "expected behavior", "unacceptable behavior", "reporting"],
   "docs/testing.md": ["Testing", "pnpm lint", "pnpm test", "pnpm e2e:desktop", "package smoke", "docs:build", "version:check"],
@@ -56,6 +57,14 @@ const forbiddenClaims = [
   }
 ];
 
+const globalForbiddenClaimPatterns = [
+  /Gatekeeper will not warn/iu,
+  /notarized DMG is available/iu,
+  /production-ready signed distribution is available/iu,
+  /real provider validation is automated/iu,
+  /API keys are stored in project files/iu
+];
+
 const failures = [];
 
 async function readRequiredFile(relativePath) {
@@ -76,6 +85,12 @@ function checkNeedles(relativePath, contents, needles) {
 }
 
 function checkForbiddenClaims(relativePath, contents) {
+  for (const pattern of globalForbiddenClaimPatterns) {
+    if (pattern.test(contents)) {
+      failures.push(`${relativePath} contains over-promising claim: ${pattern}`);
+    }
+  }
+
   const rule = forbiddenClaims.find((item) => item.file === relativePath);
   if (!rule) {
     return;

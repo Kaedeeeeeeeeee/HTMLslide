@@ -7,7 +7,7 @@ HTMLslide is a local-first desktop workbench and CLI for AI-agent-native HTML/PD
 1. Read the public alpha docs: [docs/index.md](docs/index.md).
 2. Install the current macOS alpha package from a trusted build artifact.
 3. Open `HTMLslide.app`, choose a workspace, and finish setup.
-4. Create or open a deck, run Check, export PDF/deckpkg, and open Presenter Mode.
+4. Create or open a deck, run Check, export PDF/deckpkg, and open Presenter Mode. For a credential-free walkthrough, follow [First Presentation Walkthrough](docs/examples/first-presentation.md).
 
 ## Current alpha status
 

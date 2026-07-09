@@ -25,6 +25,8 @@ Local Mock creates deterministic decks for testing the product flow without cred
 4. Generate.
 5. Review Check, Export, and Presenter output.
 
+For a complete first presentation walkthrough from brief to rehearsal, see [First Presentation Walkthrough](examples/first-presentation.md).
+
 ## BYOK Path
 
 BYOK uses your own provider account. See [BYOK](byok.md). You pay your provider directly.

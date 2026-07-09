@@ -17,6 +17,7 @@ Initial commands:
 - `htmlslide setup uninstall-cli` removes an HTMLslide-managed command shim.
 - `htmlslide setup status --json` reports shim installation status.
 - `htmlslide doctor --json` reports local runtime health.
+- `htmlslide agent validate-provider --provider openai|anthropic|compatible --model <model> --api-key-env <ENV_NAME> [--base-url <url>] --json` validates BYOK credential/model reachability without printing or accepting an API key as a CLI argument.
 
 Exit codes:
 
@@ -114,6 +115,26 @@ Actionable setup errors use the generic error envelope with stable fields:
   "targetPath": "/usr/local/bin/htmlslide"
 }
 ```
+
+`agent validate-provider --json` returns sanitized provider preflight evidence:
+
+```json
+{
+  "status": "passed",
+  "command": "agent validate-provider",
+  "provider": "openai",
+  "model": "gpt-5-mini",
+  "apiKeyEnv": "OPENAI_API_KEY",
+  "credential": {
+    "ok": true,
+    "providerId": "htmlslide-provider-validation"
+  },
+  "secretRecorded": false,
+  "exitCode": 0
+}
+```
+
+Validation failures return the same shape with `"status": "failed"`, a sanitized `credential.reason`, and exit code `6`. Missing or invalid CLI inputs use the generic error envelope with stable `AGENT_PROVIDER_*` codes. The command must never accept a raw API key argument and must not include the environment variable value in stdout, stderr, reports, or logs.
 
 `check --json` must return a machine-readable report even when project loading fails. The report shape is:
 

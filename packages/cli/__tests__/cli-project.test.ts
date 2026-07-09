@@ -16,7 +16,8 @@ import {
   installCliShim,
   loadProject,
   tryLoadProjectForCheck,
-  uninstallCliShim
+  uninstallCliShim,
+  validateAgentProviderCredentials
 } from "../src/index";
 
 const execFileAsync = promisify(execFile);
@@ -398,6 +399,152 @@ describe("CLI project helpers", () => {
         })
       ])
     );
+  });
+
+  it("validates provider credentials from an environment variable without recording the secret", async () => {
+    const secret = "htmlslide-provider-validation-test-key";
+    const requests: Array<{ authorization: string | null; input: string }> = [];
+
+    const result = await validateAgentProviderCredentials({
+      apiKeyEnv: "HTMLSLIDE_TEST_OPENAI_KEY",
+      env: {
+        HTMLSLIDE_TEST_OPENAI_KEY: secret
+      },
+      fetch: async (input, init) => {
+        const headers = new Headers(init?.headers);
+        requests.push({
+          authorization: headers.get("authorization"),
+          input: String(input)
+        });
+        return new Response(JSON.stringify({ id: "gpt-htmlslide-test" }), {
+          headers: {
+            "content-type": "application/json"
+          },
+          status: 200
+        });
+      },
+      model: "gpt-htmlslide-test",
+      provider: "openai"
+    });
+
+    expect(result).toMatchObject({
+      apiKeyEnv: "HTMLSLIDE_TEST_OPENAI_KEY",
+      command: "agent validate-provider",
+      credential: {
+        ok: true,
+        providerId: "htmlslide-provider-validation"
+      },
+      exitCode: EXIT_CODES.success,
+      model: "gpt-htmlslide-test",
+      provider: "openai",
+      secretRecorded: false,
+      status: "passed"
+    });
+    expect(requests).toEqual([
+      {
+        authorization: `Bearer ${secret}`,
+        input: "https://api.openai.com/v1/models/gpt-htmlslide-test"
+      }
+    ]);
+    expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  it("returns sanitized provider validation failures", async () => {
+    const secret = "htmlslide-provider-validation-failed-test-key";
+    const result = await validateAgentProviderCredentials({
+      apiKeyEnv: "HTMLSLIDE_TEST_OPENAI_KEY",
+      env: {
+        HTMLSLIDE_TEST_OPENAI_KEY: secret
+      },
+      fetch: async () => new Response(JSON.stringify({ error: { message: `bad key ${secret}` } }), { status: 401 }),
+      model: "gpt-htmlslide-test",
+      provider: "openai"
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.exitCode).toBe(EXIT_CODES.agentFailed);
+    expect(result.credential).toMatchObject({
+      ok: false,
+      providerId: "htmlslide-provider-validation",
+      recoverable: true
+    });
+    expect(JSON.stringify(result)).not.toContain(secret);
+    expect(JSON.stringify(result)).toContain("[redacted]");
+  });
+
+  it("validates compatible providers against the configured base URL", async () => {
+    const secret = "compatible-provider-secret";
+    const requestedUrls: string[] = [];
+
+    const result = await validateAgentProviderCredentials({
+      apiKeyEnv: "HTMLSLIDE_TEST_COMPATIBLE_KEY",
+      baseUrl: "https://provider.example.test/v1/",
+      env: {
+        HTMLSLIDE_TEST_COMPATIBLE_KEY: secret
+      },
+      fetch: async (input) => {
+        requestedUrls.push(String(input));
+        return new Response(JSON.stringify({ id: "llama-htmlslide-test" }), { status: 200 });
+      },
+      model: "llama-htmlslide-test",
+      provider: "compatible"
+    });
+
+    expect(result).toMatchObject({
+      baseUrl: "https://provider.example.test/v1",
+      provider: "compatible",
+      status: "passed"
+    });
+    expect(requestedUrls).toEqual(["https://provider.example.test/v1/models/llama-htmlslide-test"]);
+    expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  it("rejects provider validation when the API key environment variable is missing", async () => {
+    await expect(
+      runCli([
+        "agent",
+        "validate-provider",
+        "--provider",
+        "openai",
+        "--model",
+        "gpt-htmlslide-test",
+        "--api-key-env",
+        "HTMLSLIDE_TEST_PROVIDER_KEY_DO_NOT_SET",
+        "--json"
+      ])
+    ).rejects.toMatchObject({
+      code: EXIT_CODES.agentFailed,
+      stdout: expect.stringContaining('"code": "AGENT_PROVIDER_API_KEY_ENV_MISSING"')
+    });
+  });
+
+  it("requires a base URL for compatible provider validation without printing environment values", async () => {
+    const secret = "htmlslide-compatible-provider-test-key";
+    const failure = await runCli(
+      [
+        "agent",
+        "validate-provider",
+        "--provider",
+        "compatible",
+        "--model",
+        "llama-htmlslide-test",
+        "--api-key-env",
+        "HTMLSLIDE_TEST_COMPATIBLE_KEY",
+        "--json"
+      ],
+      {
+        HTMLSLIDE_TEST_COMPATIBLE_KEY: secret
+      }
+    ).then(
+      () => undefined,
+      (error: unknown) => error
+    );
+
+    expect(failure).toMatchObject({
+      code: EXIT_CODES.agentFailed,
+      stdout: expect.stringContaining('"code": "AGENT_PROVIDER_BASE_URL_REQUIRED"')
+    });
+    expect(String((failure as { stdout?: unknown })?.stdout ?? "")).not.toContain(secret);
   });
 
   it("lists MCP tools and reports project harness status from the CLI", async () => {

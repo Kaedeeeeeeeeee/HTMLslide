@@ -60,7 +60,7 @@ These items require human evidence for the exact artifact before an alpha build 
 | --- | --- |
 | Clean macOS install | Completed checklist from `pnpm rc:checklist` on a clean account or isolated machine. |
 | Gatekeeper behavior | Screenshot or note confirming expected unsigned alpha warning or signed release behavior. |
-| Real BYOK provider | At least one real provider account, test prompt, generated deck, check/export result, and secret-safety review. |
+| Real BYOK provider | At least one real provider account with `htmlslide agent validate-provider --json` evidence, test prompt, generated deck, check/export result, and secret-safety review. |
 | Real Claude, Codex, or Gemini claim | Detection plus a manually validated real integration path before support is claimed. |
 | Physical dual-screen presenter | HDMI, USB-C, or AirPlay presentation with speaker screen, audience window, navigation, timer, and sync evidence. |
 | Finder/LaunchServices deckpkg open | User-level double-click or `open` behavior against the installed app. |
@@ -73,6 +73,14 @@ pnpm rc:checklist -- --channel alpha --ci-run-url <ci-url> --package-run-url <al
 ```
 
 The generated checklist lives under `dist/acceptance/` and is intentionally not committed. The Alpha Package and Release macOS workflows also upload a prefilled, incomplete RC checklist alongside the candidate artifacts so human testers can complete evidence against the exact run. Attach or paste the completed evidence into the release candidate notes.
+
+For BYOK evidence, run provider validation from a shell that has the key in an environment variable, not in the command line:
+
+```bash
+htmlslide agent validate-provider --provider openai --model <model-id> --api-key-env OPENAI_API_KEY --json
+```
+
+The JSON output is release evidence only after confirming it does not include the API key value.
 
 ## Not Yet Claimed
 

@@ -5,15 +5,20 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   applyMockAgentProject,
+  createAnthropicProvider,
   createFileCopyCheckpoint,
   createMockProvider,
+  createOpenAICompatibleProvider,
   diffFileCopyCheckpoint,
   mockEngines,
   recordCheckpointChanges,
   revertFileCopyCheckpoint,
   runAgent,
+  sanitizeProviderText,
   type AgentRunResult,
   type ApplyMockAgentProjectResult,
+  type CredentialStatus,
+  type FetchLike,
   type FileCopyCheckpointDiff,
   type FileCopyCheckpointRevertResult
 } from "@htmlslide/agent";
@@ -68,6 +73,29 @@ export type AgentRunCliOptions = {
 
 export type AgentRunCliResult = AgentRunResult & {
   applied?: ApplyMockAgentProjectResult;
+};
+
+export type AgentProviderKind = "openai" | "anthropic" | "compatible";
+
+export type AgentProviderValidationOptions = {
+  provider: string;
+  model: string;
+  apiKeyEnv: string;
+  baseUrl?: string;
+  env?: Record<string, string | undefined>;
+  fetch?: FetchLike;
+};
+
+export type AgentProviderValidationResult = {
+  status: "passed" | "failed";
+  command: "agent validate-provider";
+  provider: AgentProviderKind;
+  model: string;
+  apiKeyEnv: string;
+  baseUrl?: string;
+  credential: CredentialStatus;
+  secretRecorded: false;
+  exitCode: 0 | typeof EXIT_CODES.agentFailed;
 };
 
 export type CheckpointCliOptions = {
@@ -612,6 +640,31 @@ const agentError = (
     ...extra
   });
 
+const agentProviderKinds: AgentProviderKind[] = ["openai", "anthropic", "compatible"];
+const envNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/u;
+
+const normalizeAgentProviderKind = (provider: string): AgentProviderKind => {
+  const normalized = provider.trim().toLowerCase();
+  if (agentProviderKinds.includes(normalized as AgentProviderKind)) {
+    return normalized as AgentProviderKind;
+  }
+
+  throw agentError(
+    "AGENT_PROVIDER_NOT_FOUND",
+    `Unknown provider: ${provider}.`,
+    "Pass --provider openai, --provider anthropic, or --provider compatible.",
+    { provider }
+  );
+};
+
+const requireTrimmedAgentOption = (value: string, code: string, message: string, suggestedFix: string): string => {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    throw agentError(code, message, suggestedFix);
+  }
+  return trimmed;
+};
+
 const deterministicAgentClock = () => new Date("2026-01-01T00:00:00.000Z");
 
 export const runAgentTask = async (options: AgentRunCliOptions): Promise<AgentRunCliResult> => {
@@ -667,6 +720,106 @@ export const runAgentTask = async (options: AgentRunCliOptions): Promise<AgentRu
     ...result,
     checkpoint,
     applied
+  };
+};
+
+export const validateAgentProviderCredentials = async (
+  options: AgentProviderValidationOptions
+): Promise<AgentProviderValidationResult> => {
+  const provider = normalizeAgentProviderKind(options.provider);
+  const model = requireTrimmedAgentOption(
+    options.model,
+    "AGENT_PROVIDER_MODEL_REQUIRED",
+    "Pass a provider model id.",
+    "Rerun with --model set to the exact model you want to validate."
+  );
+  const apiKeyEnv = requireTrimmedAgentOption(
+    options.apiKeyEnv,
+    "AGENT_PROVIDER_API_KEY_ENV_REQUIRED",
+    "Pass the environment variable name that contains the provider API key.",
+    "Set --api-key-env OPENAI_API_KEY, ANTHROPIC_API_KEY, or another provider-owned environment variable."
+  );
+
+  if (!envNamePattern.test(apiKeyEnv)) {
+    throw agentError(
+      "AGENT_PROVIDER_API_KEY_ENV_INVALID",
+      `Invalid API key environment variable name: ${apiKeyEnv}.`,
+      "Use a shell environment variable name such as OPENAI_API_KEY or ANTHROPIC_API_KEY.",
+      { apiKeyEnv }
+    );
+  }
+
+  const baseUrl = options.baseUrl?.trim().replace(/\/+$/u, "");
+  if (provider === "compatible" && (!baseUrl || baseUrl.length === 0)) {
+    throw agentError(
+      "AGENT_PROVIDER_BASE_URL_REQUIRED",
+      "OpenAI-compatible provider validation requires --base-url.",
+      "Rerun with --base-url set to the compatible provider API root, for example https://api.example.com/v1.",
+      { provider }
+    );
+  }
+
+  if (provider !== "compatible" && baseUrl && baseUrl.length > 0) {
+    throw agentError(
+      "AGENT_PROVIDER_BASE_URL_UNSUPPORTED",
+      `--base-url is only supported for the compatible provider, not ${provider}.`,
+      "Use --provider compatible for custom OpenAI-compatible API roots.",
+      { provider }
+    );
+  }
+
+  const env = options.env ?? process.env;
+  const apiKey = env[apiKeyEnv]?.trim();
+  if (!apiKey) {
+    throw agentError(
+      "AGENT_PROVIDER_API_KEY_ENV_MISSING",
+      `Environment variable ${apiKeyEnv} is not set or is empty.`,
+      "Export the provider API key in that environment variable, then rerun the command. Do not paste API keys into CLI arguments.",
+      { apiKeyEnv }
+    );
+  }
+
+  const label = `HTMLslide ${provider} provider validation`;
+  const modelProvider = provider === "anthropic"
+    ? createAnthropicProvider({
+        apiKey,
+        fetch: options.fetch,
+        id: "htmlslide-provider-validation",
+        label,
+        model
+      })
+    : createOpenAICompatibleProvider({
+        apiKey,
+        baseUrl: provider === "compatible" ? baseUrl : undefined,
+        fetch: options.fetch,
+        id: "htmlslide-provider-validation",
+        label,
+        model
+      });
+
+  let credential: CredentialStatus;
+  try {
+    credential = await modelProvider.validateCredentials();
+  } catch (error) {
+    credential = {
+      ok: false,
+      providerId: modelProvider.id,
+      reason: sanitizeProviderText(error instanceof Error ? error.message : String(error), [apiKey]),
+      recoverable: true
+    };
+  }
+
+  const status = credential.ok ? "passed" : "failed";
+  return {
+    status,
+    command: "agent validate-provider",
+    provider,
+    model,
+    apiKeyEnv,
+    ...(provider === "compatible" ? { baseUrl } : {}),
+    credential,
+    secretRecorded: false,
+    exitCode: credential.ok ? EXIT_CODES.success : EXIT_CODES.agentFailed
   };
 };
 

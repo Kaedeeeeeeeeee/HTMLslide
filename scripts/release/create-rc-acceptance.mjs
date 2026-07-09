@@ -140,6 +140,8 @@ For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is 
 
 ### 5. Create Deck With BYOK Provider If Key Available
 
+- [ ] Run \`htmlslide agent validate-provider --provider <provider> --model <model> --api-key-env <ENV_NAME> --json\` from an environment where the key is set.
+- [ ] Attach or paste the sanitized provider validation JSON and confirm it does not include the API key value.
 - [ ] Save a test provider key through Settings.
 - [ ] Create a deck with the BYOK provider.
 - [ ] Confirm no API key appears in project files, reports, logs, or screenshots.

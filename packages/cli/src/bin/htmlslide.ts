@@ -24,7 +24,8 @@ import {
   revertCheckpoint,
   runAgentTask,
   tryLoadProjectForCheck,
-  uninstallCliShim
+  uninstallCliShim,
+  validateAgentProviderCredentials
 } from "../index.js";
 
 type JsonOption = {
@@ -57,6 +58,13 @@ type AgentRunCommandOptions = JsonOption & {
   engine: string;
   task: string;
   path?: string;
+};
+
+type AgentValidateProviderCommandOptions = JsonOption & {
+  apiKeyEnv: string;
+  baseUrl?: string;
+  model: string;
+  provider: string;
 };
 
 type CheckpointCommandOptions = JsonOption & {
@@ -384,6 +392,32 @@ agentCommand
       writeResult(result, json);
       if (!result.ok) {
         process.exit(EXIT_CODES.agentFailed);
+      }
+    } catch (error) {
+      fail(error, json);
+    }
+  });
+
+agentCommand
+  .command("validate-provider")
+  .requiredOption("--provider <provider>", "provider id: openai, anthropic, or compatible")
+  .requiredOption("--model <model>", "provider model id to validate")
+  .requiredOption("--api-key-env <name>", "environment variable that contains the provider API key")
+  .option("--base-url <url>", "OpenAI-compatible provider API root")
+  .option("--json", "print machine-readable JSON")
+  .description("Validate BYOK provider credentials without printing the API key.")
+  .action(async (options: AgentValidateProviderCommandOptions) => {
+    const json = Boolean(options.json ?? program.opts<JsonOption>().json);
+    try {
+      const result = await validateAgentProviderCredentials({
+        apiKeyEnv: options.apiKeyEnv,
+        baseUrl: options.baseUrl,
+        model: options.model,
+        provider: options.provider
+      });
+      writeResult(result, json);
+      if (result.status === "failed") {
+        process.exit(result.exitCode);
       }
     } catch (error) {
       fail(error, json);

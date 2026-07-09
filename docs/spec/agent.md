@@ -139,6 +139,8 @@ Reports are intentionally not raw `AgentRunResult` dumps. They must not include 
 
 Provider adapters convert structured stage responses into the shared agent output types. `build` and `repair` require `sourceWrites`, then parse and normalize them through the shared source-write boundary before desktop applies edits. Provider errors are sanitized before surfacing so API keys, bearer tokens, raw provider keys, and `sk-` style secrets do not appear in logs, validation results, or thrown messages.
 
+The CLI exposes `htmlslide agent validate-provider --provider openai|anthropic|compatible --model <model> --api-key-env <ENV_NAME> [--base-url <url>] --json` as a manual BYOK preflight. It reuses provider `validateCredentials()`, reads key material only from the named environment variable, returns sanitized JSON evidence, and exits with code `6` when provider validation fails. It must not accept a raw API key argument or write the key value to stdout, stderr, reports, or logs.
+
 The desktop BYOK path is now wired to OpenAI, configured OpenAI-compatible providers, and Anthropic. It still treats desktop CLI `check` and `export` as authoritative: provider `check`/`export` stage outputs do not replace the real project gate.
 
 ## Desktop New Deck v1

@@ -6,7 +6,7 @@ import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createRequire } from "node:module";
-import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -252,6 +252,53 @@ function byokE2eSourceWrites(title: string): Array<{ path: string; content: stri
       content: `# ${title}\n\nUse this talk track to confirm provider-backed generation, checkpoint review, check, and export all completed from the desktop wizard.\n`
     }
   ];
+}
+
+async function writeGenericExternalAgentScript(scriptPath: string): Promise<void> {
+  await writeFile(
+    scriptPath,
+    `
+import fs from "node:fs";
+import path from "node:path";
+
+const args = readPairs(process.argv.slice(2));
+const projectRoot = requireArg(args, "--project");
+const promptFile = requireArg(args, "--prompt-file");
+const manifestFile = requireArg(args, "--writes-manifest");
+const slideFile = path.join(projectRoot, "slides", "001-title.html");
+const prompt = fs.readFileSync(promptFile, "utf8");
+
+if (!prompt.includes("Generic command")) {
+  throw new Error("Prompt did not include the E2E Generic command brief.");
+}
+
+fs.writeFileSync(
+  slideFile,
+  '<section class="slide title-slide" data-slide-id="001-title"><p class="eyebrow">Generic external agent</p><h1>Edited by Generic E2E</h1><p class="subtitle">The configured command wrote this source slide, then HTMLslide checked and exported it.</p></section>\\n'
+);
+fs.mkdirSync(path.dirname(manifestFile), { recursive: true });
+fs.writeFileSync(manifestFile, JSON.stringify({ writes: ["slides/001-title.html"] }, null, 2) + "\\n");
+console.log("generic external agent wrote slides/001-title.html");
+console.error("generic external agent manifest recorded");
+
+function readPairs(argv) {
+  const pairs = new Map();
+  for (let index = 0; index < argv.length; index += 2) {
+    pairs.set(argv[index], argv[index + 1]);
+  }
+  return pairs;
+}
+
+function requireArg(args, name) {
+  const value = args.get(name);
+  if (!value) {
+    throw new Error("Missing " + name);
+  }
+  return value;
+}
+`,
+    "utf8"
+  );
 }
 
 test.describe("HTMLslide desktop smoke", () => {
@@ -737,6 +784,106 @@ test.describe("HTMLslide desktop smoke", () => {
     } finally {
       await fakeProvider.close();
     }
+  });
+
+  test("runs a configured Generic command external agent from the new deck wizard", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
+    const homeDir = path.join(tempRoot, "home");
+    const userDataDir = path.join(tempRoot, "user-data");
+    const workspaceDir = path.join(tempRoot, "workspace");
+    const projectPath = path.join(workspaceDir, "generic-agent-demo");
+    const fakeAgentScript = path.join(tempRoot, "fake-generic-agent.mjs");
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(userDataDir, { recursive: true });
+    await mkdir(workspaceDir, { recursive: true });
+    await writeGenericExternalAgentScript(fakeAgentScript);
+    const commandTemplate = `"${process.execPath}" "${fakeAgentScript}" --project "{{projectPath}}" --prompt-file "{{promptFile}}" --writes-manifest "{{writeManifest}}"`;
+
+    electronApp = await electron.launch({
+      executablePath: electronExecutable,
+      args: [electronMain],
+      env: {
+        ...process.env,
+        ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+        HOME: homeDir,
+        HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir,
+        HTMLSLIDE_USER_DATA_DIR: userDataDir
+      }
+    });
+
+    const page = await electronApp.firstWindow();
+    const browserErrors = collectBrowserErrors(page);
+    await page.waitForLoadState("domcontentloaded");
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "AI Engines", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "AI Engines", exact: true })).toBeVisible();
+    await page.locator(".ai-settings__modes").getByRole("button", { name: /Coding Agent/ }).click();
+    await page.locator(".external-agent-list").getByRole("button", { name: /Generic command/ }).click();
+    await page.getByLabel("Generic command").fill(commandTemplate);
+    await page.getByRole("button", { name: "Save Selection", exact: true }).click();
+
+    const settingsPath = path.join(userDataDir, "ai-engine-settings.json");
+    await expect.poll(async () => readFile(settingsPath, "utf8").catch(() => ""), { timeout: 30_000 })
+      .toContain("fake-generic-agent.mjs");
+    const savedSettingsText = await readFile(settingsPath, "utf8");
+    expect(savedSettingsText).toContain('"mode": "external-agent"');
+    expect(savedSettingsText).toContain('"selectedId": "generic"');
+    expect(savedSettingsText).toContain("fake-generic-agent.mjs");
+
+    await page.getByRole("button", { name: "Recent", exact: true }).click();
+    await page.locator(".library-main").getByRole("button", { name: "New Deck", exact: true }).first().click();
+    const newDeckPanel = page.locator(".new-deck-panel");
+    await expect(newDeckPanel).toBeVisible();
+    await newDeckPanel.getByLabel("Deck title").fill("Generic Agent Demo");
+    await expect(newDeckPanel.getByLabel("Folder")).toHaveValue("generic-agent-demo");
+    await newDeckPanel.getByLabel("Brief").fill("Use the configured Generic command to update the title slide.");
+    await newDeckPanel.getByRole("button", { name: /Coding Agent/ }).click();
+    await expect(newDeckPanel.getByText("Generic command is ready for New Deck and existing workspace runs.")).toBeVisible();
+    await newDeckPanel.getByRole("button", { name: "Create & Generate", exact: true }).click();
+
+    await expect(page.getByText("External agent completed check and export")).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Generic Agent Demo" })).toBeVisible();
+    await expect(page.getByText("generate: External agent complete")).toBeVisible();
+    await expect(page.getByText(/check: Check passed/)).toBeVisible();
+    await expect(page.getByText(/export: [1-9][0-9]* artifacts/)).toBeVisible();
+    await expect(page.getByText("review: Ready for review")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Review changes" })).toBeVisible();
+
+    const diffReview = page.locator(".agent-diff-review");
+    await expect(diffReview.getByText("Files changed")).toBeVisible();
+    await expect(diffReview.locator(".agent-diff-file-list").filter({ hasText: "Files changed" }).getByText("slides/001-title.html")).toBeVisible();
+    await expect(diffReview.locator(".agent-text-diff__title").getByText("slides/001-title.html")).toBeVisible();
+    const buildStage = page.locator(".agent-stage").filter({ hasText: "External agent reported 1 source file writes." });
+    await buildStage.getByText("Logs").click();
+    await expect(buildStage.getByText("generic external agent wrote slides/001-title.html")).toBeVisible();
+    await expect(buildStage.getByText("generic external agent manifest recorded")).toBeVisible();
+
+    const editedSlide = await readFile(path.join(projectPath, "slides", "001-title.html"), "utf8");
+    expect(editedSlide).toContain("Edited by Generic E2E");
+    const runDirs = await readdir(path.join(projectPath, ".htmlslide", "runs"));
+    expect(runDirs).toHaveLength(1);
+    const prompt = await readFile(path.join(projectPath, ".htmlslide", "runs", runDirs[0]!, "prompt.md"), "utf8");
+    expect(prompt).toContain("Use the configured Generic command to update the title slide.");
+    const writeManifest = JSON.parse(
+      await readFile(path.join(projectPath, ".htmlslide", "runs", runDirs[0]!, "writes.json"), "utf8")
+    ) as { writes?: string[] };
+    expect(writeManifest.writes).toEqual(["slides/001-title.html"]);
+    await expect(access(path.join(projectPath, "exports", "generic-agent-demo.pdf"))).resolves.toBeUndefined();
+    await expect(access(path.join(projectPath, "exports", "generic-agent-demo.deckpkg"))).resolves.toBeUndefined();
+
+    page.once("dialog", async (dialog) => {
+      await dialog.accept();
+    });
+    await page.getByRole("button", { name: "Revert changes", exact: true }).click();
+    await expect(page.getByText("Checkpoint reverted")).toBeVisible({ timeout: 30_000 });
+    const revertedSlide = await readFile(path.join(projectPath, "slides", "001-title.html"), "utf8");
+    expect(revertedSlide).toContain("Generic Agent Demo");
+    expect(revertedSlide).not.toContain("Edited by Generic E2E");
+
+    await expectNoFrameworkOverlay(page);
+    expect(browserErrors).toEqual([]);
   });
 
   test("loads the Electron shell, reaches the library, and opens a sample deck", async () => {

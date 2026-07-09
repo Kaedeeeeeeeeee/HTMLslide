@@ -48,7 +48,7 @@ These gates are expected before each alpha candidate:
 | PNG thumbnails are produced | Compiler tests and export fixtures cover deterministic thumbnails. |
 | `deckpkg` can open | Presenter tests, Electron E2E, and package smoke cover package opening. |
 | Rehearsal mode works | Presenter tests and Electron E2E cover single-screen rehearsal. |
-| Fake external adapter automation | Agent adapter tests and desktop fake-command paths cover deterministic external-agent behavior. |
+| Fake external adapter automation | Agent adapter tests, desktop service tests, and Electron E2E cover saving a Generic command, running it from New Deck and opened-workspace paths, applying reported source writes, check/export gating, diff review, and checkpoint revert. |
 | Unit, CLI, compiler, Electron, and packaging tests pass | Covered by local commands and CI workflows. |
 
 ## Manual Release-Candidate Evidence

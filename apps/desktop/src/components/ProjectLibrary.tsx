@@ -781,7 +781,7 @@ function validateNewDeckDraft(
 
   if (draft.generationMode === "external-agent") {
     return options.selectedExternalReady
-      ? "New Deck external-agent generation is still limited to existing workspaces. Choose HTMLslide Agent, No AI, or Local Mock."
+      ? undefined
       : "Configure and refresh a ready coding agent in AI Engines before using this path.";
   }
 
@@ -836,7 +836,7 @@ function buildNewDeckEngineOptions({
       description: "Use the selected Claude Code, Codex CLI, Gemini CLI, or compatible command.",
       detail:
         selectedExternalStatus.status === "ready"
-          ? `${selectedExternalStatus.label} is ready for existing workspace runs. New Deck handoff is still queued.`
+          ? `${selectedExternalStatus.label} is ready for New Deck and existing workspace runs.`
           : `${selectedExternalStatus.label} is ${selectedExternalStatus.status.replace("-", " ")}. Refresh or configure it in AI Engines.`,
       icon: <Code2 />,
       status: selectedExternalStatus.status.replace("-", " "),

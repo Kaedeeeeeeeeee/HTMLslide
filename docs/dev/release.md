@@ -53,7 +53,7 @@ After packaging, run the package smoke:
 pnpm smoke:package:alpha
 ```
 
-The smoke extracts the ZIP, verifies it contains `HTMLslide.app`, checks the `.deckpkg` document type and packaged CLI runtime, installs a temporary shim from the ZIP app, verifies `htmlslide doctor --json`, and uninstalls it. It then mounts the DMG, copies `HTMLslide.app` into a temporary install directory, verifies the packaged app declares `.deckpkg` as an owned macOS document type, launches the packaged app with isolated user data, verifies packaged first-run CLI provisioning and official skill installation into isolated target directories, moves the app to a second temporary install location, relaunches it to repair the recorded app path used by the CLI shim, exports a fixture deck through the packaged CLI, launches the packaged app with that `.deckpkg` as a direct file argument, waits for the renderer to confirm presenter mode opened the expected deck, installs a temporary HTMLslide-managed CLI shim, verifies `htmlslide doctor --json` through that shim, and uninstalls it. It never writes to real `/Applications` or the user's real `~/.htmlslide`.
+The smoke extracts the ZIP, verifies it contains `HTMLslide.app`, checks the `.deckpkg` document type and packaged CLI runtime, installs a temporary shim from the ZIP app, verifies `htmlslide doctor --json`, verifies packaged MCP diagnostics with `htmlslide mcp --list-tools --json` and project-scoped `htmlslide mcp --status --json`, and uninstalls it. It then mounts the DMG, copies `HTMLslide.app` into a temporary install directory, verifies the packaged app declares `.deckpkg` as an owned macOS document type, launches the packaged app with isolated user data, verifies packaged first-run CLI provisioning and official skill installation into isolated target directories, moves the app to a second temporary install location, relaunches it to repair the recorded app path used by the CLI shim, exports a fixture deck through the packaged CLI, launches the packaged app with that `.deckpkg` as a direct file argument, waits for the renderer to confirm presenter mode opened the expected deck, installs a temporary HTMLslide-managed CLI shim, verifies `htmlslide doctor --json` and packaged MCP diagnostics through that shim, and uninstalls it. It never writes to real `/Applications` or the user's real `~/.htmlslide`.
 
 ## Alpha Checklist
 
@@ -64,6 +64,8 @@ pnpm rc:checklist -- --channel alpha --ci-run-url <ci-url> --package-run-url <al
 ```
 
 The generated Markdown file under `dist/acceptance/` is intentionally ignored by git. Attach or paste the completed checklist into the release candidate notes. It records the mandatory manual script from Phase 19.16: clean macOS account, DMG install, first launch, mock/local deck creation, BYOK when available, fake external agent, PDF/deckpkg export, external-monitor presentation, reopen, agent-run revert, CLI uninstall, and post-delete file cleanup.
+
+The Alpha Package and Release macOS workflows also generate a prefilled RC checklist in their uploaded artifact bundle. Treat that file as a run-bound evidence template, not completed acceptance, until a tester fills in the manual results.
 
 Also verify:
 

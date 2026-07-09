@@ -476,12 +476,54 @@ async function smokeCliShim(appPath, smokeRoot) {
     fail(`htmlslide doctor did not pass through the installed shim: ${JSON.stringify(doctor, null, 2)}`);
   }
 
+  await smokePackagedCliMcp(shimPath, smokeRoot, env);
+
   const uninstall = readJsonOutput(
     run(process.execPath, [cliPath, "setup", "uninstall-cli", "--target-path", shimPath, "--json"], { env }),
     "setup uninstall-cli"
   );
   if (uninstall.status !== "passed" || uninstall.action !== "removed" || existsSync(shimPath)) {
     fail(`CLI shim uninstall did not remove the managed shim: ${JSON.stringify(uninstall)}`);
+  }
+}
+
+async function smokePackagedCliMcp(shimPath, smokeRoot, env) {
+  const projectPath = path.join(smokeRoot, "mcp-source", "valid-full");
+  await rm(path.dirname(projectPath), { recursive: true, force: true });
+  await mkdir(path.dirname(projectPath), { recursive: true });
+  await cp(validFullFixturePath, projectPath, {
+    recursive: true,
+    verbatimSymlinks: true
+  });
+
+  const tools = readJsonOutput(
+    run(shimPath, ["mcp", "--list-tools", "--json"], { env }),
+    "packaged htmlslide mcp --list-tools"
+  );
+  if (
+    tools.status !== "passed" ||
+    tools.command !== "mcp list-tools" ||
+    !Array.isArray(tools.tools) ||
+    !tools.tools.some((tool) => tool.name === "project_get_manifest" && tool.implemented === true) ||
+    !tools.tools.some((tool) => tool.name === "export_deckpkg" && tool.implemented === true) ||
+    !tools.tools.some((tool) => tool.name === "checkpoint_revert" && tool.implemented === true)
+  ) {
+    fail(`Packaged CLI MCP tool listing did not expose implemented tools: ${JSON.stringify(tools, null, 2)}`);
+  }
+
+  const status = readJsonOutput(
+    run(shimPath, ["mcp", projectPath, "--status", "--json"], { env }),
+    "packaged htmlslide mcp --status"
+  );
+  if (
+    status.status !== "passed" ||
+    status.command !== "mcp status" ||
+    status.mcpStatus !== "started" ||
+    status.projectRoot !== path.resolve(projectPath) ||
+    typeof status.implementedToolCount !== "number" ||
+    status.implementedToolCount < 1
+  ) {
+    fail(`Packaged CLI MCP status did not start against the fixture project: ${JSON.stringify(status, null, 2)}`);
   }
 }
 

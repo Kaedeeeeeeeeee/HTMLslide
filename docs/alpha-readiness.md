@@ -23,7 +23,7 @@ These gates are expected before each alpha candidate:
 | Performance guardrails | Preview, PDF export, checker, and presenter state smoke metrics stay under guardrails. | `pnpm perf:smoke` |
 | Security baseline | Source secret scan and high-severity dependency audit pass. | `pnpm security:check` |
 | Desktop UX smoke | New Deck, Project Library, QA, export, presenter, CLI integration, and official skills flows pass in Electron. | `pnpm e2e:desktop` |
-| Alpha package | Unsigned DMG/ZIP/manifest are created and smoked from the packaged app and packaged CLI. | `pnpm verify:package:alpha` |
+| Alpha package | Unsigned DMG/ZIP/manifest plus a prefilled RC acceptance template are created and smoked from the packaged app, packaged CLI, and packaged MCP diagnostics. | `pnpm verify:package:alpha`, `Alpha Package` |
 | Remote CI | Main branch CI and Docs Pages complete for the candidate commit. | GitHub Actions `CI`, `Docs Pages` |
 
 ## Automated Alpha Coverage
@@ -34,6 +34,7 @@ These gates are expected before each alpha candidate:
 | App can launch | Package smoke launches the packaged app in isolated user data. |
 | CLI shim can install | Electron E2E and package smoke cover first-run CLI provisioning and uninstall. |
 | `htmlslide doctor` passes | CLI tests and package smoke cover doctor through the packaged CLI shim. |
+| Packaged MCP diagnostics work | CLI/MCP tests cover source runtime behavior; package smoke runs packaged `htmlslide mcp --list-tools --json` and project-scoped `htmlslide mcp --status --json`. |
 | New Deck creates a project | CLI tests and Electron E2E cover source project creation. |
 | Open Folder opens a project | Electron E2E covers opening fixture and created projects. |
 | Project Library shows recent projects | Electron E2E covers recent project management. |
@@ -71,7 +72,7 @@ Generate the evidence template with:
 pnpm rc:checklist -- --channel alpha --ci-run-url <ci-url> --package-run-url <alpha-package-url> --artifact-url <dmg-url>
 ```
 
-The generated checklist lives under `dist/acceptance/` and is intentionally not committed. Attach or paste the completed evidence into the release candidate notes.
+The generated checklist lives under `dist/acceptance/` and is intentionally not committed. The Alpha Package and Release macOS workflows also upload a prefilled, incomplete RC checklist alongside the candidate artifacts so human testers can complete evidence against the exact run. Attach or paste the completed evidence into the release candidate notes.
 
 ## Not Yet Claimed
 

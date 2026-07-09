@@ -208,6 +208,19 @@ jobs:
             cp "$artifact" release-artifacts/
           done
 
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          release_tag="TODO"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            release_tag="${GITHUB_REF_NAME}"
+          fi
+          pnpm rc:checklist -- \
+            --channel release \
+            --ci-run-url "$run_url" \
+            --package-run-url "$run_url" \
+            --artifact-url "htmlslide-signed-notarized-${GITHUB_RUN_NUMBER}" \
+            --release-tag "$release_tag" \
+            --output release-artifacts/HTMLslide-release-rc-acceptance.md
+
           find release-artifacts -type f -print | sort
 
       - name: Generate release notes

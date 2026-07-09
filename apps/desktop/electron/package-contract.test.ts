@@ -57,6 +57,8 @@ describe("macOS alpha packaging contract", () => {
     expect(packageScript).toContain("ditto");
     expect(packageScript).toContain("runVersionCheck");
     expect(packageScript).toContain("pnpm\", [\"version:check\"]");
+    expect(packageScript).toContain("\"@htmlslide/mcp-server\"");
+    expect(packageScript).toContain("\"@htmlslide/skills\"");
     expect(packageScript).toContain("symlink(\"/Applications\"");
     expect(packageScript).toContain("writeDeckPackageDocumentTypes");
     expect(packageScript).toContain("codesign\", [\"--force\", \"--deep\", \"--sign\", \"-\"");
@@ -106,6 +108,9 @@ describe("macOS alpha packaging contract", () => {
     expect(smokeScript).toContain("smokeMovedAppCliRepair");
     expect(smokeScript).toContain("launchAppWithDeckPackage");
     expect(smokeScript).toContain("smokeCliShim");
+    expect(smokeScript).toContain("smokePackagedCliMcp");
+    expect(smokeScript).toContain("\"mcp\", \"--list-tools\", \"--json\"");
+    expect(smokeScript).toContain("\"mcp\", projectPath, \"--status\", \"--json\"");
     expect(smokeScript).toContain("HTMLSLIDE_SMOKE_QUIT_AFTER_READY");
     expect(smokeScript).toContain("unsigned-alpha");
     expect(smokeScript).toContain("manifest.notarized !== false");
@@ -124,6 +129,9 @@ describe("macOS alpha packaging contract", () => {
     expect(workflow).toContain("pnpm version:check");
     expect(packageIndex).toBeGreaterThan(-1);
     expect(smokeIndex).toBeGreaterThan(packageIndex);
+    expect(workflow).toContain("pnpm rc:checklist --");
+    expect(workflow).toContain("--channel alpha");
+    expect(workflow).toContain("HTMLslide-alpha-rc-acceptance.md");
     expect(workflow).toContain("*.dmg");
     expect(workflow).toContain("*.zip");
     expect(workflow).toContain("*.json");
@@ -149,6 +157,9 @@ describe("macOS alpha packaging contract", () => {
     expect(workflow).toContain("pnpm package:release:macos");
     expect(workflow).toContain("manifest.notarized !== true");
     expect(workflow).toContain("manifest.stapled !== true");
+    expect(workflow).toContain("pnpm rc:checklist --");
+    expect(workflow).toContain("--channel release");
+    expect(workflow).toContain("HTMLslide-release-rc-acceptance.md");
     expect(workflow).toContain("signed-notarized");
     expect(workflow).toContain("release-artifacts/RELEASE_NOTES.md");
     expect(workflow).toContain("gh release create \"$tag\" --title \"HTMLslide $tag\" --notes-file release-artifacts/RELEASE_NOTES.md");

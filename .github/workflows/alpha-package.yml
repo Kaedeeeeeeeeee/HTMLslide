@@ -150,6 +150,14 @@ jobs:
             cp "$artifact" alpha-artifacts/
           done
 
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          pnpm rc:checklist -- \
+            --channel alpha \
+            --ci-run-url "$run_url" \
+            --package-run-url "$run_url" \
+            --artifact-url "htmlslide-unsigned-alpha-${GITHUB_RUN_NUMBER}" \
+            --output alpha-artifacts/HTMLslide-alpha-rc-acceptance.md
+
           count="$(find alpha-artifacts -type f | wc -l | tr -d ' ')"
           if [[ "$count" == "0" ]]; then
             echo "::error title=No package artifacts::pnpm package:alpha completed but no alpha artifacts were copied from dist/alpha."

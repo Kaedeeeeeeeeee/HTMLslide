@@ -12,6 +12,7 @@ import { exportDeck, type CompilerProjectInput, type ExportOptions, type ExportR
 import { loadDeckProject, type LoadedDeckProject } from "@htmlslide/core";
 import { HTMLSLIDE_APP_VERSION } from "@htmlslide/core/version";
 import { checkProject, type CheckReport } from "@htmlslide/linter";
+import { buildDeckHtml, type RenderDeck, type RenderMode } from "@htmlslide/renderer";
 import { getOfficialSkill, OFFICIAL_SKILLS, type SkillMetadata } from "@htmlslide/skills";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -96,6 +97,26 @@ export type WriteFileResult = {
   audit: McpAuditEntry;
 };
 
+export type RenderSlideResult = {
+  projectRoot: string;
+  mode: RenderMode;
+  slideId: string;
+  title: string;
+  source: string;
+  notes?: string;
+  viewport: LoadedDeckProject["deck"]["viewport"];
+  html: string;
+};
+
+export type RenderDeckResult = {
+  projectRoot: string;
+  mode: RenderMode;
+  title: string;
+  slideCount: number;
+  viewport: LoadedDeckProject["deck"]["viewport"];
+  html: string;
+};
+
 export type ExportPdfResult = {
   projectRoot: string;
   pdf: string;
@@ -140,6 +161,8 @@ export type HtmlslideMcpToolResult =
   | ProjectSlideListResult
   | TextFileResult
   | WriteFileResult
+  | RenderSlideResult
+  | RenderDeckResult
   | CheckReport
   | ExportPdfResult
   | ExportDeckPackageResult
@@ -165,6 +188,8 @@ export const implementedHtmlslideMcpTools: readonly HtmlslideMcpTool[] = [
   "notes_write",
   "theme_read",
   "theme_write",
+  "render_slide",
+  "render_deck",
   "check_deck",
   "get_check_report",
   "export_pdf",
@@ -271,6 +296,31 @@ const writeToolInputSchema: ToolInputSchema = {
   required: ["path", "content"]
 };
 
+const renderModeProperty = {
+  type: "string",
+  enum: ["preview", "print", "present"],
+  description: "Renderer mode. Defaults to preview."
+};
+
+const renderSlideInputSchema: ToolInputSchema = {
+  type: "object",
+  properties: {
+    slideId: {
+      type: "string",
+      description: "Deck slide id to render."
+    },
+    mode: renderModeProperty
+  },
+  required: ["slideId"]
+};
+
+const renderDeckInputSchema: ToolInputSchema = {
+  type: "object",
+  properties: {
+    mode: renderModeProperty
+  }
+};
+
 const checkpointCreateInputSchema: ToolInputSchema = {
   type: "object",
   properties: {
@@ -333,6 +383,8 @@ const toolInputSchemas: Partial<Record<HtmlslideMcpTool, ToolInputSchema>> = {
   notes_read: pathToolInputSchema,
   notes_write: writeToolInputSchema,
   read_slide: pathToolInputSchema,
+  render_deck: renderDeckInputSchema,
+  render_slide: renderSlideInputSchema,
   slide_read: pathToolInputSchema,
   slide_write: writeToolInputSchema,
   skill_get_instructions: skillNameInputSchema,
@@ -499,6 +551,12 @@ export const createHtmlslideMcpServer = (options: HtmlslideMcpServerOptions): Ht
 
         case "theme_write":
           return writeProjectTextFile(projectRoot, readPathInput(input, "path"), readContentInput(input), "theme/", name);
+
+        case "render_slide":
+          return renderProjectSlide(projectRoot, readPathInput(input, "slideId"), readRenderModeInput(input));
+
+        case "render_deck":
+          return renderProjectDeck(projectRoot, readRenderModeInput(input));
 
         case "check_deck":
           return checkProject({
@@ -703,6 +761,84 @@ const readProjectTextFile = async (
   };
 };
 
+const renderProjectDeck = async (projectRoot: string, mode: RenderMode): Promise<RenderDeckResult> => {
+  const { deck } = await buildMcpRenderableDeck(projectRoot);
+  return {
+    projectRoot,
+    mode,
+    title: deck.title,
+    slideCount: deck.slides.length,
+    viewport: deck.viewport,
+    html: buildMcpRenderHtml(deck, mode)
+  };
+};
+
+const renderProjectSlide = async (
+  projectRoot: string,
+  slideId: string,
+  mode: RenderMode
+): Promise<RenderSlideResult> => {
+  const { deck, sources } = await buildMcpRenderableDeck(projectRoot);
+  const slide = deck.slides.find((candidate) => candidate.id === slideId);
+  const source = sources.get(slideId);
+  if (!slide || !source) {
+    throw new Error(`No slide found with id ${slideId}.`);
+  }
+  const singleSlideDeck: RenderDeck = {
+    ...deck,
+    slides: [slide]
+  };
+
+  return {
+    projectRoot,
+    mode,
+    slideId: slide.id,
+    title: slide.title,
+    source,
+    notes: slide.notes,
+    viewport: deck.viewport,
+    html: buildMcpRenderHtml(singleSlideDeck, mode)
+  };
+};
+
+const buildMcpRenderHtml = (deck: RenderDeck, mode: RenderMode): string =>
+  `${buildDeckHtml(deck, {
+    mode,
+    includeNotesPanel: true,
+    includeRuntimeScript: true
+  })}\n`;
+
+const buildMcpRenderableDeck = async (
+  projectRoot: string
+): Promise<{ deck: RenderDeck; sources: Map<string, string> }> => {
+  const project = await loadDeckProject(projectRoot);
+  const themeCss = project.theme?.cssPath ? await readFile(project.theme.cssPath, "utf8") : undefined;
+  const sources = new Map<string, string>();
+  const slides = await Promise.all(
+    project.slides.map(async (projectSlide) => {
+      sources.set(projectSlide.id, projectSlide.slide.source);
+      return {
+        id: projectSlide.id,
+        title: projectSlide.slide.title,
+        html: await readFile(projectSlide.sourcePath, "utf8"),
+        notes: projectSlide.notesPath ? await readFile(projectSlide.notesPath, "utf8") : undefined
+      };
+    })
+  );
+
+  return {
+    deck: {
+      title: project.deck.title,
+      language: project.deck.language,
+      viewport: project.deck.viewport,
+      safeArea: project.deck.safeArea,
+      themeCss,
+      slides
+    },
+    sources
+  };
+};
+
 const readLatestCheckReport = async (projectRoot: string): Promise<CheckReport> => {
   const reportPath = path.join(projectRoot, ".htmlslide", "reports", "check-report.json");
   try {
@@ -768,6 +904,17 @@ const readContentInput = (input: Record<string, unknown>): string => {
     throw new Error("MCP write tool input must include string content.");
   }
   return value;
+};
+
+const readRenderModeInput = (input: Record<string, unknown>): RenderMode => {
+  const value = input.mode;
+  if (value === undefined) {
+    return "preview";
+  }
+  if (value === "preview" || value === "print" || value === "present") {
+    return value;
+  }
+  throw new Error("MCP render tool mode must be preview, print, or present.");
 };
 
 const errorCode = (error: unknown): string | undefined => {

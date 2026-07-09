@@ -186,6 +186,9 @@ importers:
       '@htmlslide/linter':
         specifier: workspace:*
         version: link:../linter
+      '@htmlslide/renderer':
+        specifier: workspace:*
+        version: link:../renderer
       '@htmlslide/skills':
         specifier: workspace:*
         version: link:../skills

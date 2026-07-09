@@ -50,7 +50,10 @@ describe("HTMLslide MCP tool registry", () => {
       implemented: true
     });
     expect(htmlslideTools.find((tool) => tool.name === "render_slide")).toMatchObject({
-      implemented: false
+      implemented: true
+    });
+    expect(htmlslideTools.find((tool) => tool.name === "render_deck")).toMatchObject({
+      implemented: true
     });
     expect(htmlslideTools.find((tool) => tool.name === "read_deck")).toMatchObject({
       deprecated: true,
@@ -92,6 +95,12 @@ describe("HTMLslide MCP in-process server", () => {
       const slide = await server.callTool("slide_read", {
         path: "slides/001-clean.html"
       });
+      const renderedSlide = await server.callTool("render_slide", {
+        slideId: "001-clean"
+      });
+      const renderedDeck = await server.callTool("render_deck", {
+        mode: "print"
+      });
 
       expect(manifest).toMatchObject({
         deck: {
@@ -112,6 +121,31 @@ describe("HTMLslide MCP in-process server", () => {
         content: expect.stringContaining('data-slide-id="001-clean"'),
         path: "slides/001-clean.html"
       });
+      expect(renderedSlide).toMatchObject({
+        mode: "preview",
+        projectRoot: projectPath,
+        slideId: "001-clean",
+        source: "slides/001-clean.html",
+        title: "Local QA Clean Slide",
+        viewport: {
+          height: 1080,
+          width: 1920
+        }
+      });
+      expect((renderedSlide as { html: string }).html).toContain("<!doctype html>");
+      expect((renderedSlide as { html: string }).html).toContain('data-slide-id="001-clean"');
+      expect((renderedSlide as { html: string }).html).toContain("Local QA Clean Slide");
+      expect(renderedDeck).toMatchObject({
+        mode: "print",
+        projectRoot: projectPath,
+        slideCount: 1,
+        title: "Linter Valid Clean"
+      });
+      expect((renderedDeck as { html: string }).html).toContain('data-htmlslide-mode="print"');
+      expect((renderedDeck as { html: string }).html).toContain("htmlslide-notes-panel");
+      await expect(server.callTool("render_slide", {
+        slideId: "missing-slide"
+      })).rejects.toThrow("No slide found with id missing-slide");
     });
   });
 
@@ -346,10 +380,14 @@ describe("HTMLslide MCP stdio server", () => {
         const toolNames = tools.tools.map((tool) => tool.name);
         expect(toolNames).toContain("project_get_manifest");
         expect(toolNames).toContain("slide_read");
+        expect(toolNames).toContain("render_slide");
         expect(toolNames).toContain("check_deck");
         expect(toolNames).toContain("checkpoint_revert");
-        expect(toolNames).not.toContain("render_slide");
         expect(tools.tools.find((tool) => tool.name === "project_get_manifest")?._meta).toMatchObject({
+          implemented: true,
+          safety: "read-only"
+        });
+        expect(tools.tools.find((tool) => tool.name === "render_slide")?._meta).toMatchObject({
           implemented: true,
           safety: "read-only"
         });

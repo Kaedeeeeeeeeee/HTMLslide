@@ -14,8 +14,8 @@ See [BYOK](byok.md).
 
 ## External agent mode
 
-External agent mode connects a coding agent such as Claude Code, Codex, or a compatible command. The current automated path supports Generic command execution with fake-command coverage in CI.
+External agent mode connects a coding agent such as Claude Code, Codex, Gemini CLI, or a compatible command. The current automated path supports Generic command execution with fake-command coverage in CI.
 
-Claude Code and Codex alpha support is currently detection/status-first plus manual validation. Do not claim full real Claude/Codex headless support until that adapter path is implemented and tested.
+Claude Code, Codex, and Gemini CLI alpha support is currently detection/status-first plus manual validation. Do not claim full real Claude/Codex/Gemini headless support until that adapter path is implemented and tested.
 
-See [Connect Claude Code](connect-claude-code.md) and [Connect Codex](connect-codex.md).
+See [Connect Claude Code](connect-claude-code.md), [Connect Codex](connect-codex.md), and [Connect Gemini CLI](connect-gemini.md).

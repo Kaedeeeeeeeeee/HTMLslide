@@ -20,6 +20,7 @@ const requiredFiles = {
   "docs/byok.md": ["BYOK", "provider", "API key", "Keychain", "You pay your provider directly"],
   "docs/connect-claude-code.md": ["Claude Code", "detection", "Generic", "manual validation"],
   "docs/connect-codex.md": ["Codex", "detection", "Generic", "manual validation"],
+  "docs/connect-gemini.md": ["Gemini CLI", "detection", "GEMINI_API_KEY", "Vertex AI", "Generic", "manual validation"],
   "docs/project-structure.md": ["Project Structure", "deck.json", "slides/", "exports/"],
   "docs/cli.md": ["CLI", "htmlslide new", "htmlslide templates list", "htmlslide check", "htmlslide export", "htmlslide doctor"],
   "docs/mcp.md": ["MCP", "project boundary", "path traversal", "alpha"],
@@ -48,6 +49,10 @@ const forbiddenClaims = [
   {
     file: "docs/connect-codex.md",
     patterns: [/Codex headless runs are fully supported/iu]
+  },
+  {
+    file: "docs/connect-gemini.md",
+    patterns: [/Gemini CLI headless runs are fully supported/iu]
   }
 ];
 

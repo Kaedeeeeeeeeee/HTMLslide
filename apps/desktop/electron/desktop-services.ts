@@ -500,7 +500,7 @@ export type DesktopExternalAgentRunnerOptions = {
 
 export type DesktopAiEngineMode = "no-ai" | "htmlslide-agent" | "external-agent";
 export type DesktopApiKeyProvider = "openai" | "anthropic" | "compatible";
-export type DesktopExternalAgentId = "claude-code" | "codex-cli" | "generic";
+export type DesktopExternalAgentId = "claude-code" | "codex-cli" | "gemini-cli" | "generic";
 export type DesktopExternalAgentDetectionStatus = "ready" | "not-installed" | "not-authenticated" | "unavailable";
 
 export type DesktopAiEngineSettings = {
@@ -629,13 +629,25 @@ const EXTERNAL_AGENT_SPECS = [
     kind: "codex-cli",
     label: "Codex CLI",
     versionArgs: ["--version"] as const
+  },
+  {
+    authArgs: undefined,
+    capabilities: { ...DEFAULT_AGENT_CAPABILITIES, detectAuthenticated: false },
+    command: "gemini",
+    id: "gemini-cli",
+    kind: "gemini-cli",
+    label: "Gemini CLI",
+    manualAuthSummary: "Gemini CLI detected. Authentication depends on interactive sign-in, GEMINI_API_KEY, or Vertex AI environment, so validate it manually before release claims.",
+    versionArgs: ["--version"] as const
   }
 ] satisfies Array<{
-  authArgs: readonly string[];
+  authArgs?: readonly string[];
+  capabilities?: Record<string, boolean>;
   command: string;
   id: DesktopExternalAgentId;
   kind: DesktopExternalAgentId;
   label: string;
+  manualAuthSummary?: string;
   versionArgs: readonly string[];
 }>;
 
@@ -887,6 +899,7 @@ export async function detectExternalAgentStatuses({
       if (versionResult.kind === "not-installed") {
         return externalAgentStatus({
           checkedAt: now,
+          capabilities: spec.capabilities,
           command: spec.command,
           id: spec.id,
           installed: false,
@@ -899,6 +912,7 @@ export async function detectExternalAgentStatuses({
       if (versionResult.result.exitCode !== 0) {
         return externalAgentStatus({
           checkedAt: now,
+          capabilities: spec.capabilities,
           command: spec.command,
           id: spec.id,
           installed: true,
@@ -909,17 +923,33 @@ export async function detectExternalAgentStatuses({
         });
       }
 
+      const version = firstNonEmptyLine(versionResult.result.stdout) ?? firstNonEmptyLine(versionResult.result.stderr);
+
+      if (!spec.authArgs) {
+        return externalAgentStatus({
+          checkedAt: now,
+          capabilities: spec.capabilities,
+          command: spec.command,
+          id: spec.id,
+          installed: true,
+          label: spec.label,
+          status: "unavailable",
+          summary: spec.manualAuthSummary ?? "Authentication status must be validated manually.",
+          version
+        });
+      }
+
       const authResult = await runDetectorSafely(runner, {
         args: spec.authArgs,
         command: spec.command,
         cwd,
         timeoutMs: 3_000
       });
-      const version = firstNonEmptyLine(versionResult.result.stdout) ?? firstNonEmptyLine(versionResult.result.stderr);
 
       if (authResult.kind === "not-installed") {
         return externalAgentStatus({
           checkedAt: now,
+          capabilities: spec.capabilities,
           command: spec.command,
           id: spec.id,
           installed: false,
@@ -960,6 +990,7 @@ export async function detectExternalAgentStatuses({
     ...detected,
     externalAgentStatus({
       checkedAt: now,
+      capabilities: { detectAuthenticated: false },
       command: "",
       id: "generic",
       installed: false,
@@ -2147,7 +2178,9 @@ function normalizeApiKeyProvider(value: unknown): DesktopApiKeyProvider {
 }
 
 function normalizeExternalAgentId(value: unknown): DesktopExternalAgentId {
-  return value === "claude-code" || value === "generic" || value === "codex-cli" ? value : "codex-cli";
+  return value === "claude-code" || value === "generic" || value === "codex-cli" || value === "gemini-cli"
+    ? value
+    : "codex-cli";
 }
 
 function normalizeModel(value: unknown, provider: DesktopApiKeyProvider): string {
@@ -2193,6 +2226,7 @@ function normalizeProviderBaseUrl(value: unknown, provider: DesktopApiKeyProvide
 
 function externalAgentStatus({
   authenticated = false,
+  capabilities,
   checkedAt,
   command,
   id,
@@ -2203,6 +2237,7 @@ function externalAgentStatus({
   version
 }: {
   authenticated?: boolean;
+  capabilities?: Record<string, boolean>;
   checkedAt: string;
   command: string;
   id: DesktopExternalAgentId;
@@ -2215,7 +2250,7 @@ function externalAgentStatus({
 }): DesktopExternalAgentStatus {
   return {
     authenticated,
-    capabilities: { ...DEFAULT_AGENT_CAPABILITIES },
+    capabilities: { ...DEFAULT_AGENT_CAPABILITIES, ...capabilities },
     checkedAt,
     command,
     id,

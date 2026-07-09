@@ -1,5 +1,5 @@
 name: External agent integration bug
-description: Report issues with Claude, Codex, fake adapters, or MCP boundaries.
+description: Report issues with Claude, Codex, Gemini, fake adapters, or MCP boundaries.
 title: "[External Agent]: "
 labels:
   - external-agent
@@ -20,6 +20,7 @@ body:
         - fake adapter
         - Claude Code
         - Codex
+        - Gemini CLI
         - Other external agent
         - MCP server
     validations:

@@ -8,6 +8,7 @@ import {
   createCapabilitySet,
   detectClaudeCli,
   detectCodexCli,
+  detectGeminiCli,
   readJsonFileWriteManifest,
   renderCommandTemplate,
   runGenericAgentAdapter,
@@ -97,6 +98,33 @@ describe("external agent detector helpers", () => {
       "fake-codex --version",
       "fake-codex auth status"
     ]);
+  });
+
+  it("detects Gemini CLI installation without pretending authentication is verified", async () => {
+    const invocations: string[] = [];
+    const runner: CommandRunner = async (invocation) => {
+      invocations.push([invocation.command, ...invocation.args].join(" "));
+      return {
+        exitCode: 0,
+        stdout: "gemini 0.9.0\n",
+        stderr: ""
+      };
+    };
+
+    const result = await detectGeminiCli({ command: "fake-gemini", runner });
+
+    expect(result).toMatchObject({
+      authenticated: false,
+      command: "fake-gemini",
+      installed: true,
+      status: "unavailable",
+      version: "gemini 0.9.0"
+    });
+    expect(result.capabilities.detectInstalled).toBe(true);
+    expect(result.capabilities.detectAuthenticated).toBe(false);
+    expect(result.capabilities.headlessRun).toBe(false);
+    expect(result.capabilities.openExternal).toBe(true);
+    expect(invocations).toEqual(["fake-gemini --version"]);
   });
 });
 

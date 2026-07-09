@@ -32,6 +32,7 @@ import {
   type CliRunResult,
   type DesktopCliRunner,
   type DesktopAiEngineSettings,
+  type DesktopExternalAgentId,
   type DesktopCredentialStore,
   type DesktopAgentRunReport,
   type DesktopProjectRecord
@@ -138,7 +139,7 @@ function projectRecord(projectPath: string, title: string): DesktopProjectRecord
   };
 }
 
-function externalAgentSettings(commandTemplate: string, selectedId: "claude-code" | "codex-cli" | "generic" = "generic"): DesktopAiEngineSettings {
+function externalAgentSettings(commandTemplate: string, selectedId: DesktopExternalAgentId = "generic"): DesktopAiEngineSettings {
   return {
     apiKey: {
       hasKey: false,
@@ -1915,21 +1916,23 @@ function requireArg(args, name) {
     const projectPath = await tempDir();
     await writeDeck(projectPath);
 
-    const nonGeneric = await runDesktopExternalAgent(
-      {
-        brief: "Edit the deck.",
-        projectPath,
-        runId: "run-codex-blocked"
-      },
-      {
-        settings: externalAgentSettings("codex exec", "codex-cli")
-      }
-    );
-    expect(nonGeneric).toMatchObject({
-      error: "Only Generic command headless runs are enabled in this milestone.",
-      ok: false,
-      providerId: "external-generic"
-    });
+    for (const selectedId of ["codex-cli", "gemini-cli"] as const) {
+      const nonGeneric = await runDesktopExternalAgent(
+        {
+          brief: "Edit the deck.",
+          projectPath,
+          runId: `run-${selectedId}-blocked`
+        },
+        {
+          settings: externalAgentSettings(`${selectedId} exec`, selectedId)
+        }
+      );
+      expect(nonGeneric).toMatchObject({
+        error: "Only Generic command headless runs are enabled in this milestone.",
+        ok: false,
+        providerId: "external-generic"
+      });
+    }
 
     const emptyCommand = await runDesktopExternalAgent(
       {

@@ -1,6 +1,6 @@
 # External Agents Spec v0.1
 
-HTMLslide can connect to user-owned external coding agents such as Claude Code, Codex CLI, or a custom command. Adapters must be local-first, deterministic in tests, and project-boundary aware.
+HTMLslide can connect to user-owned external coding agents such as Claude Code, Codex CLI, Gemini CLI, or a custom command. Adapters must be local-first, deterministic in tests, and project-boundary aware.
 
 ## Adapter Capabilities
 
@@ -41,7 +41,7 @@ The desktop app can run a saved Generic command from Electron main for an opened
 
 After the command exits, HTMLslide reads the write manifest, validates reported source writes, records a file-copy checkpoint diff, runs `htmlslide check --json`, and exports only when check passes. This is user-owned local command execution, not an OS sandbox.
 
-Claude Code and Codex CLI are detection-only until their headless command templates are explicitly defined and tested.
+Claude Code, Codex CLI, and Gemini CLI are detection-only until their headless command templates are explicitly defined and tested. Gemini CLI detection checks installation by default; authentication must be validated manually or through a future explicit non-interactive check because supported auth modes include interactive sign-in, `GEMINI_API_KEY`, and Vertex AI environment configuration.
 
 ## Project Boundary
 
@@ -53,12 +53,13 @@ Forbidden writes fail the run even when the command exits successfully. The app 
 
 ## Detector Helpers
 
-Claude and Codex detection is implemented as pure helper logic around an injected command runner. The helpers may call version and auth-status commands through the runner, but tests must not require real CLI installs, real login state, or provider network access.
+Claude, Codex, and Gemini detection is implemented as pure helper logic around an injected command runner. The helpers may call version commands and, where a stable non-interactive surface exists, auth-status commands through the runner. Tests must not require real CLI installs, real login state, or provider network access.
 
 The default command names are:
 
 - Claude Code: `claude`
 - Codex CLI: `codex`
+- Gemini CLI: `gemini`
 
 Callers may override command names and detector args when a provider changes its CLI surface.
 

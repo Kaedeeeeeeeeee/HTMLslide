@@ -15,7 +15,7 @@ export const AGENT_ADAPTER_CAPABILITIES = [
 export type AgentAdapterCapability = (typeof AGENT_ADAPTER_CAPABILITIES)[number];
 export type AgentAdapterCapabilitySet = Partial<Record<AgentAdapterCapability, boolean>>;
 
-export type AgentAdapterKind = "claude-code" | "codex-cli" | "generic" | "fake";
+export type AgentAdapterKind = "claude-code" | "codex-cli" | "gemini-cli" | "generic" | "fake";
 export type AgentAdapterDetectionStatus = "ready" | "not-installed" | "not-authenticated" | "unavailable";
 export type AgentAdapterRunStatus = "completed" | "failed" | "cancelled";
 

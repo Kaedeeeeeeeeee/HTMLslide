@@ -176,6 +176,11 @@ test.describe("HTMLslide desktop smoke", () => {
     await page.getByRole("button", { name: "AI Engines", exact: true }).click();
     await expect(page.getByRole("heading", { name: "API Key Metadata", exact: true })).toBeVisible();
     await expect(page.getByText("No provider key saved")).toBeVisible();
+    const externalAgentList = page.locator(".external-agent-list");
+    await expect(externalAgentList.getByRole("button", { name: /Claude Code/ })).toBeVisible();
+    await expect(externalAgentList.getByRole("button", { name: /Codex CLI/ })).toBeVisible();
+    await expect(externalAgentList.getByRole("button", { name: /Gemini CLI/ })).toBeVisible();
+    await expect(externalAgentList.getByRole("button", { name: /Generic command/ })).toBeVisible();
     await page.getByRole("button", { name: /HTMLslide Agent/ }).click();
     await page.getByLabel("API key").fill(fakeApiKey);
     await page.getByRole("button", { name: "Save Key", exact: true }).click();

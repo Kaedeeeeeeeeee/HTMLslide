@@ -130,6 +130,32 @@ describe("AI engine settings model", () => {
     expect(JSON.stringify(normalized)).not.toContain("also-not-safe");
   });
 
+  it("keeps Gemini CLI selectable without marking it headless-ready by default", () => {
+    const settings = buildAiEngineSettingsUpdate(
+      createDefaultAiEngineSettings(),
+      {
+        externalAgentId: "gemini-cli",
+        mode: "external-agent",
+        model: "gpt-5-mini",
+        provider: "openai"
+      },
+      "2026-07-09T00:08:00.000Z"
+    );
+
+    const status = selectedExternalAgentStatus(settings, createDefaultExternalAgentStatuses());
+
+    expect(settings.externalAgent.selectedId).toBe("gemini-cli");
+    expect(status).toMatchObject({
+      authenticated: false,
+      command: "gemini",
+      id: "gemini-cli",
+      installed: false,
+      status: "not-installed"
+    });
+    expect(status.capabilities.detectAuthenticated).toBe(false);
+    expect(status.capabilities.headlessRun).toBe(false);
+  });
+
   it("marks a saved Generic command as ready for headless workspace runs", () => {
     const settings = buildAiEngineSettingsUpdate(
       createDefaultAiEngineSettings(),

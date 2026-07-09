@@ -309,6 +309,14 @@ describe("external agent status detection", () => {
         };
       }
 
+      if (invocation.command === "gemini" && invocation.args.includes("--version")) {
+        return {
+          exitCode: 0,
+          stderr: "",
+          stdout: "gemini 0.9.0\n"
+        };
+      }
+
       throw new Error(`Unexpected detector invocation: ${invocation.command} ${invocation.args.join(" ")}`);
     };
 
@@ -329,8 +337,18 @@ describe("external agent status detection", () => {
       status: "not-authenticated",
       version: "codex 1.2.3"
     });
+    expect(statuses.find((status) => status.id === "gemini-cli")).toMatchObject({
+      authenticated: false,
+      installed: true,
+      status: "unavailable",
+      summary: "Gemini CLI detected. Authentication depends on interactive sign-in, GEMINI_API_KEY, or Vertex AI environment, so validate it manually before release claims.",
+      version: "gemini 0.9.0"
+    });
+    expect(statuses.find((status) => status.id === "gemini-cli")?.capabilities.detectAuthenticated).toBe(false);
+    expect(statuses.find((status) => status.id === "gemini-cli")?.capabilities.headlessRun).toBe(false);
     expect(statuses.find((status) => status.id === "generic")).toMatchObject({
       status: "unavailable"
     });
+    expect(statuses.find((status) => status.id === "generic")?.capabilities.detectAuthenticated).toBe(false);
   });
 });

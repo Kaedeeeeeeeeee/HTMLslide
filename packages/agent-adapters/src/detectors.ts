@@ -40,12 +40,21 @@ const CODEX_CAPABILITIES = createCapabilitySet([
   "readDiff"
 ]);
 
+const GEMINI_CAPABILITIES = createCapabilitySet([
+  "detectInstalled",
+  "openExternal"
+]);
+
 export function claudeCliCapabilities(): AgentAdapterCapabilitySet {
   return { ...CLAUDE_CAPABILITIES };
 }
 
 export function codexCliCapabilities(): AgentAdapterCapabilitySet {
   return { ...CODEX_CAPABILITIES };
+}
+
+export function geminiCliCapabilities(): AgentAdapterCapabilitySet {
+  return { ...GEMINI_CAPABILITIES };
 }
 
 export async function detectClaudeCli(options: ExternalCliDetectorOptions): Promise<AgentAdapterDetectionResult> {
@@ -76,13 +85,27 @@ export async function detectCodexCli(options: ExternalCliDetectorOptions): Promi
   });
 }
 
+export async function detectGeminiCli(options: ExternalCliDetectorOptions): Promise<AgentAdapterDetectionResult> {
+  return detectExternalCli({
+    adapterId: "gemini-cli",
+    adapterLabel: "Gemini CLI",
+    kind: "gemini-cli",
+    command: options.command ?? "gemini",
+    versionArgs: options.versionArgs ?? ["--version"],
+    authArgs: options.authArgs,
+    cwd: options.cwd,
+    runner: options.runner,
+    capabilities: geminiCliCapabilities()
+  });
+}
+
 interface DetectExternalCliOptions {
   readonly adapterId: string;
   readonly adapterLabel: string;
   readonly kind: AgentAdapterKind;
   readonly command: string;
   readonly versionArgs: readonly string[];
-  readonly authArgs: readonly string[];
+  readonly authArgs?: readonly string[];
   readonly cwd?: string;
   readonly runner: CommandRunner;
   readonly capabilities: AgentAdapterCapabilitySet;
@@ -132,6 +155,19 @@ async function detectExternalCli(options: DetectExternalCliOptions): Promise<Age
     };
   }
 
+  const version = firstNonEmptyLine(versionResult.result.stdout) ?? firstNonEmptyLine(versionResult.result.stderr);
+
+  if (!options.authArgs) {
+    return {
+      ...base,
+      status: "unavailable",
+      installed: true,
+      authenticated: false,
+      version,
+      raw: pickRaw(versionResult.result)
+    };
+  }
+
   const authResult = await runDetectorCommand(options.runner, {
     command: options.command,
     args: options.authArgs,
@@ -150,8 +186,6 @@ async function detectExternalCli(options: DetectExternalCliOptions): Promise<Age
       })
     };
   }
-
-  const version = firstNonEmptyLine(versionResult.result.stdout) ?? firstNonEmptyLine(versionResult.result.stderr);
 
   if (authResult.result.exitCode !== 0) {
     return {

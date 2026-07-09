@@ -80,7 +80,7 @@ Also verify:
 - Rehearsal mode works.
 - Audience window opens and syncs in Electron E2E; physical dual-screen presenter placement has been manually tested.
 - Fake external agent automation passes.
-- At least one real Claude/Codex integration is manually validated before claiming support.
+- At least one real Claude/Codex/Gemini integration is manually validated before claiming support.
 - Unit, CLI E2E, compiler regression, Electron E2E, and packaging smoke tests pass.
 
 ## Signed Releases

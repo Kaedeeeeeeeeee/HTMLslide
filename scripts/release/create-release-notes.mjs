@@ -180,6 +180,6 @@ ${commitLines}
 ## Known Limitations
 
 - Unsigned alpha artifacts are tester-only and may trigger Gatekeeper warnings.
-- Real provider keys, physical display behavior, and real Claude/Codex support claims require manual validation before being described as supported.
+- Real provider keys, physical display behavior, and real Claude/Codex/Gemini support claims require manual validation before being described as supported.
 `;
 }

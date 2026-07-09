@@ -27,7 +27,8 @@ const sidebarSections = [
       ["BYOK", "byok.md"],
       ["AI Engines", "ai-engines.md"],
       ["Claude Code", "connect-claude-code.md"],
-      ["Codex", "connect-codex.md"]
+      ["Codex", "connect-codex.md"],
+      ["Gemini CLI", "connect-gemini.md"]
     ]
   },
   {

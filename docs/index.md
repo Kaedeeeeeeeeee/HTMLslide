@@ -18,6 +18,7 @@ This is the public alpha documentation for HTMLslide.
 - [External agents](ai-engines.md#external-agent-mode)
 - [Connect Claude Code](connect-claude-code.md)
 - [Connect Codex](connect-codex.md)
+- [Connect Gemini CLI](connect-gemini.md)
 
 ## Product Surfaces
 

@@ -39,6 +39,6 @@ pnpm package:release:macos
 - Release-candidate acceptance uses `pnpm rc:checklist` to generate the mandatory manual evidence template for clean-account install, first launch, provider flows, fake external agent, export, external monitor presentation, reopen, revert, CLI uninstall, and post-delete cleanup.
 - package smoke covers DMG mount, packaged app launch, first-run CLI shim, official skills, moved-app CLI repair, deckpkg argument open, packaged CLI export, `htmlslide doctor`, and CLI uninstall. Release workflow contracts cover Developer ID signing, notarization, stapling, and artifact upload wiring.
 
-CI uses mock providers and fake external commands. Real provider credentials and real Claude/Codex login must remain manual validation steps.
+CI uses mock providers and fake external commands. Real provider credentials and real Claude/Codex/Gemini login must remain manual validation steps.
 
 See [dev/testing.md](dev/testing.md) for developer-level details.

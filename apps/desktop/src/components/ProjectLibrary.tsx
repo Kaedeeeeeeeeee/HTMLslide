@@ -833,7 +833,7 @@ function buildNewDeckEngineOptions({
     {
       id: "external-agent",
       label: "Coding Agent",
-      description: "Use the selected Claude Code, Codex CLI, or compatible command.",
+      description: "Use the selected Claude Code, Codex CLI, Gemini CLI, or compatible command.",
       detail:
         selectedExternalStatus.status === "ready"
           ? `${selectedExternalStatus.label} is ready for existing workspace runs. New Deck handoff is still queued.`

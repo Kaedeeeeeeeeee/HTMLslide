@@ -6,7 +6,7 @@ import type {
 
 export type AiEngineMode = "no-ai" | "htmlslide-agent" | "external-agent";
 export type ApiKeyProvider = "openai" | "anthropic" | "compatible";
-export type ExternalAgentId = "claude-code" | "codex-cli" | "generic";
+export type ExternalAgentId = "claude-code" | "codex-cli" | "gemini-cli" | "generic";
 
 export interface ApiKeyMetadata {
   provider: ApiKeyProvider;
@@ -27,7 +27,7 @@ export type ExternalAgentStatus = Pick<
   "authenticated" | "capabilities" | "command" | "installed" | "label" | "status" | "version"
 > & {
   id: ExternalAgentId;
-  kind: Extract<AgentAdapterKind, "claude-code" | "codex-cli" | "generic">;
+  kind: Extract<AgentAdapterKind, "claude-code" | "codex-cli" | "gemini-cli" | "generic">;
   checkedAt?: string;
   summary: string;
 };
@@ -65,7 +65,7 @@ export const aiEngineModes: Array<{ id: AiEngineMode; label: string; description
   {
     id: "external-agent",
     label: "Coding Agent",
-    description: "Connect Claude Code, Codex CLI, or a compatible command."
+    description: "Connect Claude Code, Codex CLI, Gemini CLI, or a compatible command."
   }
 ];
 
@@ -78,6 +78,7 @@ export const apiKeyProviders: Array<{ id: ApiKeyProvider; label: string; default
 export const externalAgentOptions: Array<{ id: ExternalAgentId; label: string; command: string }> = [
   { id: "claude-code", label: "Claude Code", command: "claude" },
   { id: "codex-cli", label: "Codex CLI", command: "codex" },
+  { id: "gemini-cli", label: "Gemini CLI", command: "gemini" },
   { id: "generic", label: "Generic command", command: "" }
 ];
 
@@ -131,6 +132,18 @@ export function createDefaultExternalAgentStatuses(): ExternalAgentStatus[] {
       installed: false,
       kind: "codex-cli",
       label: "Codex CLI",
+      status: "not-installed",
+      summary: "Not checked yet",
+      version: undefined
+    },
+    {
+      authenticated: false,
+      capabilities: { ...defaultCapabilities, detectAuthenticated: false },
+      command: "gemini",
+      id: "gemini-cli",
+      installed: false,
+      kind: "gemini-cli",
+      label: "Gemini CLI",
       status: "not-installed",
       summary: "Not checked yet",
       version: undefined
@@ -270,7 +283,9 @@ function normalizeProvider(value: unknown): ApiKeyProvider {
 }
 
 function normalizeExternalAgentId(value: unknown): ExternalAgentId {
-  return value === "claude-code" || value === "generic" || value === "codex-cli" ? value : "codex-cli";
+  return value === "claude-code" || value === "generic" || value === "codex-cli" || value === "gemini-cli"
+    ? value
+    : "codex-cli";
 }
 
 function normalizeModel(value: unknown, provider: ApiKeyProvider): string {

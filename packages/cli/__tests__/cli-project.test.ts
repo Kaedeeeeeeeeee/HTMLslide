@@ -84,15 +84,44 @@ describe("CLI project helpers", () => {
     try {
       const projectPath = path.join(root, "quarterly-launch");
       const { stdout } = await runCli(["new", projectPath, "--title", "Quarterly Launch Review", "--json"]);
-      const result = JSON.parse(stdout) as { status: string; projectPath: string; title: string };
+      const result = JSON.parse(stdout) as { status: string; projectPath: string; template: string; title: string };
       const deckJson = JSON.parse(await readFile(path.join(projectPath, "deck.json"), "utf8")) as { title?: string };
 
       expect(result).toMatchObject({
         projectPath,
         status: "passed",
+        template: "default",
         title: "Quarterly Launch Review"
       });
       expect(deckJson.title).toBe("Quarterly Launch Review");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("lists built-in templates from the CLI", async () => {
+    const { stdout } = await runCli(["templates", "list", "--json"]);
+    const result = JSON.parse(stdout) as {
+      status: string;
+      templates: Array<{ id: string; name: string; slideCount: number }>;
+    };
+
+    expect(result.status).toBe("passed");
+    expect(result.templates).toEqual([
+      expect.objectContaining({
+        id: "default",
+        name: "Default",
+        slideCount: 2
+      })
+    ]);
+  });
+
+  it("rejects unknown built-in templates from the CLI", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
+    try {
+      await expect(runCli(["new", path.join(root, "demo"), "--template", "missing", "--json"])).rejects.toMatchObject({
+        stdout: expect.stringContaining("Unknown deck template: missing")
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

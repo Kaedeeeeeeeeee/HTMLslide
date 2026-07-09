@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_DECK_TEMPLATE_ID } from "@htmlslide/core/templates";
 import {
   buildNewDeckAgentBrief,
   buildAgentRunStages,
@@ -162,6 +163,7 @@ describe("desktop model helpers", () => {
       generationMode: "no-ai",
       language: "auto",
       slideCount: "auto",
+      templateId: DEFAULT_DECK_TEMPLATE_ID,
       title: "Untitled Deck"
     });
     expect(draft.outputs).toEqual(["pdf", "html", "deckpkg", "thumbnails", "speakerNotes"]);
@@ -178,11 +180,13 @@ describe("desktop model helpers", () => {
       language: "en-US",
       slideCount: "8",
       speakerNotes: "full-script",
+      templateId: "default",
       title: "Investor Update",
       tone: "executive"
     };
 
     expect(buildNewDeckAgentBrief(draft)).toContain("Deck title: Investor Update");
+    expect(buildNewDeckAgentBrief(draft)).toContain("Template: default");
     expect(buildNewDeckAgentBrief(draft)).toContain("Brief: Summarize Q3 growth and expansion risks.");
     expect(buildNewDeckAgentBrief(draft)).toContain("Audience: investors");
     expect(buildNewDeckAgentBrief(draft)).toContain("AI engine: local deterministic mock agent");

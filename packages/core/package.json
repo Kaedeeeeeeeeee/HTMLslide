@@ -14,6 +14,10 @@
     "./version": {
       "types": "./dist/version.d.ts",
       "import": "./dist/version.js"
+    },
+    "./templates": {
+      "types": "./dist/templates.d.ts",
+      "import": "./dist/templates.js"
     }
   },
   "files": [

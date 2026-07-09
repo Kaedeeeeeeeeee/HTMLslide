@@ -100,12 +100,14 @@ export type DesktopProjectPreview = {
 export type DesktopCreateProjectRequest = {
   title: string;
   folderName: string;
+  templateId?: string;
   workspacePath?: string;
 };
 
 export type DesktopResolvedCreateProjectRequest = {
   title: string;
   folderName: string;
+  templateId: string;
   workspacePath: string;
   projectPath: string;
 };
@@ -660,6 +662,10 @@ export function resolveCreateProjectRequest(
     throw new Error("Workspace path must be a string.");
   }
 
+  if (request.templateId !== undefined && typeof request.templateId !== "string") {
+    throw new Error("Template id must be a string.");
+  }
+
   const title = request.title.trim().replace(/\s+/g, " ");
   if (title.length === 0) {
     throw new Error("Deck title is required.");
@@ -688,6 +694,7 @@ export function resolveCreateProjectRequest(
   return {
     folderName,
     projectPath,
+    templateId: request.templateId?.trim() || "default",
     title,
     workspacePath
   };

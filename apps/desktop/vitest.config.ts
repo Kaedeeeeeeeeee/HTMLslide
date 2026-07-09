@@ -7,6 +7,10 @@ export default defineConfig({
       {
         find: "@htmlslide/agent",
         replacement: fileURLToPath(new URL("../../packages/agent/src/index.ts", import.meta.url))
+      },
+      {
+        find: "@htmlslide/core/templates",
+        replacement: fileURLToPath(new URL("../../packages/core/src/templates.ts", import.meta.url))
       }
     ]
   },

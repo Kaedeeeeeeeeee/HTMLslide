@@ -1,4 +1,5 @@
 import { Button, PanelHeader, StatusPill } from "@htmlslide/shared-ui";
+import { listBuiltInDeckTemplates } from "@htmlslide/core/templates";
 import {
   BookOpen,
   Bot,
@@ -88,6 +89,7 @@ const audienceOptions = [
 
 const durationOptions = ["5", "10", "20", "30"] as const;
 const slideCountOptions = ["auto", "3", "5", "8", "10"] as const;
+const builtInDeckTemplates = listBuiltInDeckTemplates();
 
 const toneOptions = [
   { id: "concise", label: "Concise" },
@@ -248,11 +250,7 @@ export function ProjectLibrary({
         ) : null}
 
         {activeSection === "templates" ? (
-          <section className="library-empty">
-            <Layers3 />
-            <h2>Templates</h2>
-            <p>This library area is queued for a later phase.</p>
-          </section>
+          <TemplatesLibrary />
         ) : null}
       </section>
     </main>
@@ -401,6 +399,22 @@ function RecentProjects({
                 spellCheck={false}
                 value={draft.folderName}
               />
+            </label>
+            <label className="settings-field">
+              <span>Template</span>
+              <select
+                onChange={(event) => updateDraft("templateId", event.currentTarget.value)}
+                value={draft.templateId}
+              >
+                {builtInDeckTemplates.map((template) => (
+                  <option
+                    key={template.id}
+                    value={template.id}
+                  >
+                    {template.name}
+                  </option>
+                ))}
+              </select>
             </label>
           </div>
           <label className="settings-field new-deck-panel__brief">
@@ -674,6 +688,38 @@ function RecentProjects({
           ))}
         </div>
       )}
+    </>
+  );
+}
+
+function TemplatesLibrary(): ReactNode {
+  return (
+    <>
+      <PanelHeader
+        eyebrow="Built-in starters"
+        title="Templates"
+      />
+      <div className="library-grid">
+        {builtInDeckTemplates.map((template) => (
+          <article
+            className="project-card"
+            key={template.id}
+          >
+            <div className="project-card__preview">
+              <span>{template.slideCount}</span>
+              <strong>slides</strong>
+            </div>
+            <div className="project-card__body">
+              <h3>{template.name}</h3>
+              <p>{template.description}</p>
+              <footer>
+                <span>{template.summary}</span>
+                <StatusPill tone="success">{template.id}</StatusPill>
+              </footer>
+            </div>
+          </article>
+        ))}
+      </div>
     </>
   );
 }

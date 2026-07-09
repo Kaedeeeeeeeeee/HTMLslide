@@ -212,6 +212,7 @@ describe("macOS alpha packaging contract", () => {
     expect(workflow).toContain("run: pnpm docs:check");
     expect(workflow).toContain("run: pnpm docs:build");
     expect(workflow).toContain("actions/configure-pages@v5");
+    expect(workflow).toContain("enablement: true");
     expect(workflow).toContain("actions/upload-pages-artifact@v3");
     expect(workflow).toContain("path: dist/docs-site");
     expect(workflow).toContain("actions/deploy-pages@v4");

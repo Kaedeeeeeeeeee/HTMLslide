@@ -22,6 +22,7 @@ This is the public alpha documentation for HTMLslide.
 
 - [Project Structure](project-structure.md)
 - [CLI](cli.md)
+- [Templates](spec/templates.md)
 - [MCP](mcp.md)
 - [Skills](skills.md)
 - [Design Skills](design-skills.md)

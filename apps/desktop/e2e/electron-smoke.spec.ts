@@ -99,10 +99,16 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(page.getByRole("heading", { name: "Welcome to HTMLslide" })).toBeVisible();
     await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+    await page.locator(".library-nav").getByRole("button", { name: "Templates", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Templates", exact: true })).toBeVisible();
+    await expect(page.getByText("Two-slide local-first project")).toBeVisible();
+    await page.locator(".library-nav").getByRole("button", { name: "Recent", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
     await page.locator(".library-main").getByRole("button", { name: "New Deck", exact: true }).first().click();
 
     const newDeckPanel = page.locator(".new-deck-panel");
     await expect(newDeckPanel).toBeVisible();
+    await expect(newDeckPanel.getByLabel("Template")).toHaveValue("default");
     await expect(newDeckPanel.getByRole("button", { name: /No AI/ })).toHaveAttribute("aria-pressed", "true");
     await newDeckPanel.getByRole("button", { name: /HTMLslide Agent/ }).click();
     await expect(newDeckPanel.getByText("Save a provider API key in AI Engines before using HTMLslide Agent.")).toBeVisible();

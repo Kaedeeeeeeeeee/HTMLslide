@@ -4,8 +4,9 @@ The `htmlslide` CLI is the agent-facing and CI-facing surface for the same local
 
 Initial commands:
 
-- `htmlslide new <name>` creates a deck project from the default template.
-- `htmlslide init` initializes the current folder as a deck project.
+- `htmlslide new <name> [--template <id>]` creates a deck project from a built-in template. The default template id is `default`.
+- `htmlslide init [--template <id>]` initializes the current folder as a deck project from a built-in template.
+- `htmlslide templates list --json` lists built-in deck template metadata.
 - `htmlslide check [path] --json` discovers `deck.json` from a project root, nested source path, or direct `deck.json` path, then validates schema, files, notes, and source rules.
 - `htmlslide export [path] --pdf --html --deckpkg --thumbnails` creates export artifacts after a successful check.
 - `htmlslide export [path] --no-pdf --no-deckpkg --no-thumbnails` skips selected artifacts while still writing required sidecars such as `notes.json`.
@@ -27,6 +28,20 @@ Exit codes:
 - `8` incompatible schema
 
 All important commands must support JSON output suitable for external agents.
+
+## Templates
+
+Built-in deck templates are resolved by id. Unknown ids must fail before any project files are written. The current public alpha template registry contains:
+
+```json
+{
+  "id": "default",
+  "name": "Default",
+  "slideCount": 2
+}
+```
+
+`new` and `init` write only source/project files such as `deck.json`, `README.md`, `AGENTS.md`, `slides/`, `notes/`, and `theme/`. They must not write generated `exports/` files or secrets.
 
 ## CLI Provisioning
 

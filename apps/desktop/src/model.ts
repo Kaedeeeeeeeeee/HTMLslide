@@ -1,3 +1,4 @@
+import { DEFAULT_DECK_TEMPLATE_ID } from "@htmlslide/core/templates";
 import type { InspectorTabId, QaSeverityId } from "@htmlslide/shared-ui";
 
 export type AppView = "onboarding" | "library" | "workspace";
@@ -19,6 +20,7 @@ export type CommandActionStatuses = Record<CommandAction, OperationStatus>;
 
 export interface NewDeckDraft {
   title: string;
+  templateId: string;
   folderName: string;
   brief: string;
   language: string;
@@ -151,6 +153,7 @@ export function createDefaultNewDeckDraft(): NewDeckDraft {
     outputs: [...defaultNewDeckOutputs],
     slideCount: "auto",
     speakerNotes: "bullet-notes",
+    templateId: DEFAULT_DECK_TEMPLATE_ID,
     title: "Untitled Deck",
     tone: "concise"
   };
@@ -211,6 +214,7 @@ export function buildNewDeckAgentBrief(draft: NewDeckDraft): string {
 
   return [
     `Deck title: ${title}`,
+    `Template: ${draft.templateId}`,
     `Brief: ${brief}`,
     `Language: ${labelFromMap(newDeckLabelMaps.language, draft.language)}`,
     `Audience: ${labelFromMap(newDeckLabelMaps.audience, draft.audience)}`,

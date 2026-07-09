@@ -439,9 +439,23 @@ describe("desktop services", () => {
     ).toEqual({
       folderName: "quarterly-launch-review",
       projectPath: path.join(workspacePath, "quarterly-launch-review"),
+      templateId: "default",
       title: "Quarterly Launch Review",
       workspacePath
     });
+  });
+
+  it("preserves a selected new deck template id", async () => {
+    const workspacePath = await tempDir();
+
+    expect(
+      resolveCreateProjectRequest({
+        folderName: "quarterly-launch-review",
+        templateId: "default",
+        title: "Quarterly Launch Review",
+        workspacePath
+      }).templateId
+    ).toBe("default");
   });
 
   it("rejects unsafe new deck folder names", async () => {

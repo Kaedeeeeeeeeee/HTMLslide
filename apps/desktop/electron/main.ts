@@ -631,7 +631,15 @@ function registerIpcHandlers(): void {
     const library = await readDesktopLibrary(libraryPath(), configuredWorkspacePath());
     const resolved = resolveCreateProjectRequest(request, library.defaultWorkspace);
     await mkdir(resolved.workspacePath, { recursive: true });
-    const result = await invokeCli(["new", resolved.projectPath, "--title", resolved.title, "--json"]);
+    const result = await invokeCli([
+      "new",
+      resolved.projectPath,
+      "--title",
+      resolved.title,
+      "--template",
+      resolved.templateId,
+      "--json"
+    ]);
 
     if (!result.ok) {
       return result;

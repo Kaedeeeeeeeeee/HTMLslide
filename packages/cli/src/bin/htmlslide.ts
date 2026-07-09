@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import path from "node:path";
 import { Command } from "commander";
+import { listBuiltInDeckTemplates } from "@htmlslide/core/templates";
 import { HTMLSLIDE_APP_VERSION } from "@htmlslide/core/version";
 import {
   checkLoadedProject,
@@ -24,6 +25,7 @@ type JsonOption = {
 };
 
 type NewCommandOptions = JsonOption & {
+  template?: string;
   title?: string;
 };
 
@@ -118,14 +120,18 @@ program
   .command("new")
   .argument("<name>", "deck project folder name")
   .option("--json", "print machine-readable JSON")
+  .option("--template <template>", "built-in deck template id", "default")
   .option("--title <title>", "deck title to write into deck.json")
-  .description("Create a deck project from the default template.")
+  .description("Create a deck project from a built-in template.")
   .action(async (name: string, options: NewCommandOptions) => {
     const json = Boolean(options.json ?? program.opts<JsonOption>().json);
     try {
       const title = options.title?.trim() || path.basename(path.resolve(name));
-      const project = await createProject(name, title);
-      writeResult({ status: "passed", projectPath: project.projectPath, title: project.manifest.title }, json);
+      const project = await createProject(name, title, { templateId: options.template });
+      writeResult(
+        { status: "passed", projectPath: project.projectPath, template: options.template ?? "default", title: project.manifest.title },
+        json
+      );
     } catch (error) {
       fail(error, json);
     }
@@ -134,16 +140,38 @@ program
 program
   .command("init")
   .option("--json", "print machine-readable JSON")
+  .option("--template <template>", "built-in deck template id", "default")
   .description("Initialize the current directory as a deck project.")
-  .action(async (options: JsonOption) => {
+  .action(async (options: NewCommandOptions) => {
     const json = Boolean(options.json ?? program.opts<JsonOption>().json);
     try {
       const name = process.cwd().split(/[\\/]/).at(-1) ?? "deck";
-      const project = await createProject(process.cwd(), name);
-      writeResult({ status: "passed", projectPath: project.projectPath, title: project.manifest.title }, json);
+      const project = await createProject(process.cwd(), name, { templateId: options.template });
+      writeResult(
+        { status: "passed", projectPath: project.projectPath, template: options.template ?? "default", title: project.manifest.title },
+        json
+      );
     } catch (error) {
       fail(error, json);
     }
+  });
+
+const templatesCommand = program
+  .command("templates")
+  .description("Inspect built-in deck templates.");
+
+templatesCommand
+  .command("list")
+  .option("--json", "print machine-readable JSON")
+  .description("List built-in deck templates.")
+  .action(async (options: JsonOption) => {
+    const json = Boolean(options.json ?? program.opts<JsonOption>().json);
+    const templates = listBuiltInDeckTemplates();
+    if (json) {
+      writeResult({ status: "passed", templates }, true);
+      return;
+    }
+    writeResult(templates.map((template) => `${template.id}\t${template.name}\t${template.summary}`).join("\n"));
   });
 
 program

@@ -11,6 +11,7 @@
       "@htmlslide/cli": ["packages/cli/src/index.ts"],
       "@htmlslide/compiler": ["packages/compiler/src/index.ts"],
       "@htmlslide/core": ["packages/core/src/index.ts"],
+      "@htmlslide/core/templates": ["packages/core/src/templates.ts"],
       "@htmlslide/core/version": ["packages/core/src/version.ts"],
       "@htmlslide/linter": ["packages/linter/src/index.ts"],
       "@htmlslide/mcp-server": ["packages/mcp-server/src/index.ts"],

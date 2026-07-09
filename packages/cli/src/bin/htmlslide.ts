@@ -4,7 +4,12 @@ import { Command } from "commander";
 import { ProjectLoadError } from "@htmlslide/core";
 import { listBuiltInDeckTemplates } from "@htmlslide/core/templates";
 import { HTMLSLIDE_APP_VERSION } from "@htmlslide/core/version";
-import { createHtmlslideMcpServer, htmlslideTools, summarizeHtmlslideMcpTools } from "@htmlslide/mcp-server";
+import {
+  createHtmlslideMcpServer,
+  htmlslideTools,
+  startHtmlslideMcpStdioServer,
+  summarizeHtmlslideMcpTools
+} from "@htmlslide/mcp-server";
 import {
   checkLoadedProject,
   createProject,
@@ -101,6 +106,24 @@ const fail = (error: unknown, json = false): never => {
       targetDir: details?.targetDir
     },
     json
+  );
+  process.exit(exitCode);
+};
+
+const failStdioStartup = (error: unknown): never => {
+  const message = error instanceof Error ? error.message : String(error);
+  const details = error instanceof Error ? (error as CliError) : undefined;
+  const exitCode = typeof details?.exitCode === "number" ? details.exitCode : EXIT_CODES.generic;
+  process.stderr.write(
+    `${JSON.stringify({
+      status: "failed",
+      error: message,
+      code: details?.code,
+      exitCode,
+      suggestedFix: details?.suggestedFix,
+      targetPath: details?.targetPath,
+      targetDir: details?.targetDir
+    })}\n`
   );
   process.exit(exitCode);
 };
@@ -431,6 +454,14 @@ program
   .action(async (projectPath: string, options: McpCommandOptions) => {
     const json = Boolean(options.json ?? program.opts<JsonOption>().json);
     try {
+      if (options.status && options.listTools) {
+        throw Object.assign(new Error("Use either `--list-tools` or `--status`, not both."), {
+          code: "MCP_DIAGNOSTIC_MODE_CONFLICT",
+          exitCode: EXIT_CODES.generic,
+          suggestedFix: "Run `htmlslide mcp --list-tools --json` or `htmlslide mcp <project-path> --status --json`."
+        });
+      }
+
       if (options.listTools) {
         const toolSummary = summarizeHtmlslideMcpTools();
         if (json) {
@@ -456,11 +487,17 @@ program
       }
 
       if (!options.status) {
-        throw Object.assign(new Error("The real stdio MCP server is not implemented yet."), {
-          code: "MCP_STDIO_NOT_IMPLEMENTED",
-          exitCode: EXIT_CODES.generic,
-          suggestedFix: "Use `htmlslide mcp --list-tools --json` for registry discovery or `htmlslide mcp <project-path> --status --json` for the alpha in-process harness check."
+        if (json) {
+          throw Object.assign(new Error("`--json` is only valid with `htmlslide mcp --list-tools` or `htmlslide mcp --status`."), {
+            code: "MCP_JSON_REQUIRES_DIAGNOSTIC_MODE",
+            exitCode: EXIT_CODES.generic,
+            suggestedFix: "Remove `--json` to start the stdio MCP server, or add `--status` for a one-shot JSON status check."
+          });
+        }
+        await startHtmlslideMcpStdioServer({
+          projectRoot: projectPath
         });
+        return;
       }
 
       const server = createHtmlslideMcpServer({
@@ -484,7 +521,11 @@ program
         `MCP alpha harness ready for ${started.projectRoot}\n${started.registeredToolCount} tools registered\n${started.implementedToolCount} tools implemented\ntransport: in-process`
       );
     } catch (error) {
-      fail(annotateProjectLoadError(error), json);
+      const annotatedError = annotateProjectLoadError(error);
+      if (!options.listTools && !options.status) {
+        failStdioStartup(annotatedError);
+      }
+      fail(annotatedError, json);
     }
   });
 

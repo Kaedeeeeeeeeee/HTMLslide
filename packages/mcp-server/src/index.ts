@@ -2,7 +2,16 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { exportDeck, type CompilerProjectInput, type ExportResult } from "@htmlslide/compiler";
 import { loadDeckProject, type LoadedDeckProject } from "@htmlslide/core";
+import { HTMLSLIDE_APP_VERSION } from "@htmlslide/core/version";
 import { checkProject, type CheckReport } from "@htmlslide/linter";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  type CallToolResult,
+  type Tool
+} from "@modelcontextprotocol/sdk/types.js";
 
 export type HtmlslideMcpTool =
   | "project_get_manifest"
@@ -166,6 +175,96 @@ export const summarizeHtmlslideMcpTools = () => ({
   implementedToolCount: htmlslideTools.filter((tool) => tool.implemented).length
 });
 
+type JsonObject = Record<string, unknown>;
+
+type ToolInputSchema = {
+  type: "object";
+  properties?: Record<string, object>;
+  required?: string[];
+};
+
+const emptyToolInputSchema: ToolInputSchema = {
+  type: "object",
+  properties: {}
+};
+
+const pathToolInputSchema: ToolInputSchema = {
+  type: "object",
+  properties: {
+    path: {
+      type: "string",
+      description: "Project-relative path accepted by the selected HTMLslide MCP tool."
+    }
+  },
+  required: ["path"]
+};
+
+const writeToolInputSchema: ToolInputSchema = {
+  type: "object",
+  properties: {
+    path: {
+      type: "string",
+      description: "Project-relative path accepted by the selected HTMLslide MCP write tool."
+    },
+    content: {
+      type: "string",
+      description: "UTF-8 text content to write."
+    }
+  },
+  required: ["path", "content"]
+};
+
+const toolInputSchemas: Partial<Record<HtmlslideMcpTool, ToolInputSchema>> = {
+  notes_read: pathToolInputSchema,
+  notes_write: writeToolInputSchema,
+  read_slide: pathToolInputSchema,
+  slide_read: pathToolInputSchema,
+  slide_write: writeToolInputSchema,
+  theme_read: pathToolInputSchema,
+  theme_write: writeToolInputSchema,
+  write_slide: writeToolInputSchema
+};
+
+const toProtocolTool = (tool: ToolDescriptor): Tool => ({
+  name: tool.name,
+  description: tool.description,
+  inputSchema: toolInputSchemas[tool.name] ?? emptyToolInputSchema,
+  annotations: {
+    destructiveHint: tool.safety === "dangerous",
+    idempotentHint: tool.safety === "read-only",
+    openWorldHint: false,
+    readOnlyHint: tool.safety === "read-only",
+    title: tool.name
+  },
+  _meta: {
+    deprecated: Boolean(tool.deprecated),
+    implemented: tool.implemented,
+    safety: tool.safety
+  }
+});
+
+const toProtocolToolResult = (result: HtmlslideMcpToolResult): CallToolResult => ({
+  content: [
+    {
+      type: "text",
+      text: JSON.stringify(result, null, 2)
+    }
+  ],
+  structuredContent: {
+    result: result as JsonObject
+  }
+});
+
+const toProtocolToolError = (error: unknown): CallToolResult => ({
+  content: [
+    {
+      type: "text",
+      text: error instanceof Error ? error.message : String(error)
+    }
+  ],
+  isError: true
+});
+
 export const isProjectRelativePathSafe = (relativePath: string): boolean => {
   if (relativePath.trim() !== relativePath || relativePath.length === 0) {
     return false;
@@ -307,6 +406,53 @@ export const createHtmlslideMcpServer = (options: HtmlslideMcpServerOptions): Ht
       }
     }
   };
+};
+
+export const createHtmlslideMcpProtocolServer = (options: HtmlslideMcpServerOptions): Server => {
+  const harness = createHtmlslideMcpServer(options);
+  const server = new Server(
+    {
+      name: "htmlslide",
+      version: HTMLSLIDE_APP_VERSION
+    },
+    {
+      capabilities: {
+        tools: {}
+      },
+      instructions: "Use HTMLslide MCP tools only against the configured deck project root."
+    }
+  );
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: harness.listTools().filter((tool) => tool.implemented).map(toProtocolTool)
+  }));
+
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const tool = htmlslideTools.find((candidate) => candidate.name === request.params.name);
+    if (!tool) {
+      return toProtocolToolError(new Error(`Unknown HTMLslide MCP tool: ${request.params.name}`));
+    }
+    if (!tool.implemented) {
+      return toProtocolToolError(new Error(`HTMLslide MCP tool is planned but not implemented: ${tool.name}`));
+    }
+
+    try {
+      return toProtocolToolResult(
+        await harness.callTool(tool.name, request.params.arguments as Record<string, unknown> | undefined)
+      );
+    } catch (error) {
+      return toProtocolToolError(error);
+    }
+  });
+
+  return server;
+};
+
+export const startHtmlslideMcpStdioServer = async (options: HtmlslideMcpServerOptions): Promise<void> => {
+  const harness = createHtmlslideMcpServer(options);
+  await harness.start();
+  const server = createHtmlslideMcpProtocolServer(options);
+  await server.connect(new StdioServerTransport());
 };
 
 const readProjectTextFile = async (

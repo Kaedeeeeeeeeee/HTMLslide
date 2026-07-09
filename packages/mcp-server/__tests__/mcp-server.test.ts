@@ -2,10 +2,16 @@ import { cp, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it } from "vitest";
 import { createAuditEntry, createHtmlslideMcpServer, htmlslideTools, isProjectRelativePathSafe } from "../src/index";
 
 const fixtureRoot = fileURLToPath(new URL("../../test-fixtures/decks/", import.meta.url));
+const repoRoot = path.resolve(fixtureRoot, "../../..");
+const tsxBin = path.join(repoRoot, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
+const cliBin = path.join(repoRoot, "packages", "cli", "src", "bin", "htmlslide.ts");
 
 const withTempFixture = async <T>(fixtureName: string, callback: (projectPath: string) => Promise<T>): Promise<T> => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-mcp-"));
@@ -18,6 +24,9 @@ const withTempFixture = async <T>(fixtureName: string, callback: (projectPath: s
     await rm(tempRoot, { recursive: true, force: true });
   }
 };
+
+const readStructuredToolResult = <T>(result: CallToolResult): T =>
+  (result.structuredContent as { result: T }).result;
 
 describe("HTMLslide MCP tool registry", () => {
   it("lists planned tools and deprecated aliases", () => {
@@ -174,6 +183,78 @@ describe("HTMLslide MCP in-process server", () => {
       })).rejects.toThrow("Invalid project path");
     });
   });
+});
+
+describe("HTMLslide MCP stdio server", () => {
+  it("serves implemented tools through the CLI stdio transport", async () => {
+    await withTempFixture("linter-valid-clean", async (projectPath) => {
+      const transport = new StdioClientTransport({
+        args: [cliBin, "mcp", projectPath],
+        command: tsxBin,
+        cwd: repoRoot,
+        stderr: "pipe"
+      });
+      const stderrChunks: Buffer[] = [];
+      transport.stderr?.on("data", (chunk: Buffer) => {
+        stderrChunks.push(Buffer.from(chunk));
+      });
+
+      const client = new Client({
+        name: "htmlslide-mcp-test-client",
+        version: "0.0.0"
+      });
+
+      try {
+        await client.connect(transport);
+
+        const tools = await client.listTools();
+        const toolNames = tools.tools.map((tool) => tool.name);
+        expect(toolNames).toContain("project_get_manifest");
+        expect(toolNames).toContain("slide_read");
+        expect(toolNames).toContain("check_deck");
+        expect(toolNames).not.toContain("checkpoint_revert");
+        expect(tools.tools.find((tool) => tool.name === "project_get_manifest")?._meta).toMatchObject({
+          implemented: true,
+          safety: "read-only"
+        });
+
+        const manifest = readStructuredToolResult<{ deck: { title: string }; projectRoot: string }>(
+          await client.callTool({
+            name: "project_get_manifest"
+          }) as CallToolResult
+        );
+        expect(manifest).toMatchObject({
+          deck: {
+            title: "Linter Valid Clean"
+          },
+          projectRoot: projectPath
+        });
+
+        const check = readStructuredToolResult<{ status: string }>(
+          await client.callTool({
+            name: "check_deck"
+          }) as CallToolResult
+        );
+        expect(check.status).toBe("passed");
+
+        const unsafeRead = await client.callTool({
+          arguments: {
+            path: "../outside.html"
+          },
+          name: "slide_read"
+        }) as CallToolResult;
+        expect(unsafeRead.isError).toBe(true);
+        expect(unsafeRead.content[0]).toMatchObject({
+          text: expect.stringContaining("Invalid project path"),
+          type: "text"
+        });
+      } finally {
+        await client.close();
+      }
+
+      expect(Buffer.concat(stderrChunks).toString("utf8")).not.toContain("MCP alpha harness ready");
+    });
+  }, 20000);
 });
 
 describe("MCP project path safety", () => {

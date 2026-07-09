@@ -13,6 +13,7 @@
   "dependencies": {
     "@htmlslide/compiler": "workspace:*",
     "@htmlslide/core": "workspace:*",
-    "@htmlslide/linter": "workspace:*"
+    "@htmlslide/linter": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0"
   }
 }

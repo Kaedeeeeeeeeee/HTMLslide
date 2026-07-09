@@ -444,7 +444,8 @@ describe("CLI project helpers", () => {
       const project = await createProject(path.join(root, "demo"), "demo");
       await expect(runCli(["mcp", project.projectPath, "--json"])).rejects.toMatchObject({
         code: EXIT_CODES.generic,
-        stdout: expect.stringContaining('"code": "MCP_STDIO_NOT_IMPLEMENTED"')
+        stderr: expect.stringContaining('"code":"MCP_JSON_REQUIRES_DIAGNOSTIC_MODE"'),
+        stdout: ""
       });
 
       const statusResult = await runCli(["mcp", project.projectPath, "--status", "--json"]);

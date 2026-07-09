@@ -1337,12 +1337,30 @@ test.describe("HTMLslide desktop smoke", () => {
     await page.locator(".workspace-toolbar").getByRole("button", { name: "Check", exact: true }).click();
     await expect(page.getByText(/check: Check found issues/)).toBeVisible({ timeout: 30_000 });
 
-    const qaPanel = page.locator(".qa-panel");
+    const qaPanel = page.getByRole("region", { name: "QA Panel" });
     await expect(qaPanel.getByRole("heading", { name: "QA Panel" })).toBeVisible();
-    await expect(qaPanel.getByRole("heading", { name: "text-overflow" })).toBeVisible();
-    await expect(qaPanel.getByText("Text is estimated to exceed its fixed container")).toBeVisible();
-    await expect(qaPanel.getByText("p.body-copy")).toBeVisible();
-    await expect(qaPanel.getByText(/overflowBottomPx/)).toBeVisible();
+    const qaResultSummary = qaPanel.getByRole("status", { name: "QA result summary" });
+    await expect(qaResultSummary).toContainText("QA Panel shows 1 all severities issue");
+    const qaSeverityTabs = qaPanel.getByRole("tablist", { name: "QA severity filter" });
+    await expect(qaSeverityTabs.getByRole("tab", { name: /All\s+1/ })).toHaveAttribute("aria-selected", "true");
+    await expect(qaSeverityTabs.getByRole("tab", { name: /Errors\s+1/ })).toBeVisible();
+    await expect(qaSeverityTabs.getByRole("tab", { name: /Warnings\s+0/ })).toBeVisible();
+    const qaIssueList = qaPanel.getByRole("list", { name: "QA issues" });
+    const overflowIssue = qaIssueList.getByRole("listitem", { name: "text-overflow" });
+    await expect(overflowIssue).toBeVisible();
+    await expect(overflowIssue.getByRole("heading", { name: "text-overflow" })).toBeVisible();
+    await expect(overflowIssue.getByText("Text is estimated to exceed its fixed container")).toBeVisible();
+    await expect(overflowIssue.getByText("p.body-copy")).toBeVisible();
+    await expect(overflowIssue.getByText(/overflowBottomPx/)).toBeVisible();
+    await expect(overflowIssue.getByRole("button", { name: "Fix text-overflow with AI" })).toBeVisible();
+    await expect(overflowIssue.getByRole("button", { name: "Ignore text-overflow once" })).toBeVisible();
+
+    await qaSeverityTabs.getByRole("tab", { name: /Warnings\s+0/ }).click();
+    await expect(qaSeverityTabs.getByRole("tab", { name: /All\s+1/ })).toBeVisible();
+    await expect(qaSeverityTabs.getByRole("tab", { name: /Warnings\s+0/ })).toHaveAttribute("aria-selected", "true");
+    await expect(qaResultSummary).toContainText("QA Panel shows no warning issues.");
+    await expect(qaPanel.getByRole("list", { name: "QA issues" })).toHaveCount(0);
+    await expect(qaPanel.getByText("No issues in this filter")).toBeVisible();
 
     await expectNoFrameworkOverlay(page);
     expect(browserErrors).toEqual([]);
@@ -1383,16 +1401,25 @@ test.describe("HTMLslide desktop smoke", () => {
     await page.locator(".workspace-toolbar").getByRole("button", { name: "Check", exact: true }).click();
     await expect(page.getByText(/check: Check found issues/)).toBeVisible({ timeout: 30_000 });
 
-    const qaPanel = page.locator(".qa-panel");
+    const qaPanel = page.getByRole("region", { name: "QA Panel" });
     await expect(qaPanel.getByRole("heading", { name: "QA Panel" })).toBeVisible();
-    await expect(qaPanel.getByRole("heading", { name: "missing-asset" })).toBeVisible();
-    await expect(qaPanel.getByText("Referenced asset is missing: ../assets/missing-chart.png.")).toBeVisible();
-    await expect(qaPanel.getByText("img[src]").first()).toBeVisible();
+    await expect(qaPanel.getByRole("status", { name: "QA result summary" })).toContainText("QA Panel shows");
+    const qaIssueList = qaPanel.getByRole("list", { name: "QA issues" });
+    const missingAssetIssue = qaIssueList.getByRole("listitem", { name: "missing-asset" });
+    await expect(missingAssetIssue).toBeVisible();
+    await expect(missingAssetIssue.getByRole("heading", { name: "missing-asset" })).toBeVisible();
+    await expect(missingAssetIssue.getByText("Referenced asset is missing: ../assets/missing-chart.png.")).toBeVisible();
+    await expect(missingAssetIssue.getByText("img[src]").first()).toBeVisible();
 
     await page.getByRole("button", { name: /Missing Notes/ }).click();
-    await expect(qaPanel.getByRole("heading", { name: "missing-notes" })).toBeVisible();
-    await expect(qaPanel.getByText("Slide has no speaker notes file.")).toBeVisible();
-    await expect(qaPanel.getByText("slides[].notes")).toBeVisible();
+    await expect(qaPanel.getByRole("status", { name: "QA result summary" })).toContainText("QA Panel shows");
+    const missingNotesIssue = qaPanel
+      .getByRole("list", { name: "QA issues" })
+      .getByRole("listitem", { name: "missing-notes" });
+    await expect(missingNotesIssue).toBeVisible();
+    await expect(missingNotesIssue.getByRole("heading", { name: "missing-notes" })).toBeVisible();
+    await expect(missingNotesIssue.getByText("Slide has no speaker notes file.")).toBeVisible();
+    await expect(missingNotesIssue.getByText("slides[].notes")).toBeVisible();
 
     await expectNoFrameworkOverlay(page);
   });

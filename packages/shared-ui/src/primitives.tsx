@@ -122,19 +122,21 @@ export interface PanelHeaderProps {
   eyebrow?: string;
   actions?: ReactNode;
   className?: string;
+  titleId?: string;
 }
 
 export function PanelHeader({
   actions,
   className,
   eyebrow,
-  title
+  title,
+  titleId
 }: PanelHeaderProps): ReactNode {
   return (
     <header className={cn("hs-panel-header", className)}>
       <div>
         {eyebrow ? <span className="hs-panel-header__eyebrow">{eyebrow}</span> : null}
-        <h2>{title}</h2>
+        <h2 id={titleId}>{title}</h2>
       </div>
       {actions ? <div className="hs-panel-header__actions">{actions}</div> : null}
     </header>

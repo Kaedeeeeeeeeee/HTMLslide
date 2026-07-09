@@ -187,6 +187,18 @@ const filterTabs: Array<{ id: QaFilter; label: string }> = [
   { id: "suggestion", label: qaSeverityLabels.suggestion }
 ];
 
+const qaPanelHeadingId = "qa-panel-heading";
+const qaPanelStatusId = "qa-panel-status";
+
+function domIdSegment(value: string): string {
+  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9_-]+/gu, "-").replace(/^-+|-+$/gu, "");
+  return normalized.length > 0 ? normalized : "item";
+}
+
+function qaIssueDomId(issue: QaIssue, suffix: string): string {
+  return `qa-issue-${domIdSegment(issue.id)}-${suffix}`;
+}
+
 function slideStatusTone(status: SlideSummary["status"]): "success" | "warning" | "danger" {
   if (status === "ready") {
     return "success";
@@ -1451,75 +1463,122 @@ function QaPanel({
   onQaFilterChange,
   qaFilter
 }: QaPanelProps): ReactNode {
+  const totalIssueCount = issueCounts.error + issueCounts.warning + issueCounts.suggestion;
+  const issueNoun = issues.length === 1 ? "issue" : "issues";
+  const filterLabel = qaFilter === "all" ? "all severities" : qaFilter;
+  const statusSummary = issues.length === 0
+    ? `QA Panel shows no ${filterLabel} issues.`
+    : `QA Panel shows ${issues.length} ${filterLabel} ${issueNoun}: ${issueCounts.error} errors, ${issueCounts.warning} warnings, and ${issueCounts.suggestion} suggestions.`;
+
   return (
-    <section className="inspector-section qa-panel">
+    <section
+      aria-describedby={qaPanelStatusId}
+      aria-labelledby={qaPanelHeadingId}
+      className="inspector-section qa-panel"
+      role="region"
+    >
       <PanelHeader
         actions={<StatusPill tone={issueCounts.error > 0 ? "danger" : "success"}>{issueCounts.error} errors</StatusPill>}
+        titleId={qaPanelHeadingId}
         title="QA Panel"
       />
+      <p
+        aria-atomic="true"
+        aria-label="QA result summary"
+        aria-live="polite"
+        className="sr-only"
+        id={qaPanelStatusId}
+        role="status"
+      >
+        {statusSummary}
+      </p>
       <SegmentedTabs
         activeTab={qaFilter}
         label="QA severity filter"
         onChange={onQaFilterChange}
         tabs={filterTabs.map((tab) => ({
           ...tab,
-          count: tab.id === "all" ? issues.length : issueCounts[tab.id]
+          count: tab.id === "all" ? totalIssueCount : issueCounts[tab.id]
         }))}
       />
-      <div className="qa-issue-list">
-        {issues.length === 0 ? (
+      {issues.length === 0 ? (
+        <div className="qa-issue-list">
           <div className="empty-state">
             <CheckCircle2 />
             <strong>No issues in this filter</strong>
             <span>Run Check to refresh the report.</span>
           </div>
-        ) : (
-          issues.map((issue) => (
-            <article
-              className="qa-issue"
-              key={issue.id}
-            >
-              <div className="qa-issue__thumb">{issue.slideId.replace("slide-", "")}</div>
-              <div>
-                <StatusPill tone={qaSeverityTones[issue.severity]}>{issue.severity}</StatusPill>
-                <h3>{issue.type}</h3>
-                <p>{issue.message}</p>
-                <dl>
-                  <div>
-                    <dt>Location</dt>
-                    <dd>{issue.selector}</dd>
-                  </div>
-                  <div>
-                    <dt>Measurement</dt>
-                    <dd>{issue.measurement}</dd>
-                  </div>
-                </dl>
-                <small>{issue.suggestedFix}</small>
-                <div className="qa-issue__actions">
-                  <Button
-                    size="sm"
-                    variant="primary"
-                  >
-                    Fix with AI
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                  >
-                    Ignore once
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                  >
-                    Ignore rule
-                  </Button>
+        </div>
+      ) : (
+        <div
+          aria-label="QA issues"
+          className="qa-issue-list"
+          role="list"
+        >
+          {issues.map((issue) => {
+            const titleId = qaIssueDomId(issue, "title");
+            const messageId = qaIssueDomId(issue, "message");
+            const selectorId = qaIssueDomId(issue, "selector");
+            const measurementId = qaIssueDomId(issue, "measurement");
+            const fixId = qaIssueDomId(issue, "fix");
+            return (
+              <article
+                aria-describedby={`${messageId} ${selectorId} ${measurementId} ${fixId}`}
+                aria-labelledby={titleId}
+                className="qa-issue"
+                key={issue.id}
+                role="listitem"
+              >
+                <div
+                  aria-hidden="true"
+                  className="qa-issue__thumb"
+                >
+                  {issue.slideId.replace("slide-", "")}
                 </div>
-              </div>
-            </article>
-          ))
-        )}
-      </div>
+                <div>
+                  <StatusPill tone={qaSeverityTones[issue.severity]}>{issue.severity}</StatusPill>
+                  <h3 id={titleId}>{issue.type}</h3>
+                  <p id={messageId}>{issue.message}</p>
+                  <dl>
+                    <div>
+                      <dt>Location</dt>
+                      <dd id={selectorId}>{issue.selector}</dd>
+                    </div>
+                    <div>
+                      <dt>Measurement</dt>
+                      <dd id={measurementId}>{issue.measurement}</dd>
+                    </div>
+                  </dl>
+                  <small id={fixId}>{issue.suggestedFix}</small>
+                  <div className="qa-issue__actions">
+                    <Button
+                      aria-label={`Fix ${issue.type} with AI`}
+                      size="sm"
+                      variant="primary"
+                    >
+                      Fix with AI
+                    </Button>
+                    <Button
+                      aria-label={`Ignore ${issue.type} once`}
+                      size="sm"
+                      variant="ghost"
+                    >
+                      Ignore once
+                    </Button>
+                    <Button
+                      aria-label={`Ignore ${issue.type} rule`}
+                      size="sm"
+                      variant="ghost"
+                    >
+                      Ignore rule
+                    </Button>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }

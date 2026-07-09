@@ -1736,9 +1736,11 @@ const projectRoot = requireArg(args, "--project");
 const promptFile = requireArg(args, "--prompt-file");
 const manifestFile = requireArg(args, "--writes-manifest");
 const slideFile = path.join(projectRoot, "slides", "001-title.html");
+console.log("external stream started");
 fs.readFileSync(promptFile, "utf8");
 fs.writeFileSync(slideFile, '<section class="slide" data-slide-id="001-title"><h1>Edited externally</h1><ul><li>External point</li></ul></section>\\n');
 fs.writeFileSync(manifestFile, JSON.stringify({ writes: ["slides/001-title.html"] }));
+console.error("external stream wrote manifest");
 function readPairs(argv) {
   const pairs = new Map();
   for (let index = 0; index < argv.length; index += 2) {
@@ -1834,6 +1836,26 @@ function requireArg(args, name) {
       deleted: 0
     });
     expect(result.project?.slides[0]?.html).toContain("Edited externally");
+    expect(result.logs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          level: "info",
+          message: "external stream started",
+          metadata: {
+            stream: "stdout"
+          },
+          stage: "build"
+        }),
+        expect.objectContaining({
+          level: "warning",
+          message: "external stream wrote manifest",
+          metadata: {
+            stream: "stderr"
+          },
+          stage: "build"
+        })
+      ])
+    );
     expect(calls).toEqual([
       ["check", projectPath, "--json"],
       ["export", projectPath, "--json"]

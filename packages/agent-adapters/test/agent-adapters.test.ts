@@ -55,6 +55,49 @@ describe("external agent detector helpers", () => {
     expect(result.version).toBe("codex 1.2.3");
     expect(result.failure?.type).toBe("not-authenticated");
   });
+
+  it("detects ready fake Claude and Codex commands without real CLI logins", async () => {
+    const invocations: string[] = [];
+    const runner: CommandRunner = async (invocation) => {
+      invocations.push([invocation.command, ...invocation.args].join(" "));
+
+      return invocation.args.includes("--version")
+        ? {
+            exitCode: 0,
+            stdout: `${invocation.command} 9.9.9\n`,
+            stderr: ""
+          }
+        : {
+            exitCode: 0,
+            stdout: "authenticated\n",
+            stderr: ""
+          };
+    };
+
+    const claude = await detectClaudeCli({ command: "fake-claude", runner });
+    const codex = await detectCodexCli({ command: "fake-codex", runner });
+
+    expect(claude).toMatchObject({
+      authenticated: true,
+      command: "fake-claude",
+      installed: true,
+      status: "ready",
+      version: "fake-claude 9.9.9"
+    });
+    expect(codex).toMatchObject({
+      authenticated: true,
+      command: "fake-codex",
+      installed: true,
+      status: "ready",
+      version: "fake-codex 9.9.9"
+    });
+    expect(invocations).toEqual([
+      "fake-claude --version",
+      "fake-claude auth status",
+      "fake-codex --version",
+      "fake-codex auth status"
+    ]);
+  });
 });
 
 describe("generic external agent adapter", () => {
@@ -218,6 +261,41 @@ setInterval(() => undefined, 1000);
     expect(result.failure.type).toBe("run-timeout");
   });
 
+  it("streams stdout and stderr chunks from a long-running fake command", async () => {
+    const project = await createFakeProject("stream");
+    const scriptFile = await writeFakeAgentScript(
+      project.projectRoot,
+      "stream",
+      `
+process.stdout.write("stream:start\\n");
+setTimeout(() => process.stderr.write("stream:progress\\n"), 15);
+setTimeout(() => process.stdout.write("stream:done\\n"), 30);
+setTimeout(() => process.exit(0), 45);
+`
+    );
+    const chunks: Array<{ stream: "stdout" | "stderr"; text: string }> = [];
+
+    const result = await runGenericAgentAdapter({
+      adapter: createFakeAdapter(nodeCommandTemplate()),
+      projectRoot: project.projectRoot,
+      promptFile: project.promptFile,
+      onOutput: (chunk) => chunks.push(chunk),
+      variables: {
+        scriptFile,
+        writeManifest: project.writeManifest
+      }
+    });
+
+    expect(result.ok).toBe(true);
+    expect(chunks).toEqual([
+      { stream: "stdout", text: "stream:start\n" },
+      { stream: "stderr", text: "stream:progress\n" },
+      { stream: "stdout", text: "stream:done\n" }
+    ]);
+    expect(result.stdout).toBe("stream:start\nstream:done\n");
+    expect(result.stderr).toBe("stream:progress\n");
+  });
+
   it("cancels long-running fake commands", async () => {
     const project = await createFakeProject("cancel");
     const scriptFile = await writeFakeAgentScript(
@@ -296,6 +374,60 @@ function requireArg(args, name) {
     }
     expect(result.failure.type).toBe("forbidden-file-write");
     expect(result.failure.path).toBe(path.resolve(project.projectRoot, "..", "outside-project.txt"));
+  });
+
+  it("rejects generated artifact and private runtime writes reported by fake commands", async () => {
+    for (const [name, reportedWrite] of [
+      ["artifact", "exports/deck.pdf"],
+      ["runtime", ".htmlslide/cache/file.txt"]
+    ] as const) {
+      const project = await createFakeProject(`forbidden-${name}`);
+      const scriptFile = await writeFakeAgentScript(
+        project.projectRoot,
+        name,
+        `
+import fs from "node:fs";
+import path from "node:path";
+const args = readPairs(process.argv.slice(2));
+const projectRoot = requireArg(args, "--project");
+const manifestFile = requireArg(args, "--writes-manifest");
+const targetFile = path.join(projectRoot, ...${JSON.stringify(reportedWrite.split("/"))});
+fs.mkdirSync(path.dirname(targetFile), { recursive: true });
+fs.writeFileSync(targetFile, "not allowed");
+fs.writeFileSync(manifestFile, JSON.stringify({ writes: [${JSON.stringify(reportedWrite)}] }));
+function readPairs(argv) {
+  const pairs = new Map();
+  for (let index = 0; index < argv.length; index += 2) {
+    pairs.set(argv[index], argv[index + 1]);
+  }
+  return pairs;
+}
+function requireArg(args, name) {
+  const value = args.get(name);
+  if (!value) throw new Error("Missing " + name);
+  return value;
+}
+`
+      );
+
+      const result = await runGenericAgentAdapter({
+        adapter: createFakeAdapter(nodeCommandTemplate()),
+        projectRoot: project.projectRoot,
+        promptFile: project.promptFile,
+        variables: {
+          scriptFile,
+          writeManifest: project.writeManifest
+        },
+        readReportedFileWrites: () => readJsonFileWriteManifest(project.projectRoot, project.writeManifest)
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        throw new Error("Expected forbidden file write failure.");
+      }
+      expect(result.failure.type).toBe("forbidden-file-write");
+      expect(result.failure.path).toBe(path.join(project.projectRoot, ...reportedWrite.split("/")));
+    }
   });
 
   it("rejects reported writes outside editable deck source roots", async () => {

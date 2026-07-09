@@ -30,6 +30,10 @@ Each placeholder value renders as one argv token, even when it contains spaces. 
 
 Adapters must not execute generated shell text. Tests should use injected runners or controlled Node fake commands in temporary project directories.
 
+Generic command runs can stream raw stdout/stderr chunks through the adapter while still returning the complete
+stdout/stderr buffers when the process exits. The desktop external-agent path records those chunks as build-stage run
+logs so long-running local commands can surface progress before check/export gates run.
+
 ## Desktop Generic Command Runs
 
 The desktop app can run a saved Generic command from Electron main for an opened local deck project. The renderer sends only the project path and user brief; Electron reads the saved AI Engine settings, writes `.htmlslide/runs/<runId>/prompt.md` and `.htmlslide/runs/<runId>/writes.json`, then invokes the Generic command with project-local `{{projectPath}}`, `{{projectRoot}}`, `{{promptFile}}`, and `{{writeManifest}}` placeholders.

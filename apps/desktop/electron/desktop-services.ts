@@ -1918,6 +1918,16 @@ export async function runDesktopExternalAgent(
     variables: {
       writeManifest
     },
+    onOutput: (chunk) => {
+      const message = chunk.text.trim();
+      if (message.length === 0) {
+        return;
+      }
+
+      addLog(chunk.stream === "stdout" ? "info" : "warning", message, "build", {
+        stream: chunk.stream
+      });
+    },
     runner: options.agentRunner,
     timeoutMs: options.timeoutMs,
     readReportedFileWrites: () => readJsonFileWriteManifest(projectPath, writeManifest)

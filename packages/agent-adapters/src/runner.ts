@@ -60,9 +60,17 @@ export function runCommand(invocation: CommandInvocation): Promise<CommandResult
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
       stdout += chunk;
+      invocation.onOutput?.({
+        stream: "stdout",
+        text: chunk
+      });
     });
     child.stderr.on("data", (chunk: string) => {
       stderr += chunk;
+      invocation.onOutput?.({
+        stream: "stderr",
+        text: chunk
+      });
     });
 
     child.once("error", (error) => {

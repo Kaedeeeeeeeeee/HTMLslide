@@ -46,6 +46,12 @@ export interface CommandInvocation {
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly timeoutMs?: number;
   readonly signal?: AbortSignal;
+  readonly onOutput?: (chunk: CommandOutputChunk) => void;
+}
+
+export interface CommandOutputChunk {
+  readonly stream: "stdout" | "stderr";
+  readonly text: string;
 }
 
 export interface CommandResult {
@@ -80,6 +86,7 @@ export interface GenericAgentRunOptions {
   readonly timeoutMs?: number;
   readonly signal?: AbortSignal;
   readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly onOutput?: (chunk: CommandOutputChunk) => void;
   readonly readReportedFileWrites?: () => Promise<readonly string[]>;
 }
 

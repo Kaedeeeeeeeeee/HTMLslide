@@ -5,7 +5,10 @@ import {
   createMockPassedCheck,
   createMockProvider,
   runAgent,
-  startAgentRun
+  startAgentRun,
+  type AgentRunStage,
+  type ModelRequest,
+  type ModelResponse
 } from "../src/index.js";
 
 const projectRoot = "/tmp/htmlslide-agent-project";
@@ -60,6 +63,55 @@ describe("agent orchestrator", () => {
     expect(result.outputs.selectedVisualDirectionId).toBe("direction-systems");
     expect(result.events.some((event) => event.type === "user-choice-requested")).toBe(true);
     expect(result.events.some((event) => event.type === "user-choice-selected")).toBe(true);
+  });
+
+  it("passes structured outputs forward between model stages", async () => {
+    const baseProvider = createMockProvider({
+      checkResults: [createMockPassedCheck()]
+    });
+    const requests: Array<{ stage: AgentRunStage; input: unknown }> = [];
+    const provider = {
+      ...baseProvider,
+      validateCredentials: () => baseProvider.validateCredentials(),
+      complete: async (request: ModelRequest): Promise<ModelResponse> => {
+        requests.push({
+          stage: request.stage,
+          input: request.input
+        });
+        return baseProvider.complete(request);
+      }
+    };
+
+    const result = await runAgent(
+      {
+        projectRoot,
+        brief: "Check model handoffs.",
+        chooseVisualDirection: () => "direction-systems",
+        provider,
+        runId: "run-stage-handoffs"
+      },
+      {
+        clock: fixedClock
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    expect(requests.find((request) => request.stage === "outline")?.input).toMatchObject({
+      brief: result.outputs.brief
+    });
+    expect(requests.find((request) => request.stage === "visual-direction")?.input).toMatchObject({
+      brief: result.outputs.brief,
+      outline: result.outputs.outline
+    });
+    expect(requests.find((request) => request.stage === "build")?.input).toMatchObject({
+      brief: result.outputs.brief,
+      outline: result.outputs.outline,
+      selectedVisualDirectionId: "direction-systems"
+    });
+    expect(requests.find((request) => request.stage === "check")?.input).toMatchObject({
+      build: result.outputs.build,
+      repairs: []
+    });
   });
 
   it("runs the full mock build, check, repair, export, and review flow", async () => {

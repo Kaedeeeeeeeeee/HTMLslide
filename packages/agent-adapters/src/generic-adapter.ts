@@ -39,6 +39,7 @@ export async function runGenericAgentAdapter(options: GenericAgentRunOptions): P
       args: renderedCommand.args,
       cwd: projectRoot,
       env: options.env,
+      onOutput: options.onOutput,
       signal: options.signal,
       timeoutMs: options.timeoutMs ?? options.adapter.timeoutMs
     });

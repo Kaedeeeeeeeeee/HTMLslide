@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { buildArtifactMetadata } from "./artifact-metadata.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, "..", "..");
@@ -92,12 +93,35 @@ async function readLatestManifest() {
       fail(`Alpha artifact name must include unsigned-alpha: ${artifactPath}`);
     }
   }
+  await assertArtifactMetadata(manifest, [dmgPath, zipPath], manifestPath);
 
   return {
     dmgPath,
     manifestPath,
     zipPath
   };
+}
+
+async function assertArtifactMetadata(manifest, artifactPaths, manifestPath) {
+  const expectedMetadata = await buildArtifactMetadata(artifactPaths);
+  const actualMetadata = Array.isArray(manifest.artifactMetadata) ? manifest.artifactMetadata : [];
+
+  for (const expected of expectedMetadata) {
+    const actual = actualMetadata.find((entry) => entry?.path === expected.path);
+    if (
+      !actual ||
+      actual.fileName !== expected.fileName ||
+      actual.sizeBytes !== expected.sizeBytes ||
+      actual.sha256 !== expected.sha256 ||
+      !/^[a-f0-9]{64}$/u.test(String(actual.sha256 ?? ""))
+    ) {
+      fail(
+        `Alpha manifest artifact metadata does not match ${expected.path}: ${manifestPath}\n` +
+        `expected: ${JSON.stringify(expected, null, 2)}\n` +
+        `actual: ${JSON.stringify(actual ?? null, null, 2)}`
+      );
+    }
+  }
 }
 
 function plistValue(plistPath, key) {

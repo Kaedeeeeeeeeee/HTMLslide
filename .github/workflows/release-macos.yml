@@ -173,15 +173,21 @@ jobs:
           fi
 
           node - "$manifest" <<'NODE'
+          const crypto = require('crypto');
           const fs = require('fs');
           const path = require('path');
           const manifest = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
           const artifacts = Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
+          const artifactMetadata = Array.isArray(manifest.artifactMetadata) ? manifest.artifactMetadata : [];
           const dmg = artifacts.find((artifact) => artifact.endsWith('.dmg'));
 
           function fail(message) {
             console.error(`::error title=Invalid release manifest::${message}`);
             process.exit(1);
+          }
+
+          function sha256(filePath) {
+            return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
           }
 
           if (manifest.channel !== 'release') fail(`channel must be release, got ${manifest.channel}`);
@@ -191,6 +197,12 @@ jobs:
           if (manifest.bundleIdentifier !== 'app.htmlslide') fail(`bundleIdentifier must be app.htmlslide, got ${manifest.bundleIdentifier}`);
           if (!dmg || !fs.existsSync(dmg)) fail(`release DMG is missing from artifacts: ${JSON.stringify(artifacts)}`);
           if (!path.basename(dmg).includes('signed-notarized')) fail(`release DMG name must include signed-notarized: ${dmg}`);
+          const dmgMetadata = artifactMetadata.find((entry) => entry && entry.path === dmg);
+          if (!dmgMetadata) fail(`release manifest is missing artifact metadata for ${dmg}`);
+          if (dmgMetadata.fileName !== path.basename(dmg)) fail(`release DMG metadata filename mismatch: ${JSON.stringify(dmgMetadata)}`);
+          if (dmgMetadata.sizeBytes !== fs.statSync(dmg).size) fail(`release DMG metadata size mismatch: ${JSON.stringify(dmgMetadata)}`);
+          if (dmgMetadata.sha256 !== sha256(dmg)) fail(`release DMG metadata sha256 mismatch: ${JSON.stringify(dmgMetadata)}`);
+          if (!/^[a-f0-9]{64}$/.test(String(dmgMetadata.sha256 || ''))) fail(`release DMG metadata sha256 is invalid: ${JSON.stringify(dmgMetadata)}`);
           NODE
 
       - name: Collect release artifacts

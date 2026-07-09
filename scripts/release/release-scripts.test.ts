@@ -1,8 +1,11 @@
 import { execFile } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { buildArtifactMetadata } from "./artifact-metadata.mjs";
 import { renderChecklist } from "./create-rc-acceptance.mjs";
 import { renderReleaseNotes } from "./create-release-notes.mjs";
 
@@ -11,6 +14,27 @@ const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(currentDir, "..", "..");
 
 describe("release evidence scripts", () => {
+  it("builds deterministic artifact integrity metadata", async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-artifact-metadata-"));
+    try {
+      const artifactPath = path.join(tempRoot, "HTMLslide-test-artifact.dmg");
+      await writeFile(artifactPath, "HTMLslide release artifact\n", "utf8");
+
+      const metadata = await buildArtifactMetadata([artifactPath]);
+
+      expect(metadata).toEqual([
+        {
+          path: artifactPath,
+          fileName: "HTMLslide-test-artifact.dmg",
+          sizeBytes: 27,
+          sha256: "4b920746baa5375f6d5124c6efe25b116502b39c9b6295706faaa3761890e266"
+        }
+      ]);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("renders alpha RC checklists with run-bound metadata and manual evidence sections", () => {
     const checklist = renderChecklist({
       artifactUrl: "https://example.test/htmlslide-alpha.dmg",

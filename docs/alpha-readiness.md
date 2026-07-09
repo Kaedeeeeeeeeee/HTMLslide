@@ -24,14 +24,14 @@ These gates are expected before each alpha candidate:
 | Security baseline | Source secret scan and high-severity dependency audit pass. | `pnpm security:check` |
 | Desktop UX smoke | New Deck, Project Library, QA, export, presenter, CLI integration, and official skills flows pass in Electron. | `pnpm e2e:desktop` |
 | Desktop accessibility smoke | First-run, Project Library, New Deck gating, QA Panel, presenter, Settings, and official skills chrome pass WCAG A/AA axe checks plus role semantics. | `pnpm e2e:desktop:a11y`, `CI` |
-| Alpha package | Unsigned DMG/ZIP/manifest plus a prefilled RC acceptance template are created and smoked from the packaged app, packaged CLI, and packaged MCP diagnostics. | `pnpm verify:package:alpha`, `Alpha Package` |
+| Alpha package | Unsigned DMG/ZIP/manifest plus artifact SHA-256 metadata and a prefilled RC acceptance template are created and smoked from the packaged app, packaged CLI, and packaged MCP diagnostics. | `pnpm verify:package:alpha`, `Alpha Package` |
 | Remote CI | Main branch CI and Docs Pages complete for the candidate commit. | GitHub Actions `CI`, `Docs Pages` |
 
 ## Automated Alpha Coverage
 
 | Acceptance item | Current automated coverage |
 | --- | --- |
-| DMG can be produced | `pnpm package:alpha` writes unsigned alpha DMG, ZIP, and manifest. |
+| DMG can be produced | `pnpm package:alpha` writes unsigned alpha DMG, ZIP, and manifest with byte-size and SHA-256 artifact metadata. |
 | App can launch | Package smoke launches the packaged app in isolated user data. |
 | CLI shim can install | Electron E2E and package smoke cover first-run CLI provisioning and uninstall. |
 | `htmlslide doctor` passes | CLI tests and package smoke cover doctor through the packaged CLI shim. |

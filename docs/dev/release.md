@@ -42,6 +42,7 @@ The script runs the desktop build and creates current-architecture macOS alpha a
 - `dist/alpha/HTMLslide-<version>-unsigned-alpha-<arch>.json`
 
 Alpha packaging uses the installed Electron macOS runtime and `hdiutil`/`ditto`, so it must run on macOS. The workflow sets `CSC_IDENTITY_AUTO_DISCOVERY=false` so electron-builder-style tooling does not silently sign with a local Developer ID identity.
+The JSON manifest records the artifact paths plus per-artifact filename, byte size, and SHA-256 digest. Package smoke recomputes those values against the DMG and ZIP before launching the app.
 
 The alpha bundle may be ad-hoc signed to keep the local app bundle internally valid, but it is not Developer ID signed, notarized, or stapled. Treat it as an internal/tester artifact, not a production release. Testers may see Gatekeeper warnings and may need to right-click Open for the first launch.
 
@@ -99,6 +100,7 @@ The release script uses `build/package/release-macos.json` and writes:
 - `dist/release/HTMLslide-<version>-signed-notarized-<arch>.json`
 
 The release workflow also writes `release-artifacts/RELEASE_NOTES.md` for tag builds and uses it as the GitHub Release body. Run the same generator locally when preparing a candidate:
+The release manifest uses the same per-artifact filename, byte size, and SHA-256 metadata as alpha builds.
 
 ```bash
 pnpm release:notes -- --tag vX.Y.Z --output dist/release/RELEASE_NOTES.md

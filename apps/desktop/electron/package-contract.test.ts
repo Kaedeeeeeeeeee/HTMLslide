@@ -66,6 +66,8 @@ describe("macOS alpha packaging contract", () => {
     expect(packageScript).toContain("notarytool");
     expect(packageScript).toContain("stapler");
     expect(packageScript).toContain("notarized: notarization.notarized");
+    expect(packageScript).toContain("artifactMetadata");
+    expect(packageScript).toContain("buildArtifactMetadata(artifacts)");
   });
 
   it("keeps signed release artifact metadata explicit", async () => {
@@ -114,6 +116,8 @@ describe("macOS alpha packaging contract", () => {
     expect(smokeScript).toContain("HTMLSLIDE_SMOKE_QUIT_AFTER_READY");
     expect(smokeScript).toContain("unsigned-alpha");
     expect(smokeScript).toContain("manifest.notarized !== false");
+    expect(smokeScript).toContain("assertArtifactMetadata");
+    expect(smokeScript).toContain("buildArtifactMetadata");
   });
 
   it("keeps the alpha packaging workflow gated and artifact-producing", async () => {
@@ -170,6 +174,9 @@ describe("macOS alpha packaging contract", () => {
     expect(workflow).toContain("pnpm package:release:macos");
     expect(workflow).toContain("manifest.notarized !== true");
     expect(workflow).toContain("manifest.stapled !== true");
+    expect(workflow).toContain("manifest.artifactMetadata");
+    expect(workflow).toContain("crypto.createHash('sha256')");
+    expect(workflow).toContain("release DMG metadata sha256 mismatch");
     expect(workflow).toContain("pnpm rc:checklist --");
     expect(workflow).toContain("--channel release");
     expect(workflow).toContain("HTMLslide-release-rc-acceptance.md");

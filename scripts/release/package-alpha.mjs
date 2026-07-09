@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { buildArtifactMetadata } from "./artifact-metadata.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, "..", "..");
@@ -473,6 +474,7 @@ const notarization = notarizeDmg(dmgPath, config);
 const zipPath = config.createZip === false ? undefined : createZip({ appPath, artifactBaseName, outputDir });
 const manifestPath = path.join(outputDir, `${artifactBaseName}.json`);
 const artifacts = [dmgPath, zipPath].filter(Boolean);
+const artifactMetadata = await buildArtifactMetadata(artifacts);
 
 await writeFile(
   manifestPath,
@@ -487,7 +489,8 @@ await writeFile(
       signing,
       notarized: notarization.notarized,
       stapled: notarization.stapled,
-      artifacts
+      artifacts,
+      artifactMetadata
     },
     null,
     2

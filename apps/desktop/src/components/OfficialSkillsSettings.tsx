@@ -150,6 +150,7 @@ export function OfficialSkillsSettingsPanel({
                       <Button
                         aria-controls={detailsId}
                         aria-expanded={expanded}
+                        aria-label={`${expanded ? "Close" : "Inspect"} ${skill.name}`}
                         onClick={() => setExpandedSkillName(expanded ? undefined : skill.name)}
                         size="sm"
                         variant="quiet"

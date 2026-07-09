@@ -119,6 +119,8 @@ svg {
 .setup-rail {
   display: grid;
   gap: 10px;
+  list-style: none;
+  margin: 0;
   padding: 14px;
 }
 
@@ -136,6 +138,7 @@ svg {
 
 .setup-step {
   align-items: center;
+  cursor: default;
   display: grid;
   gap: 12px;
   grid-template-columns: 34px minmax(0, 1fr);

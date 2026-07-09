@@ -341,13 +341,23 @@ test.describe("HTMLslide desktop smoke", () => {
     const page = await electronApp.firstWindow();
     await page.waitForLoadState("domcontentloaded");
     await expect(page.getByRole("heading", { name: "Welcome to HTMLslide" })).toBeVisible();
+    const setupProgress = page.getByRole("list", { name: "Setup progress" });
+    await expect(setupProgress.getByRole("listitem", { name: "Welcome to HTMLslide, current step" })).toHaveAttribute("aria-current", "step");
+    await expect(setupProgress.getByRole("button")).toHaveCount(0);
     await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
-    await page.locator(".library-nav").getByRole("button", { name: "Templates", exact: true }).click();
+    const libraryNav = page.getByRole("navigation", { name: "Project library" });
+    const recentNav = libraryNav.getByRole("button", { name: "Recent", exact: true });
+    const templatesNav = libraryNav.getByRole("button", { name: "Templates", exact: true });
+    await expect(recentNav).toHaveAttribute("aria-current", "page");
+    await templatesNav.click();
     await expect(page.getByRole("heading", { name: "Templates", exact: true })).toBeVisible();
+    await expect(templatesNav).toHaveAttribute("aria-current", "page");
+    await expect(recentNav).not.toHaveAttribute("aria-current", "page");
     await expect(page.getByText("Two-slide local-first project")).toBeVisible();
-    await page.locator(".library-nav").getByRole("button", { name: "Recent", exact: true }).click();
+    await recentNav.click();
     await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+    await expect(recentNav).toHaveAttribute("aria-current", "page");
     await page.locator(".library-main").getByRole("button", { name: "New Deck", exact: true }).first().click();
 
     const newDeckPanel = page.locator(".new-deck-panel");
@@ -558,13 +568,13 @@ test.describe("HTMLslide desktop smoke", () => {
 
     const validCard = page.locator("article.project-card").filter({ hasText: "Recent Valid Deck" });
     await expect(validCard).toBeVisible();
-    await validCard.getByRole("button", { name: "Remove", exact: true }).click();
+    await validCard.getByRole("button", { name: "Remove Recent Valid Deck", exact: true }).click();
     await expect(validCard).toHaveCount(0);
     expect(await readFile(path.join(validProjectPath, "deck.json"), "utf8")).toContain("Valid Full Deck");
 
     const missingCard = page.locator("article.project-card").filter({ hasText: "Recent Missing Deck" });
     await expect(missingCard).toBeVisible();
-    await missingCard.getByRole("button", { name: "Open", exact: true }).click();
+    await missingCard.getByRole("button", { name: "Open Recent Missing Deck", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
     await expect(page.locator("article.project-card").filter({ hasText: "Missing files" })).toBeVisible();
     await expectNoFrameworkOverlay(page);
@@ -952,7 +962,10 @@ test.describe("HTMLslide desktop smoke", () => {
 
     await diffReview.getByRole("button", { name: "Close diff review", exact: true }).click();
     await expect(diffReview).toBeHidden();
-    await page.locator(".command-bar__controls").getByRole("button", { name: "View diff", exact: true }).click();
+    const viewDiffButton = page.locator(".command-bar__controls").getByRole("button", { name: "View diff", exact: true });
+    await expect(viewDiffButton).toHaveAttribute("aria-pressed", "false");
+    await viewDiffButton.click();
+    await expect(viewDiffButton).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByRole("heading", { name: "Review changes" })).toBeVisible();
 
     page.once("dialog", async (dialog) => {
@@ -999,6 +1012,9 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible({
       timeout: 30_000
     });
+    await expect(page.getByRole("button", { name: "Sort slides", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Fit preview", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Open logs", exact: true })).toBeDisabled();
 
     await page.locator(".workspace-toolbar").getByRole("button", { name: "Check", exact: true }).click();
     await expect(page.getByText(/check: Check passed/)).toBeVisible({ timeout: 30_000 });
@@ -1170,9 +1186,13 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(presenter.getByText("1 / 2")).toBeVisible();
     await expect(currentSlideHeading).toHaveText("HTML as source");
 
-    await presenter.getByRole("button", { name: "Pause timer", exact: true }).click();
+    const pauseTimerButton = presenter.getByRole("button", { name: "Pause timer", exact: true });
+    await expect(pauseTimerButton).toHaveAttribute("aria-pressed", "false");
+    await pauseTimerButton.click();
     await expect(presenter.getByText("paused")).toBeVisible();
-    await presenter.getByRole("button", { name: "Resume timer", exact: true }).click();
+    const resumeTimerButton = presenter.getByRole("button", { name: "Resume timer", exact: true });
+    await expect(resumeTimerButton).toHaveAttribute("aria-pressed", "true");
+    await resumeTimerButton.click();
     await expect(presenter.getByText("running")).toBeVisible();
 
     await presenter.locator(".presenter-current").click();
@@ -1470,7 +1490,8 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(antiAiSlopSkill).toBeVisible();
     await expect(skillsPanel.getByRole("listitem", { name: "deck-repair missing" })).toBeVisible();
     await expect(skillsPanel.getByRole("listitem", { name: "deck-architect missing" })).toHaveCount(0);
-    await antiAiSlopSkill.getByRole("button", { name: "Inspect", exact: true }).click();
+    await antiAiSlopSkill.getByRole("button", { name: "Inspect anti-ai-slop", exact: true }).click();
+    await expect(antiAiSlopSkill.getByRole("button", { name: "Close anti-ai-slop", exact: true })).toBeVisible();
     const antiAiSlopInspection = antiAiSlopSkill.locator(".official-skill-inspection");
     await expect(antiAiSlopInspection.getByText("Author", { exact: true })).toBeVisible();
     await expect(antiAiSlopInspection.getByText("HTMLslide", { exact: true })).toBeVisible();

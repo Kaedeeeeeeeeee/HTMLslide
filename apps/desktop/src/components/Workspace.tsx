@@ -1211,7 +1211,7 @@ function Filmstrip({
   return (
     <aside className="filmstrip">
       <PanelHeader
-        actions={<IconButton icon={<ChevronDown />} label="Sort slides" />}
+        actions={<IconButton disabled icon={<ChevronDown />} label="Sort slides" />}
         title="Slides"
       />
       <div className="filmstrip-list">
@@ -1265,6 +1265,7 @@ function PreviewCanvas({ issueCount, slide }: PreviewCanvasProps): ReactNode {
         <div className="preview-actions">
           <StatusPill tone={slideStatusTone(slide.status)}>{slide.status.replace("-", " ")}</StatusPill>
           <IconButton
+            disabled
             icon={<Maximize2 />}
             label="Fit preview"
           />
@@ -1737,6 +1738,7 @@ function AgentRunConsole({
             selected={Boolean(diffReview?.open)}
           />
           <IconButton
+            disabled
             icon={<TerminalSquare />}
             label="Open logs"
           />

@@ -41,16 +41,18 @@ export interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement>
 }
 
 export function IconButton({
+  "aria-pressed": ariaPressed,
   className,
   icon,
   label,
-  selected = false,
+  selected,
   type = "button",
   ...props
 }: IconButtonProps): ReactNode {
   return (
     <button
       aria-label={label}
+      aria-pressed={ariaPressed ?? (selected === undefined ? undefined : selected)}
       className={cn("hs-icon-button", selected && "hs-icon-button--selected", className)}
       title={label}
       type={type}

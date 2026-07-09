@@ -178,6 +178,7 @@ export function ProjectLibrary({
         <nav aria-label="Project library">
           {navItems.map((item) => (
             <button
+              aria-current={activeSection === item.id ? "page" : undefined}
               className={activeSection === item.id ? "library-nav__item is-selected" : "library-nav__item"}
               key={item.label}
               onClick={() => onLibrarySectionChange(item.id)}
@@ -679,6 +680,7 @@ function RecentProjects({
                 <span>Last opened {project.lastOpened}</span>
                 <div className="project-card__actions">
                   <Button
+                    aria-label={`Remove ${project.title}`}
                     icon={<Trash2 />}
                     onClick={() => onRemoveProject(project.id)}
                     size="sm"
@@ -687,6 +689,7 @@ function RecentProjects({
                     Remove
                   </Button>
                   <Button
+                    aria-label={`Open ${project.title}`}
                     onClick={() => onOpenProject(project.id)}
                     size="sm"
                     variant={project.status === "Missing files" ? "secondary" : "primary"}

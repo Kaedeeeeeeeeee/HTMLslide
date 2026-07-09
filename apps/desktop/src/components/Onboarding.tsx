@@ -60,17 +60,21 @@ export function Onboarding({
         </div>
       </section>
 
-      <aside className="setup-rail">
+      <ol
+        aria-label="Setup progress"
+        className="setup-rail"
+      >
         {steps.map((step, index) => {
           const StepIcon = stepIcons[index] ?? Settings2;
           const done = index < activeStepIndex;
           const active = index === activeStepIndex;
+          const stateLabel = active ? "current step" : done ? "completed step" : "upcoming step";
           return (
-            <button
+            <li
+              aria-label={`${step.title}, ${stateLabel}`}
               aria-current={active ? "step" : undefined}
               className={active ? "setup-step is-active" : "setup-step"}
               key={step.id}
-              type="button"
             >
               <span className={done ? "setup-step__icon is-done" : "setup-step__icon"}>
                 {done ? <Check /> : <StepIcon />}
@@ -79,10 +83,10 @@ export function Onboarding({
                 <strong>{step.title}</strong>
                 <small>{step.optionalAction}</small>
               </span>
-            </button>
+            </li>
           );
         })}
-      </aside>
+      </ol>
     </main>
   );
 }

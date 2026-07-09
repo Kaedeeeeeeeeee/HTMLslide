@@ -43,7 +43,7 @@ jobs:
           node <<'NODE'
           const fs = require('fs');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          const requiredScripts = ['docs:check', 'docs:build', 'version:check', 'lint', 'typecheck', 'test', 'test:visual:browser', 'perf:smoke', 'security:check', 'build', 'e2e:desktop', 'package:alpha', 'smoke:package:alpha', 'rc:checklist'];
+          const requiredScripts = ['docs:check', 'docs:build', 'version:check', 'lint', 'typecheck', 'test', 'test:visual:browser', 'perf:smoke', 'security:check', 'build', 'e2e:desktop', 'e2e:desktop:a11y', 'package:alpha', 'smoke:package:alpha', 'rc:checklist'];
           const missing = requiredScripts.filter((name) => !pkg.scripts || !pkg.scripts[name]);
 
           if (missing.length > 0) {
@@ -111,6 +111,9 @@ jobs:
 
       - name: Run desktop Electron E2E
         run: pnpm e2e:desktop
+
+      - name: Run desktop accessibility E2E
+        run: pnpm e2e:desktop:a11y
 
       - name: Package unsigned alpha
         env:

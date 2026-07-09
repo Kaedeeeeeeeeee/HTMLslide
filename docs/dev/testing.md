@@ -14,13 +14,14 @@ pnpm perf:smoke
 pnpm security:check
 pnpm build
 pnpm e2e:desktop
+pnpm e2e:desktop:a11y
 ```
 
 Required root package contract:
 
 - `packageManager` pinned to a pnpm version.
 - `pnpm-lock.yaml` committed.
-- `docs:check`, `docs:build`, `version:check`, `lint`, `typecheck`, `test`, `perf:smoke`, `security:check`, `build`, and `e2e:desktop` scripts in `package.json`.
+- `docs:check`, `docs:build`, `version:check`, `lint`, `typecheck`, `test`, `perf:smoke`, `security:check`, `build`, `e2e:desktop`, and `e2e:desktop:a11y` scripts in `package.json`.
 - `test:visual:browser` for focused browser-rendered full-slide screenshot regression.
 - `package:alpha`, `smoke:package:alpha`, `package:release:macos`, `rc:checklist`, and `release:notes` scripts before macOS packaging is enabled.
 
@@ -37,6 +38,7 @@ Use deterministic fixtures and avoid real provider credentials in automated test
 - Agent tests: use mock model providers, fake BYOK provider factories, injected fake fetch implementations, and fake external commands. Source-write tests must verify accepted source roots, parser shapes, duplicate rejection, traversal denial, artifact/private-runtime denial, and no partial writes after validation failure. OpenAI-compatible provider tests must verify model validation requests, Chat Completions structured-output request bodies, `sourceWrites` schemas for build/repair, token-usage mapping, abort-signal forwarding, malformed output rejection, missing source-write rejection, and API-key/error-message sanitization. Anthropic provider tests must verify model validation headers, forced Messages API tool request bodies, `tool_use.input` parsing, usage mapping, abort-signal forwarding, malformed or missing tool-use rejection, missing source-write rejection, unsafe source-write rejection, and API-key/error-message sanitization. CLI provider-validation tests must verify OpenAI-compatible/compatible validation routing, missing env handling, required compatible base URL handling, nonzero failed-validation exit codes, and no API-key values in stdout or returned JSON. BYOK desktop tests must verify Keychain-gated credential loading, compatible base URL metadata, default OpenAI/OpenAI-compatible/Anthropic adapter wiring through injected fake fetch, no secret leakage in logs/results, provider `sourceWrites` application, sanitized `.htmlslide/reports/agent-run-<runId>.json` output, checkpoint diffs, and check/export gating without real provider credentials. Generic command runs must verify project-local prompt/manifest handling, source-write boundaries, checkpoint diffs, and check/export gating. CI must not require real Claude Code, Codex, Gemini, or provider login.
 - MCP tests: verify CLI discovery/status, stdio server startup, tool listing, path boundary enforcement, schema-valid reports, and artifact creation.
 - Electron and presenter tests: cover onboarding, workspace choice, mock agent deck creation, preview, checks, export, rehearsal mode, settings, notes, next/previous navigation, timer, and keyboard shortcuts.
+- Desktop accessibility tests: cover first-run onboarding, Project Library, New Deck provider gating, QA Panel issue semantics, presenter rehearsal controls, Settings CLI status, and the official skills library with Playwright role assertions plus axe WCAG A/AA checks.
 - Skills library tests: Electron E2E verifies the official skills library exposes install-state and deck-type filters, expandable metadata inspection, risk flags, install paths, and markdown previews before installation, then installs the pack into an isolated HTMLslide home directory and verifies official skill metadata remains inspectable.
 - Packaging tests: unsigned CI build, signed/notarized release workflow contract, DMG/package smoke checks, first-run setup, official skill installation, CLI shim install/repair/uninstall, and `htmlslide doctor`.
 - Security tests: API keys absent from logs/project files/settings JSON, credential-store save/clear behavior through injected fakes, protected write-manifest boundaries including symlink escapes, MCP traversal denial, third-party skill warnings, remote asset detection, malformed deckpkg rejection, committed-secret scanning, and high-severity dependency audit.
@@ -73,6 +75,18 @@ The smoke test builds `@htmlslide/desktop`, launches the built Electron main pro
 GitHub `CI` runs this smoke on `macos-latest` for pull requests and pushes to `main`. The `Alpha Package` workflow also runs it before unsigned packaging so release artifacts are gated on the desktop app path, not only package creation.
 
 Artifacts are written under `tmp/playwright/` so they stay out of release artifacts and normal source diffs. This is a foundation smoke, not full coverage for live OpenAI/Anthropic BYOK credentials, real Claude/Codex/Gemini agents, physical dual-screen placement, or native packaging install flows. Provider-backed BYOK and Generic external-agent command coverage use local fakes and do not require real provider credentials or agent logins in CI.
+
+## Desktop Accessibility Gate
+
+Run the focused Electron accessibility gate when changing desktop navigation, dialog/panel semantics, status messaging, presenter controls, settings, or official skills UI:
+
+```bash
+pnpm e2e:desktop:a11y
+```
+
+The gate builds `@htmlslide/desktop`, launches Electron through Playwright, and scans stable desktop chrome states with `@axe-core/playwright` restricted to WCAG 2.0/2.1 A and AA tags. It uses axe legacy mode because Electron does not support the blank aggregation page that the default Playwright integration opens. It pairs axe with explicit role/name/status assertions for onboarding setup progress, Project Library navigation, New Deck provider-key gating, QA Panel summary/tabs/issues, presenter rehearsal transport/progress controls, Settings CLI integration status, and official skills metadata inspection.
+
+The desktop accessibility gate intentionally excludes user-authored slide preview fragments such as `.slide-fragment-preview`. Slide content accessibility remains covered by linter fixtures, compiler/renderer tests, and project QA because generated or user-owned deck HTML can validly fail independently from the app shell.
 
 ## Packaging Verification
 

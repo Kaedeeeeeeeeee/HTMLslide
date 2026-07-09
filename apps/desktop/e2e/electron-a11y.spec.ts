@@ -1,0 +1,236 @@
+import AxeBuilder from "@axe-core/playwright";
+import { _electron as electron, expect, test } from "@playwright/test";
+import type { ElectronApplication, Page } from "@playwright/test";
+import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const e2eDir = path.dirname(fileURLToPath(import.meta.url));
+const desktopRoot = path.resolve(e2eDir, "..");
+const repoRoot = path.resolve(desktopRoot, "..", "..");
+const electronMain = path.join(desktopRoot, "dist", "electron", "main.js");
+const sampleProjectPath = path.join(repoRoot, "packages", "test-fixtures", "decks", "valid-full");
+const textOverflowProjectPath = path.join(repoRoot, "packages", "test-fixtures", "decks", "linter-text-overflow");
+const requireFromDesktop = createRequire(path.join(desktopRoot, "package.json"));
+const electronExecutable = requireFromDesktop("electron") as string;
+
+type LaunchOptions = {
+  forceRehearsalPresenter?: boolean;
+  openProjectPath?: string;
+};
+
+async function expectNoFrameworkOverlay(page: Page): Promise<void> {
+  await expect(page.locator("vite-error-overlay")).toHaveCount(0);
+  await expect(page.locator("[data-nextjs-dialog-overlay], #webpack-dev-server-client-overlay")).toHaveCount(0);
+  await expect(
+    page.getByText(/\[plugin:vite|Internal server error|Failed to resolve import|Failed to load module script/i)
+  ).toHaveCount(0);
+}
+
+function collectBrowserErrors(page: Page): string[] {
+  const browserErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      browserErrors.push(message.text());
+    }
+  });
+  page.on("pageerror", (error) => {
+    browserErrors.push(error.message);
+  });
+  return browserErrors;
+}
+
+async function launchDesktopApp(tempRoot: string, options: LaunchOptions = {}): Promise<ElectronApplication> {
+  const homeDir = path.join(tempRoot, "home");
+  const userDataDir = path.join(tempRoot, "user-data");
+  const workspaceDir = path.join(tempRoot, "workspace");
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(userDataDir, { recursive: true });
+  await mkdir(workspaceDir, { recursive: true });
+
+  const env = {
+    ...process.env,
+    ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+    HOME: homeDir,
+    HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir,
+    HTMLSLIDE_USER_DATA_DIR: userDataDir
+  };
+
+  if (options.forceRehearsalPresenter) {
+    env.HTMLSLIDE_E2E_FORCE_REHEARSAL_PRESENTER = "1";
+  }
+
+  if (options.openProjectPath) {
+    env.HTMLSLIDE_E2E_OPEN_PROJECT_PATH = options.openProjectPath;
+  }
+
+  return electron.launch({
+    executablePath: electronExecutable,
+    args: [electronMain],
+    env
+  });
+}
+
+async function expectNoAccessibilityViolations(page: Page, label: string, exclude: string[] = []): Promise<void> {
+  // Electron does not support the blank aggregation page that axe opens by default.
+  let builder = new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .setLegacyMode();
+  for (const selector of exclude) {
+    builder = builder.exclude(selector);
+  }
+
+  const results = await builder.analyze();
+  const summary = results.violations
+    .map((violation) => {
+      const targets = violation.nodes
+        .slice(0, 3)
+        .map((node) => node.target.join(" "))
+        .join("; ");
+      return `${violation.id}: ${violation.help} (${targets})`;
+    })
+    .join("\n");
+
+  expect(results.violations, `${label} accessibility violations:\n${summary}`).toEqual([]);
+}
+
+test.describe("HTMLslide desktop accessibility smoke", () => {
+  let electronApp: ElectronApplication | undefined;
+  let tempRoot: string | undefined;
+
+  test.afterEach(async () => {
+    if (electronApp) {
+      await electronApp.close().catch(() => undefined);
+      electronApp = undefined;
+    }
+
+    if (tempRoot) {
+      await rm(tempRoot, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
+      tempRoot = undefined;
+    }
+  });
+
+  test("covers onboarding, project library, and new deck wizard semantics", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-a11y-"));
+    electronApp = await launchDesktopApp(tempRoot);
+
+    const page = await electronApp.firstWindow();
+    const browserErrors = collectBrowserErrors(page);
+    await page.waitForLoadState("domcontentloaded");
+
+    await expect(page.getByRole("heading", { name: "Welcome to HTMLslide" })).toBeVisible();
+    await expect(page.getByRole("list", { name: "Setup progress" }).getByRole("listitem")).toHaveCount(6);
+    await expectNoAccessibilityViolations(page, "onboarding");
+
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Project library" }).getByRole("button", { name: "Recent" })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
+    await expectNoAccessibilityViolations(page, "project library");
+
+    await page.locator(".library-main").getByRole("button", { name: "New Deck", exact: true }).first().click();
+    const newDeckPanel = page.locator(".new-deck-panel");
+    await expect(newDeckPanel).toBeVisible();
+    await expect(newDeckPanel.getByRole("button", { name: /No AI/ })).toHaveAttribute("aria-pressed", "true");
+    await newDeckPanel.getByRole("button", { name: /HTMLslide Agent/ }).click();
+    await expect(newDeckPanel.getByRole("alert")).toHaveText("Save a provider API key in AI Engines before using HTMLslide Agent.");
+    await expectNoAccessibilityViolations(page, "new deck wizard");
+
+    await expectNoFrameworkOverlay(page);
+    expect(browserErrors).toEqual([]);
+  });
+
+  test("covers QA panel semantics after a failing check", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-a11y-"));
+    const projectPath = path.join(tempRoot, "linter-text-overflow");
+    await mkdir(path.dirname(projectPath), { recursive: true });
+    await cp(textOverflowProjectPath, projectPath, { recursive: true });
+    electronApp = await launchDesktopApp(tempRoot, { openProjectPath: projectPath });
+
+    const page = await electronApp.firstWindow();
+    const browserErrors = collectBrowserErrors(page);
+    await page.waitForLoadState("domcontentloaded");
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await page.locator(".library-main").getByRole("button", { name: "Open Folder", exact: true }).first().click();
+    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Linter Text Overflow" })).toBeVisible({
+      timeout: 30_000
+    });
+
+    await page.locator(".workspace-toolbar").getByRole("button", { name: "Check", exact: true }).click();
+    const qaPanel = page.getByRole("region", { name: "QA Panel" });
+    await expect(qaPanel.getByRole("status", { name: "QA result summary" })).toContainText("QA Panel shows 1 all severities issue", {
+      timeout: 30_000
+    });
+    await expect(qaPanel.getByRole("tablist", { name: "QA severity filter" })).toBeVisible();
+    await expect(qaPanel.getByRole("list", { name: "QA issues" }).getByRole("listitem", { name: "text-overflow" })).toBeVisible();
+    await expectNoAccessibilityViolations(page, "QA panel", [".slide-fragment-preview"]);
+
+    await expectNoFrameworkOverlay(page);
+    expect(browserErrors).toEqual([]);
+  });
+
+  test("covers presenter rehearsal controls", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-a11y-"));
+    const projectPath = path.join(tempRoot, "valid-full");
+    await mkdir(path.dirname(projectPath), { recursive: true });
+    await cp(sampleProjectPath, projectPath, { recursive: true });
+    electronApp = await launchDesktopApp(tempRoot, {
+      forceRehearsalPresenter: true,
+      openProjectPath: projectPath
+    });
+
+    const page = await electronApp.firstWindow();
+    const browserErrors = collectBrowserErrors(page);
+    await page.waitForLoadState("domcontentloaded");
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await page.locator(".library-main").getByRole("button", { name: "Open Folder", exact: true }).first().click();
+    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible({
+      timeout: 30_000
+    });
+
+    await page.locator(".workspace-toolbar").getByRole("button", { name: "Present", exact: true }).click();
+    const presenter = page.getByLabel("Presenter rehearsal mode");
+    await expect(presenter).toBeVisible({ timeout: 30_000 });
+    await expect(presenter.getByLabel("Presenter progress")).toBeVisible();
+    const pauseTimerButton = presenter.getByRole("button", { name: "Pause timer", exact: true });
+    await expect(pauseTimerButton).toHaveAttribute("aria-pressed", "false");
+    await pauseTimerButton.click();
+    await expect(presenter.getByRole("button", { name: "Resume timer", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expectNoAccessibilityViolations(page, "presenter rehearsal mode");
+
+    await expectNoFrameworkOverlay(page);
+    expect(browserErrors).toEqual([]);
+  });
+
+  test("covers settings, CLI status, and official skills library semantics", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-a11y-"));
+    electronApp = await launchDesktopApp(tempRoot);
+
+    const page = await electronApp.firstWindow();
+    const browserErrors = collectBrowserErrors(page);
+    await page.waitForLoadState("domcontentloaded");
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "CLI Integration", exact: true })).toBeVisible();
+    await expect(page.getByRole("status", { name: "CLI integration operation status" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "HTMLslide Skills", exact: true })).toBeVisible();
+    const skillsPanel = page.locator(".cli-settings-card").filter({
+      has: page.getByRole("heading", { name: "HTMLslide Skills", exact: true })
+    });
+    await skillsPanel.getByRole("button", { name: "Missing", exact: true }).click();
+    const antiAiSlopSkill = skillsPanel.getByRole("listitem", { name: "anti-ai-slop missing" });
+    await expect(antiAiSlopSkill).toBeVisible();
+    await antiAiSlopSkill.getByRole("button", { name: "Inspect anti-ai-slop", exact: true }).click();
+    await expect(antiAiSlopSkill.getByLabel("anti-ai-slop risk flags")).toContainText("Modifies source: yes");
+    await expectNoAccessibilityViolations(page, "settings and official skills");
+
+    await expectNoFrameworkOverlay(page);
+    expect(browserErrors).toEqual([]);
+  });
+});

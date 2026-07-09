@@ -54,8 +54,8 @@ svg {
   line-height: 1.25;
 }
 
-.brand-block span,
-.workspace-title span {
+.brand-block span:not(.brand-mark),
+.workspace-title span:not(.brand-mark) {
   color: var(--hs-text-subtle);
   display: block;
   font-size: 12px;
@@ -900,6 +900,11 @@ svg {
   overflow: auto;
   padding: 10px;
   white-space: pre;
+}
+
+.official-skill-preview:focus-visible {
+  outline: 2px solid var(--hs-accent);
+  outline-offset: 2px;
 }
 
 .settings-form,
@@ -2093,8 +2098,12 @@ svg {
   color: #10151e;
 }
 
-.presenter-mode .workspace-title span {
+.presenter-mode .workspace-title span:not(.brand-mark) {
   color: #9ba7b8;
+}
+
+.presenter-mode .workspace-title .brand-mark {
+  color: #10151e;
 }
 
 .presenter-mode__topbar,

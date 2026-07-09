@@ -207,7 +207,7 @@ export function OfficialSkillsSettingsPanel({
                             </span>
                           ))}
                         </div>
-                        <pre className="official-skill-preview" aria-label={`${skill.name} markdown preview`}>
+                        <pre className="official-skill-preview" aria-label={`${skill.name} markdown preview`} tabIndex={0}>
                           <code>{skill.markdownPreview}</code>
                         </pre>
                       </div>

@@ -38,11 +38,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          required_scripts=(docs:check docs:build version:check lint typecheck test perf:smoke security:check build e2e:desktop package:release:macos rc:checklist release:notes)
+          required_scripts=(docs:check docs:build version:check lint typecheck test perf:smoke security:check build e2e:desktop e2e:desktop:a11y package:release:macos rc:checklist release:notes)
           missing_scripts="$(node <<'NODE'
           const fs = require('fs');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          const required = ['docs:check', 'docs:build', 'version:check', 'lint', 'typecheck', 'test', 'perf:smoke', 'security:check', 'build', 'e2e:desktop', 'package:release:macos', 'rc:checklist', 'release:notes'];
+          const required = ['docs:check', 'docs:build', 'version:check', 'lint', 'typecheck', 'test', 'perf:smoke', 'security:check', 'build', 'e2e:desktop', 'e2e:desktop:a11y', 'package:release:macos', 'rc:checklist', 'release:notes'];
           process.stdout.write(required.filter((name) => !pkg.scripts || !pkg.scripts[name]).join('\n'));
           NODE
           )"
@@ -117,6 +117,9 @@ jobs:
 
       - name: Run desktop Electron E2E
         run: pnpm e2e:desktop
+
+      - name: Run desktop accessibility E2E
+        run: pnpm e2e:desktop:a11y
 
       - name: Import Developer ID certificate
         shell: bash

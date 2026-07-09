@@ -8,10 +8,10 @@ HTMLslide uses SemVer for app releases and a separate schema version for deck fo
 
 ## CI Workflows
 
-- `CI`: runs `pnpm install --frozen-lockfile`, `pnpm docs:check`, `pnpm docs:build`, `pnpm version:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm perf:smoke`, `pnpm security:check`, and `pnpm build` on Ubuntu, plus `pnpm e2e:desktop` on macOS for Electron workspace/presenter smoke coverage.
+- `CI`: runs `pnpm install --frozen-lockfile`, `pnpm docs:check`, `pnpm docs:build`, `pnpm version:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm perf:smoke`, `pnpm security:check`, and `pnpm build` on Ubuntu, plus `pnpm e2e:desktop` and `pnpm e2e:desktop:a11y` on macOS for Electron workspace/presenter smoke and app-shell accessibility coverage.
 - `Docs Pages`: runs on manual dispatch, pushes to `main`, and `v*` tags. It checks public docs, builds `dist/docs-site`, uploads a Pages artifact, and deploys it with GitHub Pages.
-- `Alpha Package`: runs on manual dispatch, nightly schedule, and `v*` tags. It repeats the CI checks including `pnpm docs:build`, `pnpm version:check`, `pnpm perf:smoke`, and `pnpm security:check`, runs macOS desktop Electron E2E before packaging, runs `pnpm package:alpha`, smokes the generated package, and uploads unsigned artifacts.
-- `Release macOS`: runs on manual dispatch and `v*` tags. It repeats docs check/docs build/version check/lint/typecheck/test/perf/security/build/Electron E2E, imports a Developer ID certificate from GitHub Actions secrets, runs `pnpm package:release:macos`, notarizes and staples the DMG, generates release notes from git history with `pnpm release:notes`, uploads signed artifacts, and attaches them to the matching GitHub Release for tag builds.
+- `Alpha Package`: runs on manual dispatch, nightly schedule, and `v*` tags. It repeats the CI checks including `pnpm docs:build`, `pnpm version:check`, `pnpm perf:smoke`, and `pnpm security:check`, runs macOS desktop Electron E2E and desktop accessibility E2E before packaging, runs `pnpm package:alpha`, smokes the generated package, and uploads unsigned artifacts.
+- `Release macOS`: runs on manual dispatch and `v*` tags. It repeats docs check/docs build/version check/lint/typecheck/test/perf/security/build/Electron E2E/desktop accessibility E2E, imports a Developer ID certificate from GitHub Actions secrets, runs `pnpm package:release:macos`, notarizes and staples the DMG, generates release notes from git history with `pnpm release:notes`, uploads signed artifacts, and attaches them to the matching GitHub Release for tag builds.
 
 Both workflows intentionally fail early if the root package scaffold is missing required scripts. Add those scripts in the app scaffold rather than weakening workflow checks.
 

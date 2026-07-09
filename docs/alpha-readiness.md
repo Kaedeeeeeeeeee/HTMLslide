@@ -23,6 +23,7 @@ These gates are expected before each alpha candidate:
 | Performance guardrails | Preview, PDF export, checker, and presenter state smoke metrics stay under guardrails. | `pnpm perf:smoke` |
 | Security baseline | Source secret scan and high-severity dependency audit pass. | `pnpm security:check` |
 | Desktop UX smoke | New Deck, Project Library, QA, export, presenter, CLI integration, and official skills flows pass in Electron. | `pnpm e2e:desktop` |
+| Desktop accessibility smoke | First-run, Project Library, New Deck gating, QA Panel, presenter, Settings, and official skills chrome pass WCAG A/AA axe checks plus role semantics. | `pnpm e2e:desktop:a11y`, `CI` |
 | Alpha package | Unsigned DMG/ZIP/manifest plus a prefilled RC acceptance template are created and smoked from the packaged app, packaged CLI, and packaged MCP diagnostics. | `pnpm verify:package:alpha`, `Alpha Package` |
 | Remote CI | Main branch CI and Docs Pages complete for the candidate commit. | GitHub Actions `CI`, `Docs Pages` |
 
@@ -45,6 +46,7 @@ These gates are expected before each alpha candidate:
 | Check finds missing asset | Linter fixtures and Electron QA panel E2E cover missing asset issues. |
 | Check finds missing notes | Linter fixtures and Electron QA panel E2E cover missing notes issues. |
 | QA panel shows issues | Electron E2E covers failing check display. |
+| App shell accessibility | Desktop accessibility E2E covers onboarding, Project Library, New Deck gating, QA Panel, presenter rehearsal, Settings, and official skills chrome while excluding user-authored slide fragments. |
 | PDF page count is correct | Compiler tests cover PDF export metadata and page count. |
 | PNG thumbnails are produced | Compiler tests and export fixtures cover deterministic thumbnails. |
 | `deckpkg` can open | Presenter tests, Electron E2E, and package smoke cover package opening through direct launch arguments, Electron `open-file` handling, and macOS LaunchServices `open -a` against the packaged app. |

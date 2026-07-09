@@ -7,6 +7,7 @@ This is the public alpha documentation for HTMLslide.
 - [Install](install.md)
 - [Getting Started](getting-started.md)
 - [Create Your First Deck](create-your-first-deck.md)
+- [Alpha Readiness](alpha-readiness.md)
 - [AI Engines](ai-engines.md)
 - [Troubleshooting](troubleshooting.md)
 
@@ -34,5 +35,6 @@ This is the public alpha documentation for HTMLslide.
 - [Contributing](contributing.md)
 - [Code of Conduct](code-of-conduct.md)
 - [Testing](testing.md)
+- [Alpha Readiness](alpha-readiness.md)
 - [Release](release.md)
 - [Security](security.md)

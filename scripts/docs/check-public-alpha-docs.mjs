@@ -7,11 +7,12 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 const requiredFiles = {
-  "README.md": ["HTMLslide", "Quick start", "Current alpha status", "docs/index.md", "docs:build", "version:check", "CODE_OF_CONDUCT.md"],
+  "README.md": ["HTMLslide", "Quick start", "Current alpha status", "docs/index.md", "docs/alpha-readiness.md", "docs:build", "version:check", "CODE_OF_CONDUCT.md"],
   "CONTRIBUTING.md": ["Contributing", "docs:check", "version:check", "security:check", "Code of Conduct"],
   "CODE_OF_CONDUCT.md": ["Code of Conduct", "Expected Behavior", "Unacceptable Behavior", "Reporting"],
   "SECURITY.md": ["Security Policy", "Reporting a Vulnerability", "Security Requirements"],
-  "docs/index.md": ["HTMLslide Documentation", "Install", "No AI", "BYOK", "External agents"],
+  "docs/index.md": ["HTMLslide Documentation", "Install", "Alpha Readiness", "No AI", "BYOK", "External agents"],
+  "docs/alpha-readiness.md": ["Alpha Readiness", "Current Verdict", "Automated Evidence", "Manual Release-Candidate Evidence", "Not Yet Claimed", "pnpm rc:checklist"],
   "docs/install.md": ["Install HTMLslide", "unsigned alpha", "not Developer ID signed", "not notarized", "CLI shim"],
   "docs/getting-started.md": ["Getting Started", "No AI", "Local Mock", "Export"],
   "docs/create-your-first-deck.md": ["Create Your First Deck", "New Deck", "Local Mock", "Check", "Export"],

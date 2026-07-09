@@ -14,6 +14,7 @@ const sidebarSections = [
     links: [
       ["Introduction", "index.md"],
       ["Install", "install.md"],
+      ["Alpha Readiness", "alpha-readiness.md"],
       ["Getting Started", "getting-started.md"],
       ["First Deck", "create-your-first-deck.md"],
       ["Troubleshooting", "troubleshooting.md"]
@@ -46,6 +47,7 @@ const sidebarSections = [
     links: [
       ["Contributing", "contributing.md"],
       ["Testing", "testing.md"],
+      ["Alpha Readiness", "alpha-readiness.md"],
       ["Release", "release.md"],
       ["Security", "security.md"]
     ]

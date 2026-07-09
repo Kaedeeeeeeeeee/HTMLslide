@@ -15,6 +15,8 @@ The current alpha path is useful for testing and contribution, but public produc
 
 Automated CI covers unit tests, desktop Electron E2E, package smoke, CLI provisioning, official skills installation, deckpkg opening, and mock/fake provider paths. Real BYOK provider credentials and real Claude/Codex integrations require manual validation before release claims.
 
+See [docs/alpha-readiness.md](docs/alpha-readiness.md) for the current automated coverage map and required manual release-candidate evidence.
+
 ## Development
 
 ```bash

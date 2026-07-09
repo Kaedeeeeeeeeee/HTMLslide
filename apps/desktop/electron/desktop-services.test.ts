@@ -750,6 +750,16 @@ describe("desktop services", () => {
       skillCount: OFFICIAL_SKILLS.length,
       status: "warning"
     });
+    expect(before.skills).toHaveLength(OFFICIAL_SKILLS.length);
+    expect(before.skills.find((skill) => skill.name === "deck-architect")).toMatchObject({
+      description: OFFICIAL_SKILLS.find((skill) => skill.metadata.name === "deck-architect")?.metadata.description,
+      installed: false,
+      license: "Apache-2.0",
+      riskLevel: "low",
+      stale: false,
+      status: "missing",
+      type: "planning"
+    });
 
     const installed = await installDesktopOfficialSkills(options);
     expect(installed).toMatchObject({
@@ -759,6 +769,7 @@ describe("desktop services", () => {
       skillCount: OFFICIAL_SKILLS.length,
       status: "passed"
     });
+    expect(installed.skills.every((skill) => skill.status === "installed" && skill.installed && !skill.stale)).toBe(true);
 
     const deckArchitect = await readFile(path.join(homeDir, "skills", "deck-architect", "SKILL.md"), "utf8");
     expect(deckArchitect).toContain("name: deck-architect");
@@ -786,6 +797,11 @@ describe("desktop services", () => {
     };
     const before = await getDesktopOfficialSkills(options);
     expect(before.stale).toContain("deck-architect");
+    expect(before.skills.find((skill) => skill.name === "deck-architect")).toMatchObject({
+      installed: false,
+      stale: true,
+      status: "stale"
+    });
 
     const updated = await installDesktopOfficialSkills(options);
     expect(updated).toMatchObject({

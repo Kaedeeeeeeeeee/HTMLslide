@@ -189,9 +189,21 @@ export type DesktopOfficialSkillsState = {
   missing: string[];
   stale: string[];
   names: string[];
+  skills: DesktopOfficialSkillSummary[];
   message: string;
   suggestedFix?: string;
   updatedAt: string;
+};
+
+export type DesktopOfficialSkillSummary = {
+  name: string;
+  description: string;
+  type: string;
+  riskLevel: string;
+  license: string;
+  installed: boolean;
+  stale: boolean;
+  status: "installed" | "missing" | "stale";
 };
 
 export type DesktopOfficialSkillsOptions = {
@@ -1312,6 +1324,16 @@ function officialSkillsBaseState(options: DesktopOfficialSkillsOptions = {}): De
     message: "Official skills have not been checked yet.",
     missing: [],
     names: OFFICIAL_SKILLS.map((skill) => skill.metadata.name),
+    skills: OFFICIAL_SKILLS.map((skill) => ({
+      name: skill.metadata.name,
+      description: skill.metadata.description,
+      type: skill.metadata.deck.type,
+      riskLevel: skill.metadata.riskLevel,
+      license: skill.metadata.license,
+      installed: false,
+      stale: false,
+      status: "missing"
+    })),
     skillCount: OFFICIAL_SKILLS.length,
     skillsDir,
     stale: [],
@@ -1352,6 +1374,7 @@ export async function getDesktopOfficialSkills(
 
   const missing: string[] = [];
   const stale: string[] = [];
+  const states = new Map<string, DesktopOfficialSkillSummary["status"]>();
   let installedCount = 0;
 
   await Promise.all(OFFICIAL_SKILLS.map(async (skill) => {
@@ -1359,12 +1382,15 @@ export async function getDesktopOfficialSkills(
     const current = await readTextIfExists(entryPath);
     if (current === undefined) {
       missing.push(skill.metadata.name);
+      states.set(skill.metadata.name, "missing");
       return;
     }
     if (current !== skill.markdown) {
       stale.push(skill.metadata.name);
+      states.set(skill.metadata.name, "stale");
       return;
     }
+    states.set(skill.metadata.name, "installed");
     installedCount += 1;
   }));
 
@@ -1381,6 +1407,19 @@ export async function getDesktopOfficialSkills(
       ? `${installedCount} official skills installed.`
       : `${pendingCount} official skill${pendingCount === 1 ? "" : "s"} need installation or update.`,
     missing,
+    skills: OFFICIAL_SKILLS.map((skill) => {
+      const status = states.get(skill.metadata.name) ?? "missing";
+      return {
+        name: skill.metadata.name,
+        description: skill.metadata.description,
+        type: skill.metadata.deck.type,
+        riskLevel: skill.metadata.riskLevel,
+        license: skill.metadata.license,
+        installed: status === "installed",
+        stale: status === "stale",
+        status
+      };
+    }),
     stale,
     status: installed ? "passed" : "warning",
     suggestedFix: installed ? undefined : "Install official skills from onboarding or Settings."

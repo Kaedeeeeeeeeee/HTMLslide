@@ -8,6 +8,8 @@ The desktop app installs official skills during setup into the HTMLslide home di
 
 The first official pack includes planning, visual direction, design-system, content, data, quality, and brand-system skills.
 
+Settings shows the official pack as an inspectable skill library. Each row includes the skill description, deck type, risk level, license, and install state so stale or missing skills can be reviewed before installing.
+
 ## Safety
 
 Official skills must not write generated exports or secrets. Third-party skills with scripts, network access, remote assets, or incompatible licenses require explicit user review before installation.

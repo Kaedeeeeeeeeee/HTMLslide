@@ -81,9 +81,21 @@ export type DesktopOfficialSkillsState = {
   missing: string[];
   stale: string[];
   names: string[];
+  skills: DesktopOfficialSkillSummary[];
   message: string;
   suggestedFix?: string;
   updatedAt: string;
+};
+
+export type DesktopOfficialSkillSummary = {
+  name: string;
+  description: string;
+  type: string;
+  riskLevel: string;
+  license: string;
+  installed: boolean;
+  stale: boolean;
+  status: "installed" | "missing" | "stale";
 };
 
 export type DesktopProjectRecord = Omit<ProjectSummary, "lastOpened"> & {

@@ -1,7 +1,7 @@
 import { Button, PanelHeader, StatusPill } from "@htmlslide/shared-ui";
 import { Sparkles, Wrench } from "lucide-react";
 import type { ReactNode } from "react";
-import type { DesktopOfficialSkillsState } from "../desktop-api";
+import type { DesktopOfficialSkillSummary, DesktopOfficialSkillsState } from "../desktop-api";
 import type { OperationStatus } from "../model";
 
 interface OfficialSkillsSettingsPanelProps {
@@ -17,7 +17,7 @@ export function OfficialSkillsSettingsPanel({
 }: OfficialSkillsSettingsPanelProps): ReactNode {
   const busy = operationStatus.kind === "running";
   const pending = (state?.missing.length ?? 0) + (state?.stale.length ?? 0);
-  const skillNames = state?.names ?? [];
+  const skills = state?.skills ?? [];
 
   return (
     <section className="cli-settings-card">
@@ -58,10 +58,21 @@ export function OfficialSkillsSettingsPanel({
         </div>
       </dl>
 
-      {skillNames.length > 0 ? (
+      {skills.length > 0 ? (
         <ul className="official-skills-list" aria-label="Official HTMLslide skills">
-          {skillNames.map((name) => (
-            <li key={name}>{name}</li>
+          {skills.map((skill) => (
+            <li className={`official-skill-row is-${skill.status}`} key={skill.name}>
+              <div className="official-skill-row__main">
+                <strong>{skill.name}</strong>
+                <small>{skill.description}</small>
+              </div>
+              <div className="official-skill-row__meta" aria-label={`${skill.name} metadata`}>
+                <span>{formatSkillType(skill.type)}</span>
+                <span>{skill.riskLevel} risk</span>
+                <span>{skill.license}</span>
+              </div>
+              <StatusPill tone={skillStatusTone(skill)}>{skill.status}</StatusPill>
+            </li>
           ))}
         </ul>
       ) : null}
@@ -95,4 +106,21 @@ function skillsStatusTone(status: DesktopOfficialSkillsState["status"] | undefin
     return "danger";
   }
   return "neutral";
+}
+
+function skillStatusTone(skill: DesktopOfficialSkillSummary): "neutral" | "success" | "warning" {
+  if (skill.status === "installed") {
+    return "success";
+  }
+  if (skill.status === "stale") {
+    return "warning";
+  }
+  return "neutral";
+}
+
+function formatSkillType(type: string): string {
+  return type
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }

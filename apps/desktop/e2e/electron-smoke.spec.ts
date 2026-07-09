@@ -971,6 +971,12 @@ test.describe("HTMLslide desktop smoke", () => {
 
     await page.getByRole("button", { name: "Install Official Skills", exact: true }).click();
     await expect(page.locator(".settings-note", { hasText: /12 official skills installed/ })).toBeVisible({ timeout: 30_000 });
+    const officialSkillList = page.getByRole("list", { name: "Official HTMLslide skills" });
+    const deckArchitectSkill = officialSkillList.getByRole("listitem").filter({ hasText: "deck-architect" });
+    await expect(deckArchitectSkill).toContainText("Planning");
+    await expect(deckArchitectSkill).toContainText("low risk");
+    await expect(deckArchitectSkill).toContainText("Apache-2.0");
+    await expect(deckArchitectSkill).toContainText("installed");
     await expect(readFile(path.join(htmlslideHomeDir, "skills", "deck-architect", "SKILL.md"), "utf8"))
       .resolves.toContain("name: deck-architect");
 

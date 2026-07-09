@@ -10,6 +10,8 @@ import { Workspace, type AgentDiffReview } from "./components/Workspace";
 import {
   getDesktopApi,
   type DesktopCheckReport,
+  type DesktopAudienceWindowRequest,
+  type DesktopAudienceWindowState,
   type DesktopByokAgentRunResult,
   type DesktopCliIntegrationState,
   type DesktopExternalAgentRunResult,
@@ -1098,6 +1100,24 @@ function App(): React.ReactNode {
     [desktopApi]
   );
 
+  const openAudienceWindow = useCallback(
+    (request: DesktopAudienceWindowRequest): Promise<DesktopAudienceWindowState> =>
+      desktopApi?.openAudienceWindow(request) ?? Promise.resolve({ open: false }),
+    [desktopApi]
+  );
+
+  const updateAudienceWindow = useCallback(
+    (request: DesktopAudienceWindowRequest): Promise<DesktopAudienceWindowState> =>
+      desktopApi?.updateAudienceWindow(request) ?? Promise.resolve({ open: false }),
+    [desktopApi]
+  );
+
+  const closeAudienceWindow = useCallback(
+    (): Promise<DesktopAudienceWindowState> =>
+      desktopApi?.closeAudienceWindow() ?? Promise.resolve({ open: false }),
+    [desktopApi]
+  );
+
   const handleViewDiff = useCallback((): void => {
     if (!diffReview?.runId && !diffReview?.checkpointId) {
       setOperationStatus({ kind: "failed", message: "No agent checkpoint is available" });
@@ -1304,6 +1324,9 @@ function App(): React.ReactNode {
       onInspectorTabChange={setInspectorTab}
       loadPresenterDeck={loadPresenterDeck}
       listPresenterDisplays={listPresenterDisplays}
+      openAudienceWindow={openAudienceWindow}
+      updateAudienceWindow={updateAudienceWindow}
+      closeAudienceWindow={closeAudienceWindow}
       onQaFilterChange={setQaFilter}
       onRevertDiff={handleRevertDiff}
       onRunAction={(action) => {

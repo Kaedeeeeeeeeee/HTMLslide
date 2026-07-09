@@ -295,6 +295,28 @@ export type DesktopPresenterDisplay = {
   workArea: DesktopDisplayBounds;
 };
 
+export type DesktopAudienceSlidePayload = {
+  deckTitle: string;
+  slideId: string;
+  slideTitle: string;
+  slideNumber: number;
+  slideCount: number;
+  screen: "normal" | "black" | "white";
+  sourceHtml?: string;
+  section?: string;
+  accent?: string;
+};
+
+export type DesktopAudienceWindowRequest = {
+  displayId?: number;
+  payload: DesktopAudienceSlidePayload;
+};
+
+export type DesktopAudienceWindowState = {
+  open: boolean;
+  displayId?: number;
+};
+
 export type DesktopAiEngineSettingsSaveRequest = {
   settings: AiEngineSettings;
   apiKeyInput?: string;
@@ -327,6 +349,9 @@ export type HtmlslideDesktopApi = {
   onOpenDeckPackage(handler: (request: DesktopInitialOpenRequest) => void): () => void;
   reportSmokeReady(marker: DesktopSmokeReadyMarker): Promise<{ ok: boolean }>;
   listPresenterDisplays(): Promise<DesktopPresenterDisplay[]>;
+  openAudienceWindow(request: DesktopAudienceWindowRequest): Promise<DesktopAudienceWindowState>;
+  updateAudienceWindow(request: DesktopAudienceWindowRequest): Promise<DesktopAudienceWindowState>;
+  closeAudienceWindow(): Promise<DesktopAudienceWindowState>;
   runMockAgent(request: DesktopMockAgentRunRequest): Promise<DesktopMockAgentRunResult>;
   runByokAgent(request: DesktopByokAgentRunRequest): Promise<DesktopByokAgentRunResult>;
   runExternalAgent(request: DesktopExternalAgentRunRequest): Promise<DesktopExternalAgentRunResult>;

@@ -55,7 +55,7 @@ Before calling an alpha build public, verify:
 - PDF page count and PNG thumbnails match the deck.
 - deckpkg opens from a direct file argument in both Electron E2E and packaged-app smoke, from a macOS `open-file` event in Electron E2E, and from Finder/LaunchServices in a manual test.
 - Rehearsal mode works.
-- Dual-screen presenter has been manually tested.
+- Audience window opens and syncs in Electron E2E; physical dual-screen presenter placement has been manually tested.
 - Fake external agent automation passes.
 - At least one real Claude/Codex integration is manually validated before claiming support.
 - Unit, CLI E2E, compiler regression, Electron E2E, and packaging smoke tests pass.

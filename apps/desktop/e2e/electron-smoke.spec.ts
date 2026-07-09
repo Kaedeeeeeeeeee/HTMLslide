@@ -447,29 +447,47 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(presenter.getByLabel("Presenter target display")).toBeVisible();
     await expect(presenter.locator(".presenter-notes").getByText("今天我们把 HTML 作为源码")).toBeVisible();
 
+    const audienceWindowPromise = electronApp.waitForEvent("window");
+    await presenter.getByRole("button", { name: "Open audience", exact: true }).click();
+    const audiencePage = await audienceWindowPromise;
+    await audiencePage.waitForLoadState("domcontentloaded");
+    await expect(audiencePage.getByLabel("HTMLslide audience window")).toBeVisible();
+    await expect(audiencePage.getByText("HTML as source")).toBeVisible();
+    await expect(audiencePage.getByText("1 / 2")).toBeVisible();
+    await page.bringToFront();
+
     await page.keyboard.press("ArrowRight");
     await expect(presenter.getByText("2 / 2")).toBeVisible();
     await expect(currentSlideHeading).toHaveText("Project structure");
     await expect(presenter.getByText("Project folders stay readable")).toBeVisible();
+    await expect(audiencePage.getByText("Project structure")).toBeVisible();
+    await expect(audiencePage.getByText("2 / 2")).toBeVisible();
 
     await page.keyboard.press("ArrowLeft");
     await expect(presenter.getByText("1 / 2")).toBeVisible();
     await expect(currentSlideHeading).toHaveText("HTML as source");
+    await expect(audiencePage.getByText("HTML as source")).toBeVisible();
 
     await page.keyboard.press("T");
     await expect(presenter.getByText("paused")).toBeVisible();
 
     await page.keyboard.press("B");
     await expect(screenCover).toHaveText("Black screen");
+    await expect(audiencePage.getByText("Black screen")).toBeVisible();
     await page.keyboard.press("B");
     await expect(screenCover).toBeHidden();
 
     await page.keyboard.press("W");
     await expect(screenCover).toHaveText("White screen");
+    await expect(audiencePage.getByText("White screen")).toBeVisible();
     await page.keyboard.press("W");
     await expect(screenCover).toBeHidden();
 
     await expect(presenter.getByLabel("Jump to slide")).toBeVisible();
+
+    const audienceClosePromise = audiencePage.waitForEvent("close");
+    await presenter.getByRole("button", { name: "Close audience", exact: true }).click();
+    await audienceClosePromise;
 
     await presenter.locator(".presenter-current").click();
     await page.keyboard.press("Escape");

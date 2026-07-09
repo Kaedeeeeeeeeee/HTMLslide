@@ -78,7 +78,12 @@ import type {
   QaIssue,
   SlideSummary
 } from "../model";
-import type { DesktopPresenterDisplay } from "../desktop-api";
+import type {
+  DesktopAudienceSlidePayload,
+  DesktopAudienceWindowRequest,
+  DesktopAudienceWindowState,
+  DesktopPresenterDisplay
+} from "../desktop-api";
 
 interface WorkspaceProps {
   activeStageIndex: number;
@@ -111,6 +116,9 @@ interface WorkspaceProps {
   onViewDiff?: () => void;
   loadPresenterDeck?: () => Promise<PresenterDeck | null>;
   listPresenterDisplays?: () => Promise<DesktopPresenterDisplay[]>;
+  openAudienceWindow?: (request: DesktopAudienceWindowRequest) => Promise<DesktopAudienceWindowState>;
+  updateAudienceWindow?: (request: DesktopAudienceWindowRequest) => Promise<DesktopAudienceWindowState>;
+  closeAudienceWindow?: () => Promise<DesktopAudienceWindowState>;
 }
 
 export interface AgentDiffReview {
@@ -216,8 +224,10 @@ export function Workspace({
   onCommandChange,
   onCommandSubmit,
   onInspectorTabChange,
+  closeAudienceWindow,
   loadPresenterDeck,
   listPresenterDisplays,
+  openAudienceWindow,
   onQaFilterChange,
   onRevertDiff,
   onRunAction,
@@ -232,7 +242,8 @@ export function Workspace({
   running,
   selectedSlideId,
   slides,
-  stages
+  stages,
+  updateAudienceWindow
 }: WorkspaceProps): ReactNode {
   const currentSlide =
     slides.find((slide) => slide.id === selectedSlideId) ??
@@ -399,14 +410,17 @@ export function Workspace({
 
       {presenterState ? (
         <PresenterMode
+          closeAudienceWindow={closeAudienceWindow}
           deck={presenterState.deck}
           onExit={() => setPresenterState(null)}
           onSessionChange={handlePresenterSessionChange}
+          openAudienceWindow={openAudienceWindow}
           project={project}
           listPresenterDisplays={listPresenterDisplays}
           session={presenterState.session}
           slides={slides}
           source={presenterState.source}
+          updateAudienceWindow={updateAudienceWindow}
         />
       ) : null}
     </main>
@@ -414,31 +428,39 @@ export function Workspace({
 }
 
 interface PresenterModeProps {
+  closeAudienceWindow?: () => Promise<DesktopAudienceWindowState>;
   deck: PresenterDeck;
   project: ProjectSummary;
   listPresenterDisplays?: () => Promise<DesktopPresenterDisplay[]>;
+  openAudienceWindow?: (request: DesktopAudienceWindowRequest) => Promise<DesktopAudienceWindowState>;
   session: PresenterSessionState;
   slides: SlideSummary[];
   source: PresenterSource;
+  updateAudienceWindow?: (request: DesktopAudienceWindowRequest) => Promise<DesktopAudienceWindowState>;
   onExit: () => void;
   onSessionChange: (session: PresenterSessionState) => void;
 }
 
 function PresenterMode({
+  closeAudienceWindow,
   deck,
   listPresenterDisplays,
   onExit,
   onSessionChange,
+  openAudienceWindow,
   project,
   session,
   slides,
-  source
+  source,
+  updateAudienceWindow
 }: PresenterModeProps): ReactNode {
   const shellRef = useRef<HTMLElement | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [presenterDisplays, setPresenterDisplays] = useState<DesktopPresenterDisplay[]>([]);
   const [selectedDisplayId, setSelectedDisplayId] = useState<number | undefined>();
   const [displayError, setDisplayError] = useState<string | undefined>();
+  const [audienceWindowState, setAudienceWindowState] = useState<DesktopAudienceWindowState>({ open: false });
+  const [audienceWindowError, setAudienceWindowError] = useState<string | undefined>();
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
@@ -489,11 +511,90 @@ function PresenterMode({
   );
   const currentSlidePreview = findSlidePreview(slides, view.currentSlide.id);
   const nextSlidePreview = view.nextSlide ? findSlidePreview(slides, view.nextSlide.id) : undefined;
+  const audiencePayload = useMemo<DesktopAudienceSlidePayload>(() => ({
+    accent: currentSlidePreview?.accent,
+    deckTitle: deck.title,
+    screen: view.screen,
+    section: currentSlidePreview?.section,
+    slideCount: view.slideCount,
+    slideId: view.currentSlide.id,
+    slideNumber: view.slideNumber,
+    slideTitle: view.currentSlide.title,
+    sourceHtml: currentSlidePreview?.html
+  }), [
+    currentSlidePreview?.accent,
+    currentSlidePreview?.html,
+    currentSlidePreview?.section,
+    deck.title,
+    view.currentSlide.id,
+    view.currentSlide.title,
+    view.screen,
+    view.slideCount,
+    view.slideNumber
+  ]);
+  const audienceWindowRequest = useMemo<DesktopAudienceWindowRequest>(() => ({
+    displayId: selectedDisplayId,
+    payload: audiencePayload
+  }), [audiencePayload, selectedDisplayId]);
+
+  const handleClosePresenter = useCallback((): void => {
+    if (audienceWindowState.open) {
+      void closeAudienceWindow?.().catch(() => undefined);
+    }
+    setAudienceWindowState({ open: false });
+    onExit();
+  }, [audienceWindowState.open, closeAudienceWindow, onExit]);
+
+  useEffect(() => () => {
+    void closeAudienceWindow?.().catch(() => undefined);
+  }, [closeAudienceWindow]);
+
+  useEffect(() => {
+    if (!audienceWindowState.open || !updateAudienceWindow) {
+      return;
+    }
+
+    updateAudienceWindow(audienceWindowRequest)
+      .then((state) => {
+        setAudienceWindowState(state);
+        setAudienceWindowError(undefined);
+      })
+      .catch((error: unknown) => {
+        setAudienceWindowError(error instanceof Error ? error.message : String(error));
+      });
+  }, [audienceWindowRequest, audienceWindowState.open, updateAudienceWindow]);
+
+  const handleOpenAudienceWindow = useCallback((): void => {
+    if (!openAudienceWindow) {
+      setAudienceWindowError("Audience window is unavailable in this runtime.");
+      return;
+    }
+
+    openAudienceWindow(audienceWindowRequest)
+      .then((state) => {
+        setAudienceWindowState(state);
+        setAudienceWindowError(undefined);
+      })
+      .catch((error: unknown) => {
+        setAudienceWindowError(error instanceof Error ? error.message : String(error));
+      });
+  }, [audienceWindowRequest, openAudienceWindow]);
+
+  const handleCloseAudienceWindow = useCallback((): void => {
+    closeAudienceWindow?.()
+      .then((state) => {
+        setAudienceWindowState(state);
+        setAudienceWindowError(undefined);
+      })
+      .catch((error: unknown) => {
+        setAudienceWindowError(error instanceof Error ? error.message : String(error));
+      });
+  }, [closeAudienceWindow]);
 
   const runPresenterAction = useCallback(
     (action: PresenterKeyboardAction, jumpSlideIndex?: number): void => {
       if (action === "exit") {
-        onExit();
+        handleClosePresenter();
         return;
       }
 
@@ -523,7 +624,7 @@ function PresenterMode({
         })
       );
     },
-    [deck, onExit, onSessionChange, session, view.slideNumber]
+    [deck, handleClosePresenter, onSessionChange, session, view.slideNumber]
   );
 
   useEffect(() => {
@@ -569,7 +670,7 @@ function PresenterMode({
           <IconButton
             icon={<X />}
             label="Exit presenter mode"
-            onClick={onExit}
+            onClick={handleClosePresenter}
           />
         </div>
       </header>
@@ -602,8 +703,12 @@ function PresenterMode({
           <PresenterTimerPanel view={view} />
 
           <PresenterDisplayPanel
+            audienceError={audienceWindowError}
+            audienceOpen={audienceWindowState.open}
             displayError={displayError}
             displays={presenterDisplays}
+            onCloseAudienceWindow={handleCloseAudienceWindow}
+            onOpenAudienceWindow={handleOpenAudienceWindow}
             onSelectedDisplayIdChange={setSelectedDisplayId}
             selectedDisplayId={selectedDisplayId}
           />
@@ -754,13 +859,21 @@ function PresenterTimerPanel({ view }: { view: PresenterSessionView }): ReactNod
 }
 
 function PresenterDisplayPanel({
+  audienceError,
+  audienceOpen,
   displayError,
   displays,
+  onCloseAudienceWindow,
+  onOpenAudienceWindow,
   onSelectedDisplayIdChange,
   selectedDisplayId
 }: {
+  audienceError?: string;
+  audienceOpen: boolean;
   displayError?: string;
   displays: DesktopPresenterDisplay[];
+  onCloseAudienceWindow: () => void;
+  onOpenAudienceWindow: () => void;
   selectedDisplayId?: number;
   onSelectedDisplayIdChange: (displayId: number | undefined) => void;
 }): ReactNode {
@@ -805,6 +918,29 @@ function PresenterDisplayPanel({
               <span>{formatDisplayBounds(selectedDisplay.bounds)}</span>
               <span>{selectedDisplay.scaleFactor}x</span>
             </div>
+          ) : null}
+          <div className="presenter-audience-actions">
+            <Button
+              icon={<MonitorPlay />}
+              onClick={onOpenAudienceWindow}
+              variant={audienceOpen ? "secondary" : "primary"}
+            >
+              {audienceOpen ? "Audience live" : "Open audience"}
+            </Button>
+            {audienceOpen ? (
+              <Button
+                icon={<X />}
+                onClick={onCloseAudienceWindow}
+                variant="secondary"
+              >
+                Close audience
+              </Button>
+            ) : null}
+          </div>
+          {audienceError ? (
+            <p className="presenter-display-empty">
+              {audienceError}
+            </p>
           ) : null}
         </>
       ) : (

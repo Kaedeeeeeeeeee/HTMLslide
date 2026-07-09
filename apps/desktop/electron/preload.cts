@@ -37,6 +37,9 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
   },
   reportSmokeReady: (marker: unknown) => ipcRenderer.invoke("htmlslide:report-smoke-ready", marker),
   listPresenterDisplays: () => ipcRenderer.invoke("htmlslide:list-presenter-displays"),
+  openAudienceWindow: (request: unknown) => ipcRenderer.invoke("htmlslide:open-audience-window", request),
+  updateAudienceWindow: (request: unknown) => ipcRenderer.invoke("htmlslide:update-audience-window", request),
+  closeAudienceWindow: () => ipcRenderer.invoke("htmlslide:close-audience-window"),
   runMockAgent: (request: {
     projectPath: string;
     brief: string;

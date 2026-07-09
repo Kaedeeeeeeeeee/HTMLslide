@@ -95,8 +95,11 @@ contents. The alpha macOS package declares `.deckpkg` as an owned document type 
 HTMLslide.
 
 The desktop Presenter console also reads Electron display metadata and exposes a target-display selector with primary,
-internal/external, scale, and resolution details. This is display discovery for the presenter workflow; separate audience
-window placement and dual-screen synchronization remain future integration work.
+internal/external, scale, and resolution details. The selector can open a separate audience BrowserWindow on the selected
+display. The renderer session remains the source of truth: slide navigation, jump, black screen, and white screen changes
+are pushed to the audience window as sanitized slide payloads. When source HTML is available, the audience window renders
+the slide fragment full bleed; package-only sessions fall back to a title view until package HTML/page rendering is wired
+into the renderer.
 
 ## Keyboard Controls
 
@@ -117,10 +120,11 @@ Presenter keyboard actions are exposed through `PRESENTER_KEYBOARD_CONTROLS`, `g
 
 `fullscreen`, `jump`, and `exit` may require UI prompts or window APIs. The runtime maps those keys and leaves UI-only effects to the caller. `jump` can be applied by passing `jumpSlideIndex`, `jumpSlideNumber`, or `jumpSlideId`.
 
-## Dual-Screen Future Work
+## Dual-Screen Work
 
 Dual-screen presenter mode is a desktop integration layer over the same package/session state:
 
-- audience view renders `deck.pdf` pages or `deck.html` slides full screen with no chrome.
-- presenter console renders current/next previews, notes, timer, progress, and controls.
-- window placement, fullscreen transitions, screen swap, and reconnect behavior remain outside `@htmlslide/presenter`.
+- audience view renders a no-chrome BrowserWindow on the selected display and follows the presenter session.
+- presenter console renders current/next previews, notes, timer, progress, display selection, and controls.
+- automated Electron smoke coverage verifies window creation, slide sync, and black/white screen sync without requiring a physical second monitor.
+- physical dual-screen placement, fullscreen transitions, screen swap, and reconnect behavior remain release-candidate manual validation items.

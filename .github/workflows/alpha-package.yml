@@ -31,7 +31,7 @@ jobs:
           set -euo pipefail
 
           if [[ ! -f package.json ]]; then
-            echo "::error title=Missing package.json::Alpha packaging expects a root package.json with pnpm scripts: docs:check, lint, typecheck, test, build, package:alpha, smoke:package:alpha."
+            echo "::error title=Missing package.json::Alpha packaging expects a root package.json with pnpm scripts: docs:check, lint, typecheck, test, perf:smoke, security:check, build, package:alpha, smoke:package:alpha, rc:checklist."
             exit 1
           fi
 
@@ -43,7 +43,7 @@ jobs:
           node <<'NODE'
           const fs = require('fs');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          const requiredScripts = ['docs:check', 'lint', 'typecheck', 'test', 'build', 'e2e:desktop', 'package:alpha', 'smoke:package:alpha'];
+          const requiredScripts = ['docs:check', 'lint', 'typecheck', 'test', 'perf:smoke', 'security:check', 'build', 'e2e:desktop', 'package:alpha', 'smoke:package:alpha', 'rc:checklist'];
           const missing = requiredScripts.filter((name) => !pkg.scripts || !pkg.scripts[name]);
 
           if (missing.length > 0) {
@@ -81,6 +81,12 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      - name: Performance smoke
+        run: pnpm perf:smoke
+
+      - name: Security check
+        run: pnpm security:check
 
       - name: Upload visual regression artifacts
         if: failure()

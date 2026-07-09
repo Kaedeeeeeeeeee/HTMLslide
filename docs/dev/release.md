@@ -8,9 +8,9 @@ HTMLslide uses SemVer for app releases and a separate schema version for deck fo
 
 ## CI Workflows
 
-- `CI`: runs `pnpm install --frozen-lockfile`, `pnpm docs:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` on Ubuntu, plus `pnpm e2e:desktop` on macOS for Electron workspace/presenter smoke coverage.
-- `Alpha Package`: runs on manual dispatch, nightly schedule, and `v*` tags. It repeats the CI checks, runs macOS desktop Electron E2E before packaging, runs `pnpm package:alpha`, smokes the generated package, and uploads unsigned artifacts.
-- `Release macOS`: runs on manual dispatch and `v*` tags. It repeats docs/lint/typecheck/test/build/Electron E2E, imports a Developer ID certificate from GitHub Actions secrets, runs `pnpm package:release:macos`, notarizes and staples the DMG, uploads signed artifacts, and attaches them to the matching GitHub Release for tag builds.
+- `CI`: runs `pnpm install --frozen-lockfile`, `pnpm docs:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm perf:smoke`, `pnpm security:check`, and `pnpm build` on Ubuntu, plus `pnpm e2e:desktop` on macOS for Electron workspace/presenter smoke coverage.
+- `Alpha Package`: runs on manual dispatch, nightly schedule, and `v*` tags. It repeats the CI checks including `pnpm perf:smoke` and `pnpm security:check`, runs macOS desktop Electron E2E before packaging, runs `pnpm package:alpha`, smokes the generated package, and uploads unsigned artifacts.
+- `Release macOS`: runs on manual dispatch and `v*` tags. It repeats docs/lint/typecheck/test/perf/security/build/Electron E2E, imports a Developer ID certificate from GitHub Actions secrets, runs `pnpm package:release:macos`, notarizes and staples the DMG, uploads signed artifacts, and attaches them to the matching GitHub Release for tag builds.
 
 Both workflows intentionally fail early if the root package scaffold is missing required scripts. Add those scripts in the app scaffold rather than weakening workflow checks.
 
@@ -44,7 +44,15 @@ The smoke mounts the DMG, copies `HTMLslide.app` into a temporary install direct
 
 ## Alpha Checklist
 
-Before calling an alpha build public, verify:
+Before calling an alpha build public, generate an acceptance checklist and record the release-candidate evidence:
+
+```bash
+pnpm rc:checklist -- --channel alpha --ci-run-url <ci-url> --package-run-url <alpha-package-url> --artifact-url <dmg-url>
+```
+
+The generated Markdown file under `dist/acceptance/` is intentionally ignored by git. Attach or paste the completed checklist into the release candidate notes. It records the mandatory manual script from Phase 19.16: clean macOS account, DMG install, first launch, mock/local deck creation, BYOK when available, fake external agent, PDF/deckpkg export, external-monitor presentation, reopen, agent-run revert, CLI uninstall, and post-delete file cleanup.
+
+Also verify:
 
 - DMG/package installs and the app launches.
 - CLI shim installs and `htmlslide doctor` passes.

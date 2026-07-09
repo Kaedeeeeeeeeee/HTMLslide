@@ -9,6 +9,7 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm perf:smoke
+pnpm security:check
 pnpm build
 pnpm e2e:desktop
 ```
@@ -17,8 +18,8 @@ Required root package contract:
 
 - `packageManager` pinned to a pnpm version.
 - `pnpm-lock.yaml` committed.
-- `docs:check`, `lint`, `typecheck`, `test`, `perf:smoke`, `build`, and `e2e:desktop` scripts in `package.json`.
-- `package:alpha`, `smoke:package:alpha`, and `package:release:macos` scripts before macOS packaging is enabled.
+- `docs:check`, `lint`, `typecheck`, `test`, `perf:smoke`, `security:check`, `build`, and `e2e:desktop` scripts in `package.json`.
+- `package:alpha`, `smoke:package:alpha`, `package:release:macos`, and `rc:checklist` scripts before macOS packaging is enabled.
 
 ## Test Layers
 
@@ -33,7 +34,7 @@ Use deterministic fixtures and avoid real provider credentials in automated test
 - MCP tests: verify server startup, tool listing, path boundary enforcement, schema-valid reports, and artifact creation.
 - Electron and presenter tests: cover onboarding, workspace choice, mock agent deck creation, preview, checks, export, rehearsal mode, settings, notes, next/previous navigation, timer, and keyboard shortcuts.
 - Packaging tests: unsigned CI build, signed/notarized release workflow contract, DMG/package smoke checks, first-run setup, official skill installation, CLI shim install/repair/uninstall, and `htmlslide doctor`.
-- Security tests: API keys absent from logs/project files/settings JSON, credential-store save/clear behavior through injected fakes, protected write-manifest boundaries including symlink escapes, MCP traversal denial, third-party skill warnings, remote asset detection, malformed deckpkg rejection.
+- Security tests: API keys absent from logs/project files/settings JSON, credential-store save/clear behavior through injected fakes, protected write-manifest boundaries including symlink escapes, MCP traversal denial, third-party skill warnings, remote asset detection, malformed deckpkg rejection, committed-secret scanning, and high-severity dependency audit.
 - Performance tests: `pnpm perf:smoke` generates a temporary 20-slide deck, warms and measures desktop project preview loading, reloads a preview after one slide change, exports a 20-slide PDF, checks the 20-slide deck, and measures presenter next-slide state latency. CI enforces broad guardrails to catch obvious regressions; the product targets in the plan remain alpha/RC baseline targets because real UI preview and PDF export timings depend on host hardware.
 
 ## Performance Smoke
@@ -101,10 +102,16 @@ Compiler regression fixtures cover the Phase 19.5 deck families under `packages/
 
 ## Manual Release Smoke
 
-Each release candidate should be tested once on a clean macOS user account:
+Each release candidate must be tested once on a clean macOS user account. Generate the evidence template first:
 
-1. Install the DMG or unsigned alpha package.
-2. Launch the app.
+```bash
+pnpm rc:checklist -- --channel alpha --ci-run-url <ci-url> --package-run-url <package-run-url> --artifact-url <dmg-url>
+```
+
+The generated file lives under `dist/acceptance/` and is ignored by git. Complete it with Pass, Fail, or N/A plus evidence links before calling the build public. The required manual script is:
+
+1. Start from a clean macOS user account.
+2. Install the DMG or unsigned alpha package.
 3. Complete first-run setup.
 4. Create a deck with the mock/local provider.
 5. Create a deck with a BYOK provider when a test key is available.
@@ -112,11 +119,9 @@ Each release candidate should be tested once on a clean macOS user account:
 7. Export PDF and deckpkg.
 8. Present on an external monitor.
 9. Reopen the project.
-10. Remove the project from Recent and confirm the source folder remains on disk.
-11. Move or delete a recent project source file and confirm the Project Library marks it as Missing files.
-12. Revert an agent run.
-13. Uninstall the CLI shim.
-14. Delete the app and confirm no unexpected system files remain.
+10. Revert an agent run.
+11. Uninstall the CLI shim.
+12. Delete the app and confirm no unexpected system files remain.
 
 ## Contribution Expectations
 

@@ -18,6 +18,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "perf:smoke": "tsx scripts/perf/performance-smoke.ts",
+    "security:secrets": "node scripts/security/scan-secrets.mjs",
+    "security:audit": "pnpm audit --audit-level high",
+    "security:check": "pnpm security:secrets && pnpm security:audit",
     "docs:check": "node scripts/docs/check-public-alpha-docs.mjs",
     "e2e:desktop": "pnpm --filter @htmlslide/desktop e2e",
     "e2e:desktop:headed": "pnpm --filter @htmlslide/desktop e2e:headed",
@@ -25,6 +28,7 @@
     "package:release:macos": "node scripts/release/package-release-macos.mjs",
     "smoke:package:alpha": "node scripts/release/smoke-alpha-package.mjs",
     "verify:package:alpha": "pnpm package:alpha && pnpm smoke:package:alpha",
+    "rc:checklist": "node scripts/release/create-rc-acceptance.mjs",
     "cli": "pnpm --filter @htmlslide/cli htmlslide",
     "doctor": "pnpm --filter @htmlslide/cli htmlslide doctor"
   },

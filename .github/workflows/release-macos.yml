@@ -36,11 +36,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          required_scripts=(docs:check lint typecheck test build e2e:desktop package:release:macos)
+          required_scripts=(docs:check lint typecheck test perf:smoke security:check build e2e:desktop package:release:macos rc:checklist)
           missing_scripts="$(node <<'NODE'
           const fs = require('fs');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          const required = ['docs:check', 'lint', 'typecheck', 'test', 'build', 'e2e:desktop', 'package:release:macos'];
+          const required = ['docs:check', 'lint', 'typecheck', 'test', 'perf:smoke', 'security:check', 'build', 'e2e:desktop', 'package:release:macos', 'rc:checklist'];
           process.stdout.write(required.filter((name) => !pkg.scripts || !pkg.scripts[name]).join('\n'));
           NODE
           )"
@@ -97,6 +97,12 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      - name: Performance smoke
+        run: pnpm perf:smoke
+
+      - name: Security check
+        run: pnpm security:check
 
       - name: Build
         run: pnpm build

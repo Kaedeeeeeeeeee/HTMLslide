@@ -14,6 +14,8 @@ The signed workflow writes `signed-notarized` DMG and manifest artifacts, upload
 
 ## GitHub Actions
 
-CI runs lint, typecheck, tests, build, docs checks, and Electron E2E. The alpha package workflow runs the package smoke before uploading unsigned artifacts. The release workflow runs the same quality gates before signing and notarization.
+CI runs lint, typecheck, tests, performance smoke, security checks, build, docs checks, and Electron E2E. The alpha package workflow runs the package smoke before uploading unsigned artifacts. The release workflow runs the same quality gates before signing and notarization.
+
+Every release candidate must also have a completed manual acceptance checklist generated with `pnpm rc:checklist`. The generated checklist is release evidence, not source code, and should be attached to the candidate notes.
 
 See [dev/release.md](dev/release.md) for the detailed release contract.

@@ -117,6 +117,64 @@ describe("HTMLslide linter", () => {
     expectMachineRepairableIssues(report.issues);
   });
 
+  it("detects low contrast inline text styles", async () => {
+    const report = await checkProject(fixturePath("linter-contrast"));
+    const contrastIssue = report.issues.find((issue) => issue.type === "low-contrast");
+
+    expect(report.status).toBe("passed");
+    expect(report.issues.map((issue) => issue.type)).toEqual(["low-contrast"]);
+    expect(contrastIssue).toMatchObject({
+      severity: "warning",
+      slideId: "001-contrast",
+      path: "slides/001-contrast.html",
+      selector: "p.low-contrast",
+      measurement: {
+        minContrastRatio: 4.5,
+        foreground: "#777777",
+        background: "#888888"
+      }
+    });
+    expect(contrastIssue?.measurement?.contrastRatio).toEqual(expect.any(Number));
+    expect(Number(contrastIssue?.measurement?.contrastRatio)).toBeLessThan(4.5);
+    expectMachineRepairableIssues(report.issues);
+  });
+
+  it("detects remote font references in an independent fixture", async () => {
+    const report = await checkProject(fixturePath("linter-remote-font"));
+    const fontIssue = report.issues.find((issue) => issue.type === "remote-font");
+
+    expect(report.status).toBe("passed");
+    expect(report.issues.map((issue) => issue.type)).toEqual(["remote-font"]);
+    expect(fontIssue).toMatchObject({
+      severity: "warning",
+      slideId: "001-remote-font",
+      path: "slides/001-remote-font.html",
+      selector: "link[href]",
+      measurement: {
+        url: "https://fonts.googleapis.com/css2?family=Inter:wght@700"
+      }
+    });
+    expectMachineRepairableIssues(report.issues);
+  });
+
+  it("detects slides without speaker notes in an independent fixture", async () => {
+    const report = await checkProject(fixturePath("linter-missing-notes"));
+    const notesIssue = report.issues.find((issue) => issue.type === "missing-notes");
+
+    expect(report.status).toBe("passed");
+    expect(report.issues.map((issue) => issue.type)).toEqual(["missing-notes"]);
+    expect(notesIssue).toMatchObject({
+      severity: "warning",
+      slideId: "001-missing-notes",
+      path: "deck.json",
+      selector: "slides[].notes",
+      measurement: {
+        minWords: 12
+      }
+    });
+    expectMachineRepairableIssues(report.issues);
+  });
+
   it("normalizes core schema validation issues into repairable linter issues", async () => {
     const report = await checkProject(fixturePath("linter-schema-invalid"));
 

@@ -45,6 +45,26 @@
       "name": "linter-safe-area",
       "kind": "linter-invalid",
       "expectedIssueType": "safe-area-violation"
+    },
+    {
+      "name": "linter-contrast",
+      "kind": "linter-warning",
+      "expectedIssueType": "low-contrast"
+    },
+    {
+      "name": "linter-remote-font",
+      "kind": "linter-warning",
+      "expectedIssueType": "remote-font"
+    },
+    {
+      "name": "linter-missing-notes",
+      "kind": "linter-warning",
+      "expectedIssueType": "missing-notes"
+    },
+    {
+      "name": "linter-valid-clean",
+      "kind": "valid",
+      "expectedSlideCount": 1
     }
   ]
 }

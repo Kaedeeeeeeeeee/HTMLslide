@@ -39,7 +39,7 @@ Every checker-produced issue must include `slideId`, `severity`, `type`, `messag
 ## Checks
 
 - Core project checks: `deck.json` schema, duplicate slide ids, safe project paths, and referenced slide, notes, and theme files via `@htmlslide/core`.
-- Source checks: `data-slide-id` mismatch, safe area violation, text overflow, remote asset, remote font, remote script, missing local asset, title too long, and body too dense.
+- Source checks: `data-slide-id` mismatch, safe area violation, text overflow, low contrast inline text, remote asset, remote font, remote script, missing local asset, title too long, and body too dense.
 - Notes checks: missing notes references and notes files that are too short for a useful talk track.
 - Export checks: requested PDF, HTML, deckpkg, speaker notes, and thumbnail artifacts are reported when missing or older than deck sources.
 
@@ -48,7 +48,8 @@ absolute or fixed positioned elements with inline pixel geometry that cross `dec
 text-overflow checker reports `text-overflow` when a slide source explicitly declares `data-htmlslide-overflow="text"`
 or when a text-bearing element has clipped overflow, a fixed `height` or `max-height`, and estimated text height above
 the container. Issues include pixel overflow measurements and known bounds so agents can repair them without a browser
-session.
+session. The contrast checker reports `low-contrast` warnings for text-bearing elements with parseable inline
+`color` plus `background-color` or `background` declarations below the WCAG AA 4.5:1 text contrast threshold.
 
 ## Sorting
 

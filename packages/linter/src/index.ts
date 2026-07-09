@@ -125,6 +125,21 @@ type TextOverflowFinding = {
   estimatedContentHeightPx?: number;
 };
 
+type RgbColor = {
+  red: number;
+  green: number;
+  blue: number;
+  source: string;
+};
+
+type ContrastFinding = {
+  selector: string;
+  foreground: string;
+  background: string;
+  contrastRatio: number;
+  minContrastRatio: number;
+};
+
 type ExportExpectation = {
   artifactPath: string;
   artifactProjectPath: string;
@@ -138,6 +153,7 @@ const TITLE_MAX_CHARACTERS = 72;
 const BODY_MAX_WORDS = 120;
 const BODY_MAX_CHARACTERS = 850;
 const NOTES_MIN_WORDS = 12;
+const MIN_TEXT_CONTRAST_RATIO = 4.5;
 const DEFAULT_DECLARED_OVERFLOW_BOTTOM_PX = 1;
 const DEFAULT_TEXT_CONTAINER_WIDTH_PX = 960;
 const DEFAULT_TEXT_FONT_SIZE_PX = 28;
@@ -155,6 +171,10 @@ const REMOTE_URL_PATTERN = /^https?:\/\//i;
 const URL_SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*:/i;
 const CJK_CHARACTER_PATTERN = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]/g;
 const LATIN_WORD_PATTERN = /[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)*/g;
+const CSS_NAMED_COLORS: Record<string, [number, number, number]> = {
+  black: [0, 0, 0],
+  white: [255, 255, 255]
+};
 
 const normalizeInput = (project: LintProjectInput | string): NormalizedLintInput =>
   typeof project === "string" ? { projectPath: project } : project;
@@ -326,6 +346,7 @@ const checkSlide = async (
     issues.push(...checkSafeArea(slide, html, layout));
   }
   issues.push(...checkTextOverflow(slide, html));
+  issues.push(...checkTextContrast(slide, html));
   issues.push(...checkBodyDensity(slide, html));
 
   const resourceResult = await checkResourceReferences({
@@ -468,6 +489,26 @@ const checkTextOverflow = (slide: SlideCheckContext, html: string): HtmlslideIss
       },
       suggestedFix: "Shorten body copy, split the content across slides, or move the text into speaker notes.",
       agentInstruction: `Fix ${overflow.selector} in ${slide.sourceProjectPath} for slide ${slide.id}. Keep the fixed viewport layout and prefer shortening or splitting content before reducing font size.`
+    })
+  );
+
+const checkTextContrast = (slide: SlideCheckContext, html: string): HtmlslideIssue[] =>
+  extractLowContrastText(html).map((contrast) =>
+    makeIssue({
+      slideId: slide.id,
+      severity: "warning",
+      type: "low-contrast",
+      path: slide.sourceProjectPath,
+      selector: contrast.selector,
+      message: `Text contrast ratio ${formatContrastRatio(contrast.contrastRatio)} is below ${contrast.minContrastRatio}.`,
+      measurement: {
+        contrastRatio: roundContrastRatio(contrast.contrastRatio),
+        minContrastRatio: contrast.minContrastRatio,
+        foreground: contrast.foreground,
+        background: contrast.background
+      },
+      suggestedFix: "Increase the foreground/background contrast until the text meets WCAG AA contrast.",
+      agentInstruction: `Adjust ${contrast.selector} in ${slide.sourceProjectPath} for slide ${slide.id} so text contrast is at least ${contrast.minContrastRatio}:1.`
     })
   );
 
@@ -1110,6 +1151,59 @@ const extractTextOverflows = (html: string): TextOverflowFinding[] => {
   return overflows;
 };
 
+const extractLowContrastText = (html: string): ContrastFinding[] => {
+  const findings: ContrastFinding[] = [];
+  const tagPattern = /<([A-Za-z][A-Za-z0-9:-]*)([^>]*)>/g;
+  let tagMatch: RegExpExecArray | null;
+
+  while ((tagMatch = tagPattern.exec(html)) !== null) {
+    const tag = tagMatch[1]?.toLowerCase();
+    if (!tag || !TEXT_CONTAINER_TAGS.has(tag)) {
+      continue;
+    }
+
+    const attributes = tagMatch[2] ?? "";
+    const style = getAttributeValue(attributes, "style");
+    if (!style) {
+      continue;
+    }
+
+    const contentStartIndex = tagPattern.lastIndex;
+    const closeIndex = findClosingTagIndex(html, tag, contentStartIndex);
+    if (closeIndex === -1) {
+      continue;
+    }
+
+    const text = htmlToText(html.slice(contentStartIndex, closeIndex));
+    if (!text) {
+      continue;
+    }
+
+    const declarations = parseStyleDeclarations(style);
+    const foreground = parseCssColor(declarations.get("color"));
+    const background =
+      parseCssColor(declarations.get("background-color")) ?? parseCssColor(declarations.get("background"));
+    if (!foreground || !background) {
+      continue;
+    }
+
+    const contrastRatio = calculateContrastRatio(foreground, background);
+    if (contrastRatio >= MIN_TEXT_CONTRAST_RATIO) {
+      continue;
+    }
+
+    findings.push({
+      selector: selectorForTaggedElement(tag, attributes),
+      foreground: foreground.source,
+      background: background.source,
+      contrastRatio,
+      minContrastRatio: MIN_TEXT_CONTRAST_RATIO
+    });
+  }
+
+  return findings;
+};
+
 const declaresTextOverflow = (attributes: string): boolean => {
   const value = getAttributeValue(attributes, "data-htmlslide-overflow")?.trim().toLowerCase();
   if (value && DECLARED_TEXT_OVERFLOW_VALUES.has(value)) {
@@ -1243,6 +1337,92 @@ const parseLineHeightPx = (value: string | undefined, fontSizePx: number): numbe
 
   return Math.ceil(fontSizePx * DEFAULT_LINE_HEIGHT_RATIO);
 };
+
+const parseCssColor = (value: string | undefined): RgbColor | undefined => {
+  if (!value) {
+    return undefined;
+  }
+
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed || trimmed === "transparent" || trimmed.includes("var(")) {
+    return undefined;
+  }
+
+  const hexMatch = trimmed.match(/#([0-9a-f]{3}|[0-9a-f]{6})\b/i);
+  if (hexMatch) {
+    const hex = hexMatch[1] ?? "";
+    const expanded =
+      hex.length === 3
+        ? hex
+            .split("")
+            .map((character) => `${character}${character}`)
+            .join("")
+        : hex;
+    return {
+      red: Number.parseInt(expanded.slice(0, 2), 16),
+      green: Number.parseInt(expanded.slice(2, 4), 16),
+      blue: Number.parseInt(expanded.slice(4, 6), 16),
+      source: `#${hex}`
+    };
+  }
+
+  const rgbMatch = trimmed.match(/rgba?\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)(?:\s*,\s*[0-9.]+)?\s*\)/i);
+  if (rgbMatch) {
+    const red = parseCssColorChannel(rgbMatch[1]);
+    const green = parseCssColorChannel(rgbMatch[2]);
+    const blue = parseCssColorChannel(rgbMatch[3]);
+    if (red !== undefined && green !== undefined && blue !== undefined) {
+      return {
+        red,
+        green,
+        blue,
+        source: rgbMatch[0].replace(/\s+/g, " ")
+      };
+    }
+  }
+
+  for (const [name, [red, green, blue]] of Object.entries(CSS_NAMED_COLORS)) {
+    const pattern = new RegExp(`(?:^|\\s)${name}(?:\\s|$)`, "i");
+    if (pattern.test(trimmed)) {
+      return { red, green, blue, source: name };
+    }
+  }
+
+  return undefined;
+};
+
+const parseCssColorChannel = (value: string | undefined): number | undefined => {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 255) {
+    return undefined;
+  }
+
+  return Math.round(parsed);
+};
+
+const calculateContrastRatio = (foreground: RgbColor, background: RgbColor): number => {
+  const foregroundLuminance = relativeLuminance(foreground);
+  const backgroundLuminance = relativeLuminance(background);
+  const lighter = Math.max(foregroundLuminance, backgroundLuminance);
+  const darker = Math.min(foregroundLuminance, backgroundLuminance);
+  return (lighter + 0.05) / (darker + 0.05);
+};
+
+const relativeLuminance = (color: RgbColor): number => {
+  const [red, green, blue] = [color.red, color.green, color.blue].map((channel) => {
+    const normalized = channel / 255;
+    return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * (red ?? 0) + 0.7152 * (green ?? 0) + 0.0722 * (blue ?? 0);
+};
+
+const roundContrastRatio = (ratio: number): number => Math.round(ratio * 100) / 100;
+
+const formatContrastRatio = (ratio: number): string => `${roundContrastRatio(ratio)}:1`;
 
 const findClosingTagIndex = (html: string, tag: string, contentStartIndex: number): number =>
   html.toLowerCase().indexOf(`</${tag}`, contentStartIndex);

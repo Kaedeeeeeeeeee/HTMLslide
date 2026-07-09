@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "0.1.0",
+  "id": "deck_linter_remote_font",
+  "title": "Linter Remote Font",
+  "language": "en-US",
+  "aspectRatio": "16:9",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "slides": [
+    {
+      "id": "001-remote-font",
+      "title": "Remote Font Fixture",
+      "source": "slides/001-remote-font.html",
+      "notes": "notes/001-remote-font.md",
+      "durationSec": 60,
+      "kind": "content",
+      "status": "draft"
+    }
+  ]
+}

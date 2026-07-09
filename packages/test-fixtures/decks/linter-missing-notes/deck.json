@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "0.1.0",
+  "id": "deck_linter_missing_notes",
+  "title": "Linter Missing Notes",
+  "language": "en-US",
+  "aspectRatio": "16:9",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "slides": [
+    {
+      "id": "001-missing-notes",
+      "title": "Missing Notes Fixture",
+      "source": "slides/001-missing-notes.html",
+      "durationSec": 60,
+      "kind": "content",
+      "status": "draft"
+    }
+  ]
+}

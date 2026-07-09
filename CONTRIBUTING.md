@@ -15,6 +15,7 @@ HTMLslide is a local-first presentation studio for AI-generated HTML/PDF decks. 
 Root package scripts are expected to expose:
 
 ```bash
+pnpm docs:check
 pnpm lint
 pnpm typecheck
 pnpm test

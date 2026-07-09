@@ -31,7 +31,7 @@ jobs:
           set -euo pipefail
 
           if [[ ! -f package.json ]]; then
-            echo "::error title=Missing package.json::Alpha packaging expects a root package.json with pnpm scripts: lint, typecheck, test, build, package:alpha, smoke:package:alpha."
+            echo "::error title=Missing package.json::Alpha packaging expects a root package.json with pnpm scripts: docs:check, lint, typecheck, test, build, package:alpha, smoke:package:alpha."
             exit 1
           fi
 
@@ -43,7 +43,7 @@ jobs:
           node <<'NODE'
           const fs = require('fs');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          const requiredScripts = ['lint', 'typecheck', 'test', 'build', 'e2e:desktop', 'package:alpha', 'smoke:package:alpha'];
+          const requiredScripts = ['docs:check', 'lint', 'typecheck', 'test', 'build', 'e2e:desktop', 'package:alpha', 'smoke:package:alpha'];
           const missing = requiredScripts.filter((name) => !pkg.scripts || !pkg.scripts[name]);
 
           if (missing.length > 0) {
@@ -69,6 +69,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Check public docs
+        run: pnpm docs:check
 
       - name: Lint
         run: pnpm lint

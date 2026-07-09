@@ -4,6 +4,7 @@ HTMLslide tests start with the package scripts and expand into fixtures as the a
 
 ```bash
 pnpm install --frozen-lockfile
+pnpm docs:check
 pnpm lint
 pnpm typecheck
 pnpm test
@@ -15,7 +16,7 @@ Required root package contract:
 
 - `packageManager` pinned to a pnpm version.
 - `pnpm-lock.yaml` committed.
-- `lint`, `typecheck`, `test`, `build`, and `e2e:desktop` scripts in `package.json`.
+- `docs:check`, `lint`, `typecheck`, `test`, `build`, and `e2e:desktop` scripts in `package.json`.
 - `package:alpha` and `smoke:package:alpha` scripts before unsigned alpha packaging is enabled.
 
 ## Test Layers

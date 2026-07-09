@@ -105,7 +105,9 @@ deck:
 
 Official bundled skills must use `MIT` or `Apache-2.0`, support deck schema `0.1.0`, install to both global and project targets, and declare no scripts, network access, remote assets, secret writes, or export writes.
 
-The desktop official skills panel must expose the registry as an inspectable library, not only as an install button. Each skill row shows the name, description, deck type, risk level, license, and current install state (`missing`, `stale`, or `installed`) so users can review what will be installed or updated before running an agent.
+The desktop official skills panel must expose the registry as an inspectable library, not only as an install button. Each skill row shows the name, description, deck type, risk level, license, version, and current install state (`missing`, `stale`, or `installed`) so users can review what will be installed or updated before running an agent.
+
+Each skill row must support inspection before installation. The inspection view exposes the author, entrypoint, supported deck schema, output, viewport, supports list, install targets, resolved install path, declared risk flags, and a read-only preview of the generated `SKILL.md` entrypoint.
 
 ## Licenses
 

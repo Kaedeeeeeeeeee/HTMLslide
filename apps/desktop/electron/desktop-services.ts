@@ -197,10 +197,28 @@ export type DesktopOfficialSkillsState = {
 
 export type DesktopOfficialSkillSummary = {
   name: string;
+  version: string;
+  author: string;
   description: string;
+  entrypoint: string;
+  supportedDeckSchema: string[];
+  installTargets: string[];
   type: string;
+  output: string;
+  viewport: string;
+  supports: string[];
   riskLevel: string;
+  risk: {
+    scripts: boolean;
+    network: boolean;
+    remoteAssets: boolean;
+    writesExports: boolean;
+    writesSecrets: boolean;
+    modifiesSource: boolean;
+  };
   license: string;
+  installPath: string;
+  markdownPreview: string;
   installed: boolean;
   stale: boolean;
   status: "installed" | "missing" | "stale";
@@ -1324,16 +1342,7 @@ function officialSkillsBaseState(options: DesktopOfficialSkillsOptions = {}): De
     message: "Official skills have not been checked yet.",
     missing: [],
     names: OFFICIAL_SKILLS.map((skill) => skill.metadata.name),
-    skills: OFFICIAL_SKILLS.map((skill) => ({
-      name: skill.metadata.name,
-      description: skill.metadata.description,
-      type: skill.metadata.deck.type,
-      riskLevel: skill.metadata.riskLevel,
-      license: skill.metadata.license,
-      installed: false,
-      stale: false,
-      status: "missing"
-    })),
+    skills: OFFICIAL_SKILLS.map((skill) => officialSkillSummary(htmlslideHomeDir, skill, "missing")),
     skillCount: OFFICIAL_SKILLS.length,
     skillsDir,
     stale: [],
@@ -1344,6 +1353,41 @@ function officialSkillsBaseState(options: DesktopOfficialSkillsOptions = {}): De
 
 function officialSkillEntryPath(htmlslideHomeDir: string, skillName: string): string {
   return path.join(htmlslideHomeDir, "skills", skillName, "SKILL.md");
+}
+
+function officialSkillSummary(
+  htmlslideHomeDir: string,
+  skill: (typeof OFFICIAL_SKILLS)[number],
+  status: DesktopOfficialSkillSummary["status"]
+): DesktopOfficialSkillSummary {
+  return {
+    name: skill.metadata.name,
+    version: skill.metadata.version,
+    author: skill.metadata.author ?? "HTMLslide",
+    description: skill.metadata.description,
+    entrypoint: skill.metadata.entrypoint,
+    supportedDeckSchema: [...skill.metadata.supportedDeckSchema],
+    installTargets: [...skill.metadata.installTargets],
+    type: skill.metadata.deck.type,
+    output: skill.metadata.deck.output,
+    viewport: skill.metadata.deck.viewport,
+    supports: [...skill.metadata.deck.supports],
+    riskLevel: skill.metadata.riskLevel,
+    risk: {
+      scripts: skill.metadata.deck.risk.scripts,
+      network: skill.metadata.deck.risk.network,
+      remoteAssets: skill.metadata.deck.risk.remoteAssets,
+      writesExports: skill.metadata.deck.risk.writesExports,
+      writesSecrets: skill.metadata.deck.risk.writesSecrets,
+      modifiesSource: skill.metadata.deck.risk.modifiesSource
+    },
+    license: skill.metadata.license,
+    installPath: officialSkillEntryPath(htmlslideHomeDir, skill.metadata.name),
+    markdownPreview: skill.markdown.slice(0, 900).trim(),
+    installed: status === "installed",
+    stale: status === "stale",
+    status
+  };
 }
 
 async function readTextIfExists(filePath: string): Promise<string | undefined> {
@@ -1409,16 +1453,7 @@ export async function getDesktopOfficialSkills(
     missing,
     skills: OFFICIAL_SKILLS.map((skill) => {
       const status = states.get(skill.metadata.name) ?? "missing";
-      return {
-        name: skill.metadata.name,
-        description: skill.metadata.description,
-        type: skill.metadata.deck.type,
-        riskLevel: skill.metadata.riskLevel,
-        license: skill.metadata.license,
-        installed: status === "installed",
-        stale: status === "stale",
-        status
-      };
+      return officialSkillSummary(base.htmlslideHomeDir, skill, status);
     }),
     stale,
     status: installed ? "passed" : "warning",

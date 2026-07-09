@@ -1457,6 +1457,34 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(page.getByRole("heading", { name: "CLI Integration", exact: true })).toBeVisible();
     await expect(page.locator(".cli-settings-details code", { hasText: shimPath })).toBeVisible();
     await expect(page.getByRole("heading", { name: "HTMLslide Skills", exact: true })).toBeVisible();
+    const skillsPanel = page.locator(".cli-settings-card").filter({
+      has: page.getByRole("heading", { name: "HTMLslide Skills", exact: true })
+    });
+    await expect(skillsPanel.getByText("0 / 12")).toBeVisible();
+    await expect(skillsPanel.getByText("12 missing or stale")).toBeVisible();
+    await expect(skillsPanel.getByText("7 low / 5 medium")).toBeVisible();
+    await expect(skillsPanel.getByText("7 deck categories")).toBeVisible();
+    await skillsPanel.getByRole("button", { name: "Missing", exact: true }).click();
+    await skillsPanel.getByLabel("Type").selectOption("quality");
+    const antiAiSlopSkill = skillsPanel.getByRole("listitem", { name: "anti-ai-slop missing" });
+    await expect(antiAiSlopSkill).toBeVisible();
+    await expect(skillsPanel.getByRole("listitem", { name: "deck-repair missing" })).toBeVisible();
+    await expect(skillsPanel.getByRole("listitem", { name: "deck-architect missing" })).toHaveCount(0);
+    await antiAiSlopSkill.getByRole("button", { name: "Inspect", exact: true }).click();
+    const antiAiSlopInspection = antiAiSlopSkill.locator(".official-skill-inspection");
+    await expect(antiAiSlopInspection.getByText("Author", { exact: true })).toBeVisible();
+    await expect(antiAiSlopInspection.getByText("HTMLslide", { exact: true })).toBeVisible();
+    await expect(antiAiSlopInspection.getByText("Version", { exact: true })).toBeVisible();
+    await expect(antiAiSlopInspection.getByText("Schema", { exact: true })).toBeVisible();
+    await expect(antiAiSlopInspection.getByText("0.1.0", { exact: true })).toHaveCount(2);
+    await expect(antiAiSlopInspection.getByText("SKILL.md", { exact: true })).toBeVisible();
+    await expect(antiAiSlopInspection.getByText("fixed-viewport, speaker-notes, deck-check")).toBeVisible();
+    await expect(antiAiSlopInspection.getByText(path.join(htmlslideHomeDir, "skills", "anti-ai-slop", "SKILL.md"))).toBeVisible();
+    await expect(antiAiSlopSkill.getByLabel("anti-ai-slop risk flags")).toContainText("Scripts: no");
+    await expect(antiAiSlopSkill.getByLabel("anti-ai-slop risk flags")).toContainText("Modifies source: yes");
+    await expect(antiAiSlopSkill.getByLabel("anti-ai-slop markdown preview")).toContainText("name: anti-ai-slop");
+    await skillsPanel.getByRole("button", { name: "All", exact: true }).click();
+    await skillsPanel.getByLabel("Type").selectOption("all");
 
     await page.getByRole("button", { name: "Reinstall CLI", exact: true }).click();
     await expect(page.locator(".settings-note", { hasText: /Installed HTMLslide CLI shim/ })).toBeVisible({ timeout: 30_000 });

@@ -89,10 +89,28 @@ export type DesktopOfficialSkillsState = {
 
 export type DesktopOfficialSkillSummary = {
   name: string;
+  version: string;
+  author: string;
   description: string;
+  entrypoint: string;
+  supportedDeckSchema: string[];
+  installTargets: string[];
   type: string;
+  output: string;
+  viewport: string;
+  supports: string[];
   riskLevel: string;
+  risk: {
+    scripts: boolean;
+    network: boolean;
+    remoteAssets: boolean;
+    writesExports: boolean;
+    writesSecrets: boolean;
+    modifiesSource: boolean;
+  };
   license: string;
+  installPath: string;
+  markdownPreview: string;
   installed: boolean;
   stale: boolean;
   status: "installed" | "missing" | "stale";

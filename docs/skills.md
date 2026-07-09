@@ -8,6 +8,8 @@ The desktop app installs official skills during setup into the HTMLslide home di
 
 The first official pack includes planning, visual direction, design-system, content, data, quality, and brand-system skills.
 
+The `deck-architect`, `visual-direction`, `deck-repair`, and `brand-kit` skills include deeper operating playbooks for the core production loop: planning the story, selecting a visual direction, repairing deck quality issues, and converting brand guidance into reusable theme rules.
+
 Settings and the Skills library show the official pack as an inspectable skill library. Each row includes the skill description, deck type, risk level, license, version, and install state so stale or missing skills can be reviewed before installing. The library can be filtered by install state and deck type to inspect planning, visual-direction, design-system, content, data, quality, and brand-system skills separately.
 
 Use Inspect on a skill row to review the official metadata before writing files: author, entrypoint, supported deck schema, output type, viewport, supported capabilities, install targets, resolved install path, risk flags, and the beginning of the generated `SKILL.md`.

@@ -109,6 +109,17 @@ The desktop official skills panel must expose the registry as an inspectable lib
 
 Each skill row must support inspection before installation. The inspection view exposes the author, entrypoint, supported deck schema, output, viewport, supports list, install targets, resolved install path, declared risk flags, and a read-only preview of the generated `SKILL.md` entrypoint.
 
+## Official Skill Body Contract
+
+Official skill bodies are product guidance shown in the desktop Inspect view. High-value official skills must include more than metadata and shared operating boundaries. At minimum, detailed official bodies include when to use the skill, inputs or required context, a workflow or rule set, a concrete output contract, and checklist-style guidance with enough project-specific terms to guide an agent without another prompt.
+
+The first detailed official bodies cover:
+
+- `deck-architect`: brief, outline, narrative structure, slide intent, and source-safe planning output.
+- `visual-direction`: 3 to 6 direction cards, typography, color, fixed-canvas layout rules, and selection notes.
+- `deck-repair`: `htmlslide check --json` triage, overflow, contrast, assets, and remaining issue reporting.
+- `brand-kit`: semantic tokens, layout rules, logo usage, contrast, license safety, and fallback choices.
+
 ## Licenses
 
 Known licenses:

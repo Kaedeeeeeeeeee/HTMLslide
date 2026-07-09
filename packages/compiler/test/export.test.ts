@@ -1,4 +1,4 @@
-import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, cp, mkdtemp, readFile, rm } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
@@ -12,6 +12,7 @@ import {
   readPngSize,
   type CompilerProjectInput
 } from "../src/index";
+import { comparePngWithGolden } from "./png-visual-diff";
 
 type DeckJson = {
   title: string;
@@ -33,6 +34,8 @@ type DeckJson = {
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const goldenFixturePath = path.resolve(testDir, "../../test-fixtures/decks/golden-export-basic");
 const goldenOutputPath = path.resolve(testDir, "goldens/golden-export-basic");
+const visualDiffOutputPath = path.resolve(testDir, "../../../dist/visual-regression/compiler");
+const fallbackThumbnailDiffThreshold = 0;
 
 const copyGoldenFixture = async (): Promise<{ root: string; projectPath: string; project: CompilerProjectInput }> => {
   const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-export-"));
@@ -77,18 +80,6 @@ const zipBytes = async (zip: JSZip, filePath: string): Promise<Uint8Array> => {
 };
 
 const sha256 = (bytes: Uint8Array | string): string => createHash("sha256").update(bytes).digest("hex");
-
-const expectBytesToMatchGolden = async (actualPath: string, goldenPath: string): Promise<void> => {
-  const actual = await readFile(actualPath);
-  const golden = await readFile(goldenPath);
-  expect({
-    bytes: actual.byteLength,
-    hash: sha256(actual)
-  }).toEqual({
-    bytes: golden.byteLength,
-    hash: sha256(golden)
-  });
-};
 
 const artifactHashes = async (project: CompilerProjectInput) => {
   const exported = await exportDeck(project);
@@ -237,15 +228,46 @@ describe("exportDeck", () => {
   it("matches golden fallback thumbnail PNGs", async () => {
     const { root, project } = await copyGoldenFixture();
     try {
+      await rm(visualDiffOutputPath, { recursive: true, force: true });
       const exported = await exportDeck(project);
       expect(exported.artifacts.thumbnails).toHaveLength(2);
 
       for (const thumbnailPath of exported.artifacts.thumbnails ?? []) {
-        await expectBytesToMatchGolden(
-          thumbnailPath,
-          path.join(goldenOutputPath, "thumbnails", path.basename(thumbnailPath))
-        );
+        const result = await comparePngWithGolden({
+          actualPath: thumbnailPath,
+          goldenPath: path.join(goldenOutputPath, "thumbnails", path.basename(thumbnailPath)),
+          artifactDir: visualDiffOutputPath,
+          artifactName: path.basename(thumbnailPath, ".png"),
+          maxDiffRatio: fallbackThumbnailDiffThreshold
+        });
+        expect({
+          height: result.height,
+          width: result.width
+        }).toEqual({ width: 960, height: 540 });
+        expect(result.diffRatio, result.message).toBeLessThanOrEqual(fallbackThumbnailDiffThreshold);
       }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("writes visual diff artifacts when a thumbnail exceeds the diff threshold", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-visual-diff-"));
+    try {
+      const artifactDir = path.join(root, "artifacts");
+      const result = await comparePngWithGolden({
+        actualPath: path.join(goldenOutputPath, "thumbnails", "001-title.png"),
+        goldenPath: path.join(goldenOutputPath, "thumbnails", "002-artifacts.png"),
+        artifactDir,
+        artifactName: "thumbnail-mismatch",
+        maxDiffRatio: 0
+      });
+
+      expect(result.diffRatio).toBeGreaterThan(0);
+      expect(result.artifactsWritten).toBe(true);
+      await expect(access(path.join(artifactDir, "thumbnail-mismatch-before.png"))).resolves.toBeUndefined();
+      await expect(access(path.join(artifactDir, "thumbnail-mismatch-after.png"))).resolves.toBeUndefined();
+      await expect(access(path.join(artifactDir, "thumbnail-mismatch-diff.png"))).resolves.toBeUndefined();
     } finally {
       await rm(root, { recursive: true, force: true });
     }

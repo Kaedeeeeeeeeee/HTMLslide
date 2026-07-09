@@ -82,9 +82,9 @@ Golden deck output should include PNG comparisons and PDF metadata checks. Start
 - Small thumbnails: at most 0.5 percent diff.
 - Full slide screenshots: at most 0.2 percent diff.
 
-The compiler fallback thumbnail path currently uses byte-exact PNG goldens under `packages/compiler/test/goldens/` because those PNGs are deterministic and generated without browser screenshots. Browser-rendered slide screenshots should use the percentage thresholds above.
+The compiler fallback thumbnail path currently uses PNG goldens under `packages/compiler/test/goldens/` because those PNGs are deterministic and generated without browser screenshots. Fallback thumbnails must have zero pixel diff against their goldens. Browser-rendered slide screenshots should use the percentage thresholds above.
 
-When a diff fails in CI, upload `before.png`, `after.png`, and `diff.png` as workflow artifacts.
+The compiler golden test decodes PNG pixels and compares fallback thumbnails against `packages/compiler/test/goldens/`. On failure it writes `before.png`, `after.png`, and `diff.png` under `dist/visual-regression/compiler/`; CI and the alpha package workflow upload that directory as a failed-run artifact when present.
 
 ## Manual Release Smoke
 

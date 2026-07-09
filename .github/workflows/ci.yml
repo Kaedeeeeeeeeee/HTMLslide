@@ -80,6 +80,15 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Upload visual regression artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-regression-${{ github.job }}-${{ github.run_attempt }}
+          path: dist/visual-regression/**
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Build
         run: pnpm build
 

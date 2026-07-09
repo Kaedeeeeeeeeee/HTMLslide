@@ -32,6 +32,7 @@ This is the public alpha documentation for HTMLslide.
 ## Contributors
 
 - [Contributing](contributing.md)
+- [Code of Conduct](code-of-conduct.md)
 - [Testing](testing.md)
 - [Release](release.md)
 - [Security](security.md)

@@ -16,10 +16,14 @@ Root package scripts are expected to expose:
 
 ```bash
 pnpm docs:check
+pnpm docs:build
+pnpm version:check
 pnpm lint
 pnpm typecheck
 pnpm test
+pnpm security:check
 pnpm build
+pnpm e2e:desktop
 ```
 
 Unsigned alpha packaging additionally expects:
@@ -44,6 +48,10 @@ Run the narrowest relevant test first, then the broader suite when practical.
 ## Pull Requests
 
 PRs should include a short summary, tests run, screenshots or artifact links for UI/export changes, and any breaking changes. Keep PRs scoped to one ownership area where possible.
+
+## Code of Conduct
+
+Contributors must follow [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Report security issues through private vulnerability reporting instead of public issues.
 
 ## Skill and Template Contributions
 

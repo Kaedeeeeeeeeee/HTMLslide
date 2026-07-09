@@ -7,7 +7,10 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 const requiredFiles = {
-  "README.md": ["HTMLslide", "Quick start", "Current alpha status", "docs/index.md", "docs:build", "version:check"],
+  "README.md": ["HTMLslide", "Quick start", "Current alpha status", "docs/index.md", "docs:build", "version:check", "CODE_OF_CONDUCT.md"],
+  "CONTRIBUTING.md": ["Contributing", "docs:check", "version:check", "security:check", "Code of Conduct"],
+  "CODE_OF_CONDUCT.md": ["Code of Conduct", "Expected Behavior", "Unacceptable Behavior", "Reporting"],
+  "SECURITY.md": ["Security Policy", "Reporting a Vulnerability", "Security Requirements"],
   "docs/index.md": ["HTMLslide Documentation", "Install", "No AI", "BYOK", "External agents"],
   "docs/install.md": ["Install HTMLslide", "unsigned alpha", "not Developer ID signed", "not notarized", "CLI shim"],
   "docs/getting-started.md": ["Getting Started", "No AI", "Local Mock", "Export"],
@@ -24,7 +27,8 @@ const requiredFiles = {
   "docs/presenter-mode.md": ["Presenter Mode", "Rehearsal", "Audience window", "dual-screen"],
   "docs/exporting.md": ["Exporting", "PDF", "deckpkg", "thumbnails", "notes.json"],
   "docs/troubleshooting.md": ["Troubleshooting", "Gatekeeper", "CLI", "provider", "deckpkg"],
-  "docs/contributing.md": ["Contributing", "development contract", "no secrets", "tests", "docs:build", "version:check"],
+  "docs/contributing.md": ["Contributing", "development contract", "no secrets", "conduct", "tests", "docs:build", "version:check"],
+  "docs/code-of-conduct.md": ["Code of Conduct", "expected behavior", "unacceptable behavior", "reporting"],
   "docs/testing.md": ["Testing", "pnpm lint", "pnpm test", "pnpm e2e:desktop", "package smoke", "docs:build", "version:check"],
   "docs/release.md": ["Release", "unsigned alpha", "signed", "notarized", "GitHub Actions", "GitHub Pages", "docs:build", "version:check"],
   "docs/security.md": ["Security", "API keys", "project boundary", "vulnerability"]

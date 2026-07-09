@@ -14,6 +14,10 @@ HTMLslide welcomes scoped contributions that preserve local-first project bounda
 
 API keys must never be committed or written to fixtures, reports, crash logs, or workflow artifacts.
 
+## conduct
+
+Follow the [Code of Conduct](code-of-conduct.md). Keep feedback technical, respect private deck content, and use private vulnerability reporting for exploitable security issues.
+
 ## tests
 
 Run the narrowest relevant command first, then the broader suite when practical:

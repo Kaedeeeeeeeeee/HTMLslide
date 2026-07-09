@@ -45,6 +45,7 @@ import {
   buildAiEngineSettingsUpdate,
   createDefaultAiEngineSettings,
   createDefaultExternalAgentStatuses,
+  formatRedactedKeyStatus,
   normalizeAiEngineSettings,
   type AiEngineSettings,
   type AiEngineSettingsDraft,
@@ -886,8 +887,12 @@ function App(): React.ReactNode {
         clearKey: draft.clearKey
       })
         .then((savedSettings) => {
-          setAiEngineSettings(normalizeAiEngineSettings(savedSettings));
-          setAiEngineStatus({ kind: "success", message: draft.apiKeyInput?.trim() ? "AI engine key saved" : "AI engine settings saved" });
+          const normalizedSettings = normalizeAiEngineSettings(savedSettings);
+          setAiEngineSettings(normalizedSettings);
+          setAiEngineStatus({
+            kind: "success",
+            message: draft.apiKeyInput?.trim() ? formatRedactedKeyStatus(normalizedSettings) : "AI engine settings saved"
+          });
         })
         .catch((error: unknown) => {
           setAiEngineStatus({

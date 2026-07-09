@@ -91,7 +91,13 @@ export function AiEngineSettingsPanel({
     <section className="ai-settings">
       <PanelHeader
         actions={
-          <StatusPill tone={operationStatus.kind === "failed" ? "danger" : operationStatus.kind === "success" ? "success" : "info"}>
+          <StatusPill
+            aria-atomic="true"
+            aria-label="AI engine operation status"
+            aria-live="polite"
+            role="status"
+            tone={operationStatus.kind === "failed" ? "danger" : operationStatus.kind === "success" ? "success" : "info"}
+          >
             {operationStatus.message}
           </StatusPill>
         }

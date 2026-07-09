@@ -1151,7 +1151,13 @@ function Toolbar({
         </Button>
       </div>
 
-      <div className="toolbar-status">
+      <div
+        aria-atomic="true"
+        aria-label="Workspace status"
+        aria-live="polite"
+        className="toolbar-status"
+        role="status"
+      >
         <StatusPill tone={localPathLoaded ? "success" : "warning"}>
           {localPathLoaded ? "Local project" : "Sample project"}
         </StatusPill>
@@ -1630,7 +1636,15 @@ function ExportPanel({
         <StatusPill tone={blocked ? "danger" : "success"}>
           {blocked ? "Blocked by QA" : "Ready to export"}
         </StatusPill>
-        <p className="export-status">{operationStatus.message}</p>
+        <p
+          aria-atomic="true"
+          aria-label="Export operation status"
+          aria-live="polite"
+          className="export-status"
+          role="status"
+        >
+          {operationStatus.message}
+        </p>
       </div>
     </section>
   );
@@ -1743,7 +1757,13 @@ function AgentRunConsole({
             label="Open logs"
           />
         </div>
-        <div className="command-bar__status" aria-label="Command statuses">
+        <div
+          aria-atomic="true"
+          aria-label="Agent command statuses"
+          aria-live="polite"
+          className="command-bar__status"
+          role="status"
+        >
           {(["generate", "check", "repair", "export", "review"] as const).map((action) => (
             <span
               className={`command-status is-${statuses[action].kind}`}

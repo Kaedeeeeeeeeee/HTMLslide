@@ -97,7 +97,13 @@ export function CliIntegrationSettingsPanel({
         </Button>
       </div>
 
-      <p className={operationStatus.kind === "failed" ? "settings-note is-danger" : "settings-note"}>
+      <p
+        aria-atomic="true"
+        aria-label="CLI integration operation status"
+        aria-live="polite"
+        className={operationStatus.kind === "failed" ? "settings-note is-danger" : "settings-note"}
+        role="status"
+      >
         {operationStatus.message}
       </p>
     </section>

@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from "react";
 
 export function cn(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(" ");
@@ -65,18 +65,25 @@ export function IconButton({
 
 export type StatusTone = "neutral" | "success" | "warning" | "danger" | "info";
 
-export interface StatusPillProps {
+export interface StatusPillProps extends HTMLAttributes<HTMLSpanElement> {
   children: ReactNode;
   tone?: StatusTone;
-  className?: string;
 }
 
 export function StatusPill({
   children,
   className,
-  tone = "neutral"
+  tone = "neutral",
+  ...props
 }: StatusPillProps): ReactNode {
-  return <span className={cn("hs-status-pill", `hs-status-pill--${tone}`, className)}>{children}</span>;
+  return (
+    <span
+      className={cn("hs-status-pill", `hs-status-pill--${tone}`, className)}
+      {...props}
+    >
+      {children}
+    </span>
+  );
 }
 
 export interface SegmentedTabItem<TTab extends string> {

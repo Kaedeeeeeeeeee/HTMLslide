@@ -233,7 +233,13 @@ export function OfficialSkillsSettingsPanel({
         </Button>
       </div>
 
-      <p className={operationStatus.kind === "failed" ? "settings-note is-danger" : "settings-note"}>
+      <p
+        aria-atomic="true"
+        aria-label="Official skills operation status"
+        aria-live="polite"
+        className={operationStatus.kind === "failed" ? "settings-note is-danger" : "settings-note"}
+        role="status"
+      >
         {operationStatus.message}
       </p>
     </section>

@@ -438,7 +438,7 @@ test.describe("HTMLslide desktop smoke", () => {
     await page.getByRole("button", { name: /HTMLslide Agent/ }).click();
     await page.getByLabel("API key").fill(fakeApiKey);
     await page.getByRole("button", { name: "Save Key", exact: true }).click();
-    await expect(page.getByText("OpenAI key saved")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("status", { name: "AI engine operation status" })).toContainText("OpenAI key saved", { timeout: 30_000 });
 
     const savedSettingsText = await readFile(path.join(userDataDir, "ai-engine-settings.json"), "utf8");
     expect(savedSettingsText).toContain('"provider": "openai"');
@@ -626,6 +626,11 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(page.getByText("Mock agent completed check and export")).toBeVisible({ timeout: 30_000 });
     await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Mock HTMLslide Deck" })).toBeVisible();
     await expect(page.getByRole("button", { name: /Reviewable outputs/ })).toBeVisible();
+    const commandStatuses = page.getByRole("status", { name: "Agent command statuses" });
+    await expect(commandStatuses).toContainText("generate");
+    await expect(commandStatuses).toContainText("Mock generation complete");
+    await expect(commandStatuses).toContainText("review");
+    await expect(commandStatuses).toContainText("Ready for review");
     await expect(page.getByText("generate: Mock generation complete")).toBeVisible();
     await expect(page.getByText(/check: Check passed/)).toBeVisible();
     await expect(page.getByText(/export: [1-9][0-9]* artifacts/)).toBeVisible();
@@ -708,7 +713,9 @@ test.describe("HTMLslide desktop smoke", () => {
       await page.getByLabel("Base URL").fill(fakeProvider.baseUrl);
       await page.getByLabel("API key").fill(fakeApiKey);
       await page.getByRole("button", { name: "Save Key", exact: true }).click();
-      await expect(page.getByText("OpenAI-compatible key saved")).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByRole("status", { name: "AI engine operation status" })).toContainText("OpenAI-compatible key saved", {
+        timeout: 30_000
+      });
 
       await page.getByRole("button", { name: "Recent", exact: true }).click();
       await page.locator(".library-main").getByRole("button", { name: "New Deck", exact: true }).first().click();
@@ -1020,7 +1027,8 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(page.getByText(/check: Check passed/)).toBeVisible({ timeout: 30_000 });
 
     await page.locator(".workspace-toolbar").getByRole("button", { name: "Export", exact: true }).click();
-    await expect(page.locator(".toolbar-status").getByText("export: Export complete")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("status", { name: "Workspace status" })).toContainText("export: Export complete", { timeout: 30_000 });
+    await expect(page.getByRole("status", { name: "Export operation status" })).toContainText("Export complete");
     const deckpkgPath = path.join(projectPath, "exports", "valid-full-deck.deckpkg");
     const pdfPath = path.join(projectPath, "exports", "valid-full-deck.pdf");
     const htmlPath = path.join(projectPath, "exports", "valid-full-deck.html");
@@ -1508,12 +1516,16 @@ test.describe("HTMLslide desktop smoke", () => {
     await skillsPanel.getByLabel("Type").selectOption("all");
 
     await page.getByRole("button", { name: "Reinstall CLI", exact: true }).click();
-    await expect(page.locator(".settings-note", { hasText: /Installed HTMLslide CLI shim/ })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("status", { name: "CLI integration operation status" })).toContainText(/Installed HTMLslide CLI shim/, {
+      timeout: 30_000
+    });
     await expect(access(shimPath)).resolves.toBeUndefined();
     expect(await readFile(shimPath, "utf8")).toContain("HTMLslide managed CLI shim v1");
 
     await page.getByRole("button", { name: "Install Official Skills", exact: true }).click();
-    await expect(page.locator(".settings-note", { hasText: /12 official skills installed/ })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("status", { name: "Official skills operation status" })).toContainText(/12 official skills installed/, {
+      timeout: 30_000
+    });
     const officialSkillList = page.getByRole("list", { name: "Official HTMLslide skills" });
     const deckArchitectSkill = officialSkillList.getByRole("listitem").filter({ hasText: "deck-architect" });
     await expect(deckArchitectSkill).toContainText("Planning");
@@ -1527,7 +1539,9 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(page.getByText("Manual install command copied")).toBeVisible();
 
     await page.getByRole("button", { name: "Uninstall CLI", exact: true }).click();
-    await expect(page.locator(".settings-note", { hasText: /Removed HTMLslide CLI shim/ })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("status", { name: "CLI integration operation status" })).toContainText(/Removed HTMLslide CLI shim/, {
+      timeout: 30_000
+    });
     await expect(access(shimPath)).rejects.toMatchObject({ code: "ENOENT" });
     await expectNoFrameworkOverlay(page);
   });

@@ -770,6 +770,7 @@ function PresenterMode({
             <div
               className="presenter-notes"
               style={{ fontSize: `${view.notesFontSizePx}px` }}
+              tabIndex={0}
             >
               {view.currentSlide.notesMarkdown.length > 0
                 ? view.currentSlide.notesMarkdown

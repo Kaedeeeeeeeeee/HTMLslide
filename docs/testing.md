@@ -33,6 +33,7 @@ pnpm package:release:macos
 - Unit tests cover core, CLI, compiler, linter, agent, MCP, skills, and desktop services, including CLI MCP tool discovery, project harness status checks, and stdio client smoke coverage.
 - CLI tests cover BYOK provider validation with fake fetch and fake environment variables so `htmlslide agent validate-provider` remains deterministic and does not print API key values.
 - Desktop Electron E2E covers onboarding, project library, mock generation, checks, QA panel role semantics, export, presenter, deckpkg open, CLI setup, and official skills setup.
+- Docs check validates required public docs, GitHub issue template contracts, and the pull request template, including reproducible bug fields, diagnostics prompts, privacy confirmation, and private security reporting links.
 - Performance smoke records 20-slide preview, PDF export, checker, and presenter state timings with CI guardrails; alpha/RC hardware baselines remain manual validation data.
 - Security check scans tracked source files for common committed secret formats and runs `pnpm audit --audit-level high`.
 - Docs build renders the publishable GitHub Pages site into `dist/docs-site` and validates generated local links before upload.

@@ -49,6 +49,14 @@ Run the narrowest relevant test first, then the broader suite when practical.
 
 PRs should include a short summary, tests run, screenshots or artifact links for UI/export changes, and any breaking changes. Keep PRs scoped to one ownership area where possible.
 
+## Issues
+
+Use the GitHub issue forms instead of blank issues. Bug reports should include the affected area, version or commit, platform, reproduction steps, expected and actual behavior, and sanitized diagnostics such as `htmlslide doctor --json` or `htmlslide check <project> --json`.
+
+Rendering reports should attach the smallest sanitized deck fixture plus the affected export artifacts or visual diffs. External-agent reports should include the adapter, workflow, sanitized run diagnostics, and whether any project-boundary behavior looked wrong.
+
+Never paste API keys, provider tokens, private deck content, raw provider prompts, personal data, or unreleased customer material into public issues. Use private vulnerability reporting for exploitable security issues.
+
 ## Code of Conduct
 
 Contributors must follow [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Report security issues through private vulnerability reporting instead of public issues.

@@ -4,6 +4,17 @@ title: "[Skill]: "
 labels:
   - skill
 body:
+  - type: dropdown
+    id: contribution_type
+    attributes:
+      label: Contribution type
+      options:
+        - Official bundled skill
+        - Registry-listed third-party skill
+        - Update to an existing skill
+        - Skill documentation
+    validations:
+      required: true
   - type: input
     id: skill_name
     attributes:
@@ -33,7 +44,24 @@ body:
     validations:
       required: true
   - type: textarea
+    id: boundaries
+    attributes:
+      label: Project and data boundaries
+      description: Explain which project files the skill reads/writes and how it avoids secrets, private deck content, generated exports, and local machine state.
+    validations:
+      required: true
+  - type: textarea
     id: fixtures
     attributes:
       label: Fixtures or examples
       description: Link or describe deterministic examples that can run without secrets.
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Tests or validation
+      description: List commands, fixture checks, or manual evidence that prove the skill works safely.
+      placeholder: pnpm test, pnpm docs:check, fixture command, or manual validation notes
+    validations:
+      required: true

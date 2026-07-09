@@ -12,6 +12,13 @@ body:
       description: Describe the visible problem and where it appears.
     validations:
       required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v0.1.0-alpha, package artifact name, or commit SHA
+    validations:
+      required: true
   - type: dropdown
     id: output
     attributes:
@@ -29,7 +36,33 @@ body:
     id: deck
     attributes:
       label: Minimal deck fixture
-      description: Attach or link a minimal fixture with private content removed.
+      description: Attach or link the smallest deck/project that reproduces the rendering issue, with private content removed.
+    validations:
+      required: true
+  - type: textarea
+    id: commands
+    attributes:
+      label: Commands and artifacts
+      description: Include the exact command or UI path and the relevant artifact names.
+      placeholder: |
+        htmlslide check <project> --json
+        htmlslide export <project> --pdf --html --deckpkg --thumbnails --json
+        exports/<name>.pdf, exports/<name>.deckpkg, exports/thumbnails/...
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected rendering
+      description: What should the preview, PDF, thumbnail, deckpkg, or presenter output show?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual rendering
+      description: What is visibly wrong? Include page/slide number and selector when known.
     validations:
       required: true
   - type: textarea
@@ -42,3 +75,13 @@ body:
     attributes:
       label: Platform
       placeholder: macOS version, Chromium/Electron version if known
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      description: Public rendering reports must use sanitized fixtures and artifacts.
+      options:
+        - label: I removed API keys, provider tokens, private deck content, personal data, and unreleased customer material.
+          required: true

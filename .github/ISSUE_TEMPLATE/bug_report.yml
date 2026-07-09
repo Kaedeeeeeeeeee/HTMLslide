@@ -8,14 +8,34 @@ body:
     id: summary
     attributes:
       label: Summary
-      description: What happened?
+      description: What happened, and which workflow is blocked?
+      placeholder: The app/CLI did ... when I expected ...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Pick the narrowest affected surface so maintainers can route the report.
+      options:
+        - Desktop app
+        - Project loading
+        - Check / QA panel
+        - Export
+        - Presenter / deckpkg
+        - CLI
+        - AI Engines / BYOK
+        - External agent / MCP
+        - Packaging / install
+        - Documentation
+        - Other
     validations:
       required: true
   - type: textarea
     id: steps
     attributes:
       label: Steps to reproduce
-      description: Include commands, files, or UI path.
+      description: Include commands, UI path, project state, and the smallest deck/project needed to reproduce.
       placeholder: |
         1. Run ...
         2. Open ...
@@ -28,19 +48,50 @@ body:
       label: Expected behavior
     validations:
       required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include exact error messages or visible UI state.
+    validations:
+      required: true
   - type: input
     id: version
     attributes:
       label: Version or commit
       placeholder: v0.1.0-alpha or commit SHA
+    validations:
+      required: true
   - type: input
     id: platform
     attributes:
       label: Platform
       placeholder: macOS version, CPU architecture, Node version
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Paste sanitized command output that helps locate the failure. Write "Not applicable" only when no command or artifact exists.
+      placeholder: |
+        htmlslide doctor --json
+        htmlslide check <project> --json
+        GitHub Actions run URL, package artifact name, or app version when relevant
+      render: text
+    validations:
+      required: true
   - type: textarea
     id: logs
     attributes:
       label: Logs or artifacts
-      description: Remove API keys, provider tokens, private deck content, and personal data.
+      description: Attach or paste only sanitized logs, screenshots, deck fixtures, or report snippets.
       render: text
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      description: Public issues must not include secrets or private deck content.
+      options:
+        - label: I removed API keys, provider tokens, private deck content, personal data, and unreleased customer material.
+          required: true

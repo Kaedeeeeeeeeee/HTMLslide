@@ -40,3 +40,19 @@ body:
     id: alternatives
     attributes:
       label: Alternatives considered
+  - type: textarea
+    id: local_first_boundary
+    attributes:
+      label: Local-first and data boundary
+      description: Note whether the feature needs network access, provider credentials, private deck content, new artifacts, or new project files.
+      placeholder: This can run locally without secrets / This needs explicit provider credentials / This writes ...
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance evidence
+      description: What command, workflow, or artifact would prove the feature works?
+      placeholder: pnpm test, pnpm e2e:desktop, htmlslide check/export output, screenshot, package artifact, or manual RC evidence
+    validations:
+      required: true

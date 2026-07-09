@@ -30,6 +30,7 @@ export type DesktopSetupState = {
     cliPath?: string;
   };
   cliIntegration: DesktopCliIntegrationState;
+  officialSkills: DesktopOfficialSkillsState;
 };
 
 export type DesktopInitialOpenRequest = {
@@ -64,6 +65,24 @@ export type DesktopCliIntegrationState = {
   suggestedFix?: string;
   manualInstallCommand: string;
   manualUninstallCommand: string;
+  updatedAt: string;
+};
+
+export type DesktopOfficialSkillsState = {
+  available: boolean;
+  status: "passed" | "info" | "warning" | "failed";
+  installed: boolean;
+  managed: true;
+  action?: "installed" | "updated" | "unchanged";
+  htmlslideHomeDir: string;
+  skillsDir: string;
+  skillCount: number;
+  installedCount: number;
+  missing: string[];
+  stale: string[];
+  names: string[];
+  message: string;
+  suggestedFix?: string;
   updatedAt: string;
 };
 
@@ -330,6 +349,7 @@ export type HtmlslideDesktopApi = {
   getSetup(): Promise<DesktopSetupState>;
   getCliIntegration(): Promise<DesktopCliIntegrationState>;
   installCliIntegration(): Promise<DesktopCliIntegrationState>;
+  installOfficialSkills(): Promise<DesktopOfficialSkillsState>;
   uninstallCliIntegration(): Promise<DesktopCliIntegrationState>;
   copyCliManualInstallCommand(): Promise<{ copied: boolean; command: string }>;
   listProjects(): Promise<DesktopProjectRecord[]>;

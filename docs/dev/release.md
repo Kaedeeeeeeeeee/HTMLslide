@@ -39,7 +39,7 @@ After packaging, run the package smoke:
 pnpm smoke:package:alpha
 ```
 
-The smoke mounts the DMG, copies `HTMLslide.app` into a temporary install directory, verifies the packaged app declares `.deckpkg` as an owned macOS document type, launches the packaged app with isolated user data, verifies packaged first-run CLI provisioning into an isolated target directory, exports a fixture deck through the packaged CLI, launches the packaged app with that `.deckpkg` as a direct file argument, waits for the renderer to confirm presenter mode opened the expected deck, installs a temporary HTMLslide-managed CLI shim, verifies `htmlslide doctor --json` through that shim, and uninstalls it. It never writes to real `/Applications` or the user's real `~/.htmlslide`.
+The smoke mounts the DMG, copies `HTMLslide.app` into a temporary install directory, verifies the packaged app declares `.deckpkg` as an owned macOS document type, launches the packaged app with isolated user data, verifies packaged first-run CLI provisioning and official skill installation into isolated target directories, exports a fixture deck through the packaged CLI, launches the packaged app with that `.deckpkg` as a direct file argument, waits for the renderer to confirm presenter mode opened the expected deck, installs a temporary HTMLslide-managed CLI shim, verifies `htmlslide doctor --json` through that shim, and uninstalls it. It never writes to real `/Applications` or the user's real `~/.htmlslide`.
 
 ## Alpha Checklist
 
@@ -47,6 +47,7 @@ Before calling an alpha build public, verify:
 
 - DMG/package installs and the app launches.
 - CLI shim installs and `htmlslide doctor` passes.
+- Official skills install during first-run setup.
 - New Deck, Open Folder, and Project Library work.
 - Mock provider full flow passes.
 - At least one real provider is manually validated when credentials are available.

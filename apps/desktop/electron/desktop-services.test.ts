@@ -2,13 +2,16 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createMockPassedCheck, createMockProvider, type FetchLike, type ModelProvider } from "@htmlslide/agent";
+import { OFFICIAL_SKILLS } from "@htmlslide/skills";
 import { exportDeck } from "../../../packages/compiler/src/index";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   diffDesktopCheckpoint,
   findCliRuntime,
   getDesktopCliIntegration,
+  getDesktopOfficialSkills,
   installDesktopCliIntegration,
+  installDesktopOfficialSkills,
   listDesktopPresenterDisplays,
   loadDesktopPresenterDeck,
   loadDesktopPresenterDeckPackage,
@@ -687,6 +690,71 @@ describe("desktop services", () => {
       ["setup", "uninstall-cli", "--target-path", path.join(targetDir, "htmlslide"), "--json"],
       ["setup", "status", "--target-path", path.join(targetDir, "htmlslide"), "--json"]
     ]);
+  });
+
+  it("installs official skills into the isolated HTMLslide home directory", async () => {
+    const homeDir = await tempDir();
+    const options = {
+      env: {
+        HTMLSLIDE_HOME: homeDir
+      },
+      now: "2026-07-08T00:00:00.000Z"
+    };
+
+    const before = await getDesktopOfficialSkills(options);
+    expect(before).toMatchObject({
+      htmlslideHomeDir: homeDir,
+      installed: false,
+      installedCount: 0,
+      missing: expect.arrayContaining(OFFICIAL_SKILLS.map((skill) => skill.metadata.name)),
+      skillCount: OFFICIAL_SKILLS.length,
+      status: "warning"
+    });
+
+    const installed = await installDesktopOfficialSkills(options);
+    expect(installed).toMatchObject({
+      action: "installed",
+      installed: true,
+      installedCount: OFFICIAL_SKILLS.length,
+      skillCount: OFFICIAL_SKILLS.length,
+      status: "passed"
+    });
+
+    const deckArchitect = await readFile(path.join(homeDir, "skills", "deck-architect", "SKILL.md"), "utf8");
+    expect(deckArchitect).toContain("name: deck-architect");
+    expect(deckArchitect).toContain("Do not write generated exports or secrets.");
+
+    const unchanged = await installDesktopOfficialSkills(options);
+    expect(unchanged).toMatchObject({
+      action: "unchanged",
+      installed: true,
+      installedCount: OFFICIAL_SKILLS.length,
+      status: "passed"
+    });
+  });
+
+  it("reports and updates stale official skill files", async () => {
+    const homeDir = await tempDir();
+    const stalePath = path.join(homeDir, "skills", "deck-architect", "SKILL.md");
+    await mkdir(path.dirname(stalePath), { recursive: true });
+    await writeFile(stalePath, "# stale\n", "utf8");
+
+    const options = {
+      env: {
+        HTMLSLIDE_HOME: homeDir
+      }
+    };
+    const before = await getDesktopOfficialSkills(options);
+    expect(before.stale).toContain("deck-architect");
+
+    const updated = await installDesktopOfficialSkills(options);
+    expect(updated).toMatchObject({
+      action: "updated",
+      installed: true,
+      stale: [],
+      status: "passed"
+    });
+    await expect(readFile(stalePath, "utf8")).resolves.toContain("name: deck-architect");
   });
 
   it("runs the mock agent and then real project check/export through the CLI runner", async () => {

@@ -22,7 +22,7 @@ import {
   type AiEngineSettings,
   type ExternalAgentStatus
 } from "../settings-model";
-import type { DesktopCliIntegrationState } from "../desktop-api";
+import type { DesktopCliIntegrationState, DesktopOfficialSkillsState } from "../desktop-api";
 import {
   createDefaultNewDeckDraft,
   type LibrarySection,
@@ -34,6 +34,7 @@ import {
 } from "../model";
 import { AiEngineSettingsPanel } from "./AiEngineSettings";
 import { CliIntegrationSettingsPanel } from "./CliIntegrationSettings";
+import { OfficialSkillsSettingsPanel } from "./OfficialSkillsSettings";
 
 interface ProjectLibraryProps {
   activeSection: LibrarySection;
@@ -41,6 +42,8 @@ interface ProjectLibraryProps {
   aiEngineStatus: OperationStatus;
   cliIntegration?: DesktopCliIntegrationState;
   cliIntegrationStatus: OperationStatus;
+  officialSkills?: DesktopOfficialSkillsState;
+  officialSkillsStatus: OperationStatus;
   externalAgentStatuses: ExternalAgentStatus[];
   operationStatus: OperationStatus;
   projects: ProjectSummary[];
@@ -49,6 +52,7 @@ interface ProjectLibraryProps {
   onCliIntegrationInstall: () => void;
   onCliIntegrationRefresh: () => void;
   onCliIntegrationUninstall: () => void;
+  onInstallOfficialSkills: () => void;
   onLibrarySectionChange: (section: LibrarySection) => void;
   onRefreshExternalAgents: () => void;
   onSaveAiEngineSettings: (draft: AiEngineSettingsDraft) => void;
@@ -140,11 +144,14 @@ export function ProjectLibrary({
   cliIntegration,
   cliIntegrationStatus,
   externalAgentStatuses,
+  officialSkills,
+  officialSkillsStatus,
   operationStatus,
   onCliIntegrationCopyManualCommand,
   onCliIntegrationInstall,
   onCliIntegrationRefresh,
   onCliIntegrationUninstall,
+  onInstallOfficialSkills,
   onLibrarySectionChange,
   onRefreshExternalAgents,
   onSaveAiEngineSettings,
@@ -217,6 +224,11 @@ export function ProjectLibrary({
               operationStatus={cliIntegrationStatus}
               state={cliIntegration}
             />
+            <OfficialSkillsSettingsPanel
+              onInstall={onInstallOfficialSkills}
+              operationStatus={officialSkillsStatus}
+              state={officialSkills}
+            />
             <AiEngineSettingsPanel
               onRefreshExternalAgents={onRefreshExternalAgents}
               onSaveSettings={onSaveAiEngineSettings}
@@ -227,10 +239,18 @@ export function ProjectLibrary({
           </section>
         ) : null}
 
-        {activeSection === "templates" || activeSection === "skills" ? (
+        {activeSection === "skills" ? (
+          <OfficialSkillsSettingsPanel
+            onInstall={onInstallOfficialSkills}
+            operationStatus={officialSkillsStatus}
+            state={officialSkills}
+          />
+        ) : null}
+
+        {activeSection === "templates" ? (
           <section className="library-empty">
             <Layers3 />
-            <h2>{activeSection === "templates" ? "Templates" : "Skills"}</h2>
+            <h2>Templates</h2>
             <p>This library area is queued for a later phase.</p>
           </section>
         ) : null}

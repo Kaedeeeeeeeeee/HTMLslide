@@ -9,7 +9,9 @@ import {
   diffDesktopCheckpoint,
   findCliRuntime,
   getDesktopCliIntegration,
+  getDesktopOfficialSkills,
   installDesktopCliIntegration,
+  installDesktopOfficialSkills,
   listDesktopPresenterDisplays,
   loadProjectPreview,
   loadDesktopPresenterDeck,
@@ -88,6 +90,9 @@ const cliIntegrationOptions = (): DesktopCliIntegrationOptions => ({
   appVersion: app.getVersion(),
   bundleId: appBundleId(),
   cliRuntime,
+  env: process.env
+});
+const officialSkillsOptions = () => ({
   env: process.env
 });
 
@@ -439,7 +444,10 @@ function escapeCssColor(value: string): string {
 function registerIpcHandlers(): void {
   ipcMain.handle("htmlslide:get-setup", async () => {
     const library = await readDesktopLibrary(libraryPath(), configuredWorkspacePath());
-    const cliIntegration = await getDesktopCliIntegration(cliIntegrationOptions());
+    const [cliIntegration, officialSkills] = await Promise.all([
+      getDesktopCliIntegration(cliIntegrationOptions()),
+      getDesktopOfficialSkills(officialSkillsOptions())
+    ]);
     const initialOpenDeckPackagePath = takePendingDeckPackageOpen();
     return {
       appName: "HTMLslide",
@@ -454,6 +462,7 @@ function registerIpcHandlers(): void {
         cliPath: cliRuntime?.cliPath
       },
       cliIntegration,
+      officialSkills,
       smoke: smokeExpectedOpenDeckPackagePath
         ? {
             expectOpenDeckpkgPath: smokeExpectedOpenDeckPackagePath
@@ -474,6 +483,10 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle("htmlslide:install-cli-integration", async () =>
     installDesktopCliIntegration(cliIntegrationOptions())
+  );
+
+  ipcMain.handle("htmlslide:install-official-skills", async () =>
+    installDesktopOfficialSkills(officialSkillsOptions())
   );
 
   ipcMain.handle("htmlslide:uninstall-cli-integration", async () =>
@@ -777,6 +790,12 @@ app.whenReady().then(async () => {
     (appBundlePath() || process.env.HTMLSLIDE_AUTO_INSTALL_CLI === "1")
   ) {
     await installDesktopCliIntegration(cliIntegrationOptions()).catch(() => undefined);
+  }
+  if (
+    process.env.HTMLSLIDE_DISABLE_AUTO_SKILLS_PROVISIONING !== "1" &&
+    (appBundlePath() || process.env.HTMLSLIDE_AUTO_INSTALL_SKILLS === "1")
+  ) {
+    await installDesktopOfficialSkills(officialSkillsOptions()).catch(() => undefined);
   }
   createWindow();
 

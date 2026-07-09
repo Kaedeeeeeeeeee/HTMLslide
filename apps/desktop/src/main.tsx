@@ -16,6 +16,7 @@ import {
   type DesktopCliIntegrationState,
   type DesktopExternalAgentRunResult,
   type DesktopMockAgentRunResult,
+  type DesktopOfficialSkillsState,
   type DesktopPresenterDeckResult,
   type DesktopProjectPreview,
   type DesktopProjectRecord,
@@ -239,6 +240,11 @@ function App(): React.ReactNode {
     kind: "idle",
     message: "CLI integration not checked"
   });
+  const [officialSkills, setOfficialSkills] = useState<DesktopOfficialSkillsState | undefined>();
+  const [officialSkillsStatus, setOfficialSkillsStatus] = useState<OperationStatus>({
+    kind: "idle",
+    message: "Official skills not checked"
+  });
   const [externalAgentStatuses, setExternalAgentStatuses] = useState<ExternalAgentStatus[]>(() =>
     createDefaultExternalAgentStatuses()
   );
@@ -326,9 +332,14 @@ function App(): React.ReactNode {
         setProjects(projectSummaries);
         setAiEngineSettings(normalizeAiEngineSettings(settings));
         setCliIntegration(setup.cliIntegration);
+        setOfficialSkills(setup.officialSkills);
         setCliIntegrationStatus({
           kind: setup.cliIntegration.status === "failed" ? "failed" : setup.cliIntegration.installed ? "success" : "idle",
           message: setup.cliIntegration.message
+        });
+        setOfficialSkillsStatus({
+          kind: setup.officialSkills.status === "failed" ? "failed" : setup.officialSkills.installed ? "success" : "idle",
+          message: setup.officialSkills.message
         });
         setOperationStatus({
           kind: setup.cli.available ? "success" : "failed",
@@ -394,6 +405,10 @@ function App(): React.ReactNode {
           message: error instanceof Error ? error.message : String(error)
         });
         setCliIntegrationStatus({
+          kind: "failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+        setOfficialSkillsStatus({
           kind: "failed",
           message: error instanceof Error ? error.message : String(error)
         });
@@ -947,6 +962,29 @@ function App(): React.ReactNode {
       });
   }, [desktopApi]);
 
+  const handleInstallOfficialSkills = useCallback((): void => {
+    if (!desktopApi) {
+      setOfficialSkillsStatus({ kind: "failed", message: "Desktop API unavailable" });
+      return;
+    }
+
+    setOfficialSkillsStatus({ kind: "running", message: "Installing official skills" });
+    desktopApi.installOfficialSkills()
+      .then((status) => {
+        setOfficialSkills(status);
+        setOfficialSkillsStatus({
+          kind: status.status === "failed" ? "failed" : "success",
+          message: status.message
+        });
+      })
+      .catch((error: unknown) => {
+        setOfficialSkillsStatus({
+          kind: "failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
+  }, [desktopApi]);
+
   const handleUninstallCliIntegration = useCallback((): void => {
     if (!desktopApi) {
       setCliIntegrationStatus({ kind: "failed", message: "Desktop API unavailable" });
@@ -1263,6 +1301,9 @@ function App(): React.ReactNode {
           if (onboardingSteps[activeStepIndex]?.id === "cli") {
             handleInstallCliIntegration();
           }
+          if (onboardingSteps[activeStepIndex]?.id === "skills") {
+            handleInstallOfficialSkills();
+          }
           if (activeStepIndex >= onboardingSteps.length - 1) {
             setView("library");
             return;
@@ -1297,7 +1338,10 @@ function App(): React.ReactNode {
         onRefreshExternalAgents={handleRefreshExternalAgents}
         onSaveAiEngineSettings={handleSaveAiEngineSettings}
         operationStatus={operationStatus}
+        officialSkills={officialSkills}
+        officialSkillsStatus={officialSkillsStatus}
         projects={projects}
+        onInstallOfficialSkills={handleInstallOfficialSkills}
         workspacePath={workspacePath}
       />
     );

@@ -205,6 +205,16 @@ async function deployCliRuntime(appResourcesPath) {
   }
 }
 
+function restoreWorkspaceInstallState() {
+  // pnpm deploy --prod mutates the root workspace state to production-only.
+  // Reset it so follow-up local scripts like smoke:package:alpha run without a TTY prompt.
+  run("pnpm", ["install", "--frozen-lockfile"], {
+    env: {
+      npm_config_confirm_modules_purge: "false"
+    }
+  });
+}
+
 async function copyWorkspaceRuntimePackage(appNodeModulesPath, packageName, packagePath) {
   const runtimePath = path.join(appNodeModulesPath, ...packageName.split("/"));
   await rm(runtimePath, { recursive: true, force: true });
@@ -238,7 +248,8 @@ async function deployDesktopRuntime(appResourcesPath) {
     ["@htmlslide/agent", path.join(root, "packages", "agent")],
     ["@htmlslide/agent-adapters", path.join(root, "packages", "agent-adapters")],
     ["@htmlslide/core", path.join(root, "packages", "core")],
-    ["@htmlslide/presenter", path.join(root, "packages", "presenter")]
+    ["@htmlslide/presenter", path.join(root, "packages", "presenter")],
+    ["@htmlslide/skills", path.join(root, "packages", "skills")]
   ];
   const npmRuntimePackages = [
     [compilerRequire, "jszip"],
@@ -340,6 +351,7 @@ await cp(desktopDist, path.join(appResourcesPath, "dist"), {
 await writeRuntimePackage(appResourcesPath, desktopPackage, version);
 await deployDesktopRuntime(appResourcesPath);
 await deployCliRuntime(appResourcesPath);
+restoreWorkspaceInstallState();
 
 const plistPath = path.join(appPath, "Contents", "Info.plist");
 plistSet(plistPath, "CFBundleName", config.appName);

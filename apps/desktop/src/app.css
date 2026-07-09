@@ -669,6 +669,25 @@ svg {
   white-space: nowrap;
 }
 
+.official-skills-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.official-skills-list li {
+  background: var(--hs-surface);
+  border: 1px solid var(--hs-line);
+  border-radius: var(--hs-radius-sm);
+  color: var(--hs-text-muted);
+  font-size: 11px;
+  line-height: 1;
+  padding: 7px 8px;
+}
+
 .settings-form,
 .external-agent-list {
   display: grid;

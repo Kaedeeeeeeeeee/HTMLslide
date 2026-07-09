@@ -221,6 +221,7 @@ async function launchAppOnce(appPath, smokeRoot) {
   }
 
   await smokeFirstRunCliProvisioning(appPath, firstRunCliTargetDir, firstRunHtmlslideHome);
+  await smokeFirstRunOfficialSkills(firstRunHtmlslideHome);
 }
 
 async function exportFixtureDeckPackageWithPackagedCli(appPath, smokeRoot) {
@@ -351,6 +352,40 @@ async function smokeFirstRunCliProvisioning(appPath, targetDir, htmlslideHome) {
       `expected: ${expectedAppPath}\n` +
       `actual: ${actualAppPath}`
     );
+  }
+}
+
+async function smokeFirstRunOfficialSkills(htmlslideHome) {
+  const skillsDir = path.join(htmlslideHome, "skills");
+  const entries = await readdir(skillsDir).catch(() => []);
+  const expectedSkills = [
+    "deck-architect",
+    "visual-direction",
+    "swiss-editorial",
+    "consulting-clean",
+    "technical-dark",
+    "product-launch",
+    "data-report",
+    "chart-redesign",
+    "speaker-notes",
+    "anti-ai-slop",
+    "deck-repair",
+    "brand-kit"
+  ];
+
+  for (const skillName of expectedSkills) {
+    const skillPath = path.join(skillsDir, skillName, "SKILL.md");
+    if (!existsSync(skillPath)) {
+      fail(`Packaged app first-run setup did not install official skill: ${skillPath}`);
+    }
+    const skillMarkdown = await readFile(skillPath, "utf8");
+    if (!skillMarkdown.includes(`name: ${skillName}`) || skillMarkdown.includes("writesSecrets: true")) {
+      fail(`Official skill file does not match expected safe metadata: ${skillPath}`);
+    }
+  }
+
+  if (entries.length < expectedSkills.length) {
+    fail(`Packaged app installed only ${entries.length} official skills under ${skillsDir}.`);
   }
 }
 

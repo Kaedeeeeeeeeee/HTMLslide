@@ -56,6 +56,9 @@ importers:
       '@htmlslide/shared-ui':
         specifier: workspace:*
         version: link:../../packages/shared-ui
+      '@htmlslide/skills':
+        specifier: workspace:*
+        version: link:../../packages/skills
       lucide-react:
         specifier: ^1.23.0
         version: 1.23.0(react@19.2.7)

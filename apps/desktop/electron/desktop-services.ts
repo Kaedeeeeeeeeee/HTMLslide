@@ -42,6 +42,10 @@ import {
   type PresenterDeckPackage
 } from "@htmlslide/presenter";
 import type { PresenterDeck } from "@htmlslide/presenter/session";
+import {
+  OFFICIAL_SKILLS,
+  validateOfficialSkillRegistry
+} from "@htmlslide/skills";
 
 export type DesktopProjectStatus =
   | "Ready"
@@ -165,6 +169,29 @@ export type DesktopCliIntegrationOptions = {
   cliRunner?: DesktopCliRunner;
   env?: NodeJS.ProcessEnv;
   nodeExecutable?: string;
+  now?: string;
+};
+
+export type DesktopOfficialSkillsState = {
+  available: boolean;
+  status: "passed" | "info" | "warning" | "failed";
+  installed: boolean;
+  managed: true;
+  action?: "installed" | "updated" | "unchanged";
+  htmlslideHomeDir: string;
+  skillsDir: string;
+  skillCount: number;
+  installedCount: number;
+  missing: string[];
+  stale: string[];
+  names: string[];
+  message: string;
+  suggestedFix?: string;
+  updatedAt: string;
+};
+
+export type DesktopOfficialSkillsOptions = {
+  env?: NodeJS.ProcessEnv;
   now?: string;
 };
 
@@ -614,6 +641,10 @@ const DEFAULT_ACCENTS = [DEFAULT_ACCENT, "#267a4f", "#9a6410", "#286a8d", "#7b4a
 const AI_ENGINE_CREDENTIAL_SERVICE = "app.htmlslide.ai-key";
 
 export const defaultWorkspacePath = (): string => path.join(os.homedir(), "Documents", "HTMLslide");
+
+function resolveHtmlslideHomeDir(env: NodeJS.ProcessEnv = process.env): string {
+  return path.resolve(env.HTMLSLIDE_HOME ?? path.join(os.homedir(), ".htmlslide"));
+}
 
 export function resolveCreateProjectRequest(
   request: DesktopCreateProjectRequest,
@@ -1229,10 +1260,140 @@ export async function runHtmlslideCli(args: string[], options: CliRunnerOptions)
   });
 }
 
+function officialSkillsBaseState(options: DesktopOfficialSkillsOptions = {}): DesktopOfficialSkillsState {
+  const htmlslideHomeDir = resolveHtmlslideHomeDir(options.env);
+  const skillsDir = path.join(htmlslideHomeDir, "skills");
+  return {
+    available: true,
+    htmlslideHomeDir,
+    installed: false,
+    installedCount: 0,
+    managed: true,
+    message: "Official skills have not been checked yet.",
+    missing: [],
+    names: OFFICIAL_SKILLS.map((skill) => skill.metadata.name),
+    skillCount: OFFICIAL_SKILLS.length,
+    skillsDir,
+    stale: [],
+    status: "info",
+    updatedAt: options.now ?? new Date().toISOString()
+  };
+}
+
+function officialSkillEntryPath(htmlslideHomeDir: string, skillName: string): string {
+  return path.join(htmlslideHomeDir, "skills", skillName, "SKILL.md");
+}
+
+async function readTextIfExists(filePath: string): Promise<string | undefined> {
+  try {
+    return await fs.readFile(filePath, "utf8");
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+export async function getDesktopOfficialSkills(
+  options: DesktopOfficialSkillsOptions = {}
+): Promise<DesktopOfficialSkillsState> {
+  const base = officialSkillsBaseState(options);
+  const registry = validateOfficialSkillRegistry();
+  if (!registry.ok) {
+    return {
+      ...base,
+      available: false,
+      status: "failed",
+      message: `Official skill registry is invalid (${registry.issues.length} issue${registry.issues.length === 1 ? "" : "s"}).`,
+      suggestedFix: "Run packages/skills tests and fix official skill metadata before packaging."
+    };
+  }
+
+  const missing: string[] = [];
+  const stale: string[] = [];
+  let installedCount = 0;
+
+  await Promise.all(OFFICIAL_SKILLS.map(async (skill) => {
+    const entryPath = officialSkillEntryPath(base.htmlslideHomeDir, skill.metadata.name);
+    const current = await readTextIfExists(entryPath);
+    if (current === undefined) {
+      missing.push(skill.metadata.name);
+      return;
+    }
+    if (current !== skill.markdown) {
+      stale.push(skill.metadata.name);
+      return;
+    }
+    installedCount += 1;
+  }));
+
+  missing.sort();
+  stale.sort();
+  const installed = missing.length === 0 && stale.length === 0 && installedCount === OFFICIAL_SKILLS.length;
+  const pendingCount = missing.length + stale.length;
+
+  return {
+    ...base,
+    installed,
+    installedCount,
+    message: installed
+      ? `${installedCount} official skills installed.`
+      : `${pendingCount} official skill${pendingCount === 1 ? "" : "s"} need installation or update.`,
+    missing,
+    stale,
+    status: installed ? "passed" : "warning",
+    suggestedFix: installed ? undefined : "Install official skills from onboarding or Settings."
+  };
+}
+
+export async function installDesktopOfficialSkills(
+  options: DesktopOfficialSkillsOptions = {}
+): Promise<DesktopOfficialSkillsState> {
+  const before = await getDesktopOfficialSkills(options);
+  if (!before.available) {
+    return before;
+  }
+
+  const action: DesktopOfficialSkillsState["action"] =
+    before.installed ? "unchanged" : before.stale.length > 0 ? "updated" : "installed";
+
+  try {
+    await Promise.all(OFFICIAL_SKILLS.map(async (skill) => {
+      const entryPath = officialSkillEntryPath(before.htmlslideHomeDir, skill.metadata.name);
+      await fs.mkdir(path.dirname(entryPath), { recursive: true });
+      await fs.writeFile(entryPath, skill.markdown, "utf8");
+    }));
+  } catch (error) {
+    return {
+      ...before,
+      action,
+      status: "failed",
+      installed: false,
+      message: error instanceof Error ? error.message : String(error),
+      suggestedFix: `Check write permissions for ${before.skillsDir}.`
+    };
+  }
+
+  const after = await getDesktopOfficialSkills({
+    ...options,
+    now: before.updatedAt
+  });
+
+  return {
+    ...after,
+    action,
+    message:
+      action === "unchanged"
+        ? `${after.installedCount} official skills already installed.`
+        : `${after.installedCount} official skills ${action}.`
+  };
+}
+
 export async function resolveDesktopCliIntegrationTarget(
   env: NodeJS.ProcessEnv = process.env
 ): Promise<DesktopCliIntegrationTarget> {
-  const htmlslideHomeDir = path.resolve(env.HTMLSLIDE_HOME ?? path.join(os.homedir(), ".htmlslide"));
+  const htmlslideHomeDir = resolveHtmlslideHomeDir(env);
   const explicitTargetPath = env.HTMLSLIDE_CLI_TARGET_PATH;
   if (explicitTargetPath && explicitTargetPath.trim().length > 0) {
     const targetPath = path.resolve(explicitTargetPath);

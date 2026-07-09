@@ -697,7 +697,7 @@ test.describe("HTMLslide desktop smoke", () => {
     await expectNoFrameworkOverlay(page);
   });
 
-  test("manages CLI integration from settings", async () => {
+  test("manages CLI integration and official skills from settings", async () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
     const homeDir = path.join(tempRoot, "home");
     const userDataDir = path.join(tempRoot, "user-data");
@@ -731,11 +731,17 @@ test.describe("HTMLslide desktop smoke", () => {
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     await expect(page.getByRole("heading", { name: "CLI Integration", exact: true })).toBeVisible();
     await expect(page.locator(".cli-settings-details code", { hasText: shimPath })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "HTMLslide Skills", exact: true })).toBeVisible();
 
     await page.getByRole("button", { name: "Reinstall CLI", exact: true }).click();
     await expect(page.locator(".settings-note", { hasText: /Installed HTMLslide CLI shim/ })).toBeVisible({ timeout: 30_000 });
     await expect(access(shimPath)).resolves.toBeUndefined();
     expect(await readFile(shimPath, "utf8")).toContain("HTMLslide managed CLI shim v1");
+
+    await page.getByRole("button", { name: "Install Official Skills", exact: true }).click();
+    await expect(page.locator(".settings-note", { hasText: /12 official skills installed/ })).toBeVisible({ timeout: 30_000 });
+    await expect(readFile(path.join(htmlslideHomeDir, "skills", "deck-architect", "SKILL.md"), "utf8"))
+      .resolves.toContain("name: deck-architect");
 
     await page.getByRole("button", { name: "Copy Manual Install", exact: true }).click();
     await expect(page.getByText("Manual install command copied")).toBeVisible();

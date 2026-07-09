@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
   getSetup: () => ipcRenderer.invoke("htmlslide:get-setup"),
   getCliIntegration: () => ipcRenderer.invoke("htmlslide:get-cli-integration"),
   installCliIntegration: () => ipcRenderer.invoke("htmlslide:install-cli-integration"),
+  installOfficialSkills: () => ipcRenderer.invoke("htmlslide:install-official-skills"),
   uninstallCliIntegration: () => ipcRenderer.invoke("htmlslide:uninstall-cli-integration"),
   copyCliManualInstallCommand: () => ipcRenderer.invoke("htmlslide:copy-cli-manual-install-command"),
   listProjects: () => ipcRenderer.invoke("htmlslide:list-projects"),

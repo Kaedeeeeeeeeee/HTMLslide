@@ -962,12 +962,10 @@ test.describe("HTMLslide desktop smoke", () => {
     await page.getByRole("button", { name: "AI Engines", exact: true }).click();
     await expect(page.getByRole("heading", { name: "AI Engines", exact: true })).toBeVisible();
     await page.locator(".ai-settings__modes").getByRole("button", { name: /Coding Agent/ }).click();
+    const codexAgentButton = page.locator(".external-agent-list").getByRole("button", { name: /Codex CLI/ });
     await page.getByRole("button", { name: "Refresh Status", exact: true }).click();
-    await expect(page.getByRole("status", { name: "AI engine operation status" })).toContainText(
-      "External agent status refreshed",
-      { timeout: 30_000 }
-    );
-    await page.locator(".external-agent-list").getByRole("button", { name: /Codex CLI/ }).click();
+    await expect(codexAgentButton).toContainText("ready", { timeout: 30_000 });
+    await codexAgentButton.click();
     const connectionGuide = page.getByRole("region", { name: "External agent connection guide" });
     await expect(connectionGuide).toContainText("Detected for manual validation");
     await expect(connectionGuide).toContainText("direct headless deck editing is not enabled");

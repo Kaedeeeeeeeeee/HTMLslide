@@ -8,12 +8,24 @@ HTMLslide uses SemVer for app releases and a separate schema version for deck fo
 
 ## CI Workflows
 
-- `CI`: runs `pnpm install --frozen-lockfile`, `pnpm docs:check`, `pnpm docs:build`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm perf:smoke`, `pnpm security:check`, and `pnpm build` on Ubuntu, plus `pnpm e2e:desktop` on macOS for Electron workspace/presenter smoke coverage.
+- `CI`: runs `pnpm install --frozen-lockfile`, `pnpm docs:check`, `pnpm docs:build`, `pnpm version:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm perf:smoke`, `pnpm security:check`, and `pnpm build` on Ubuntu, plus `pnpm e2e:desktop` on macOS for Electron workspace/presenter smoke coverage.
 - `Docs Pages`: runs on manual dispatch, pushes to `main`, and `v*` tags. It checks public docs, builds `dist/docs-site`, uploads a Pages artifact, and deploys it with GitHub Pages.
-- `Alpha Package`: runs on manual dispatch, nightly schedule, and `v*` tags. It repeats the CI checks including `pnpm docs:build`, `pnpm perf:smoke`, and `pnpm security:check`, runs macOS desktop Electron E2E before packaging, runs `pnpm package:alpha`, smokes the generated package, and uploads unsigned artifacts.
-- `Release macOS`: runs on manual dispatch and `v*` tags. It repeats docs check/docs build/lint/typecheck/test/perf/security/build/Electron E2E, imports a Developer ID certificate from GitHub Actions secrets, runs `pnpm package:release:macos`, notarizes and staples the DMG, generates release notes from git history with `pnpm release:notes`, uploads signed artifacts, and attaches them to the matching GitHub Release for tag builds.
+- `Alpha Package`: runs on manual dispatch, nightly schedule, and `v*` tags. It repeats the CI checks including `pnpm docs:build`, `pnpm version:check`, `pnpm perf:smoke`, and `pnpm security:check`, runs macOS desktop Electron E2E before packaging, runs `pnpm package:alpha`, smokes the generated package, and uploads unsigned artifacts.
+- `Release macOS`: runs on manual dispatch and `v*` tags. It repeats docs check/docs build/version check/lint/typecheck/test/perf/security/build/Electron E2E, imports a Developer ID certificate from GitHub Actions secrets, runs `pnpm package:release:macos`, notarizes and staples the DMG, generates release notes from git history with `pnpm release:notes`, uploads signed artifacts, and attaches them to the matching GitHub Release for tag builds.
 
 Both workflows intentionally fail early if the root package scaffold is missing required scripts. Add those scripts in the app scaffold rather than weakening workflow checks.
+
+## Versioning Contract
+
+HTMLslide uses SemVer for app/package releases and a separate deck schema version for project compatibility:
+
+```bash
+pnpm version:check
+```
+
+The root `package.json` version and every workspace package version must match `HTMLSLIDE_APP_VERSION` in `packages/core/src/version.ts`. Artifact schema versions live in the same file but stay domain-specific: `DECK_SCHEMA_VERSION` for deck manifests, `DECK_PACKAGE_SCHEMA_VERSION` for deckpkg/notes/presenter-settings, `CHECK_REPORT_SCHEMA_VERSION` for checker reports, `AGENT_RUN_REPORT_SCHEMA_VERSION` for desktop agent-run reports, and `CHECKPOINT_SCHEMA_VERSION` for file-copy checkpoints. These versions are intentionally independent from app/package version, so a patch release does not imply a deck-format migration.
+
+CLI version output, generated project manifests, compiler sidecars, official skills, performance fixtures, release notes, and packaging scripts must read those constants rather than declaring local `0.1.0` literals. The packaging scripts run `pnpm version:check` before building artifacts, and tag builds must use `v<package.json version>`.
 
 ## Unsigned Alpha Packaging
 

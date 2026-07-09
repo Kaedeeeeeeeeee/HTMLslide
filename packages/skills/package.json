@@ -19,5 +19,8 @@
     "build": "tsc -p tsconfig.json",
     "test": "vitest run --root ../.. --config vitest.config.ts packages/skills",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@htmlslide/core": "workspace:*"
   }
 }

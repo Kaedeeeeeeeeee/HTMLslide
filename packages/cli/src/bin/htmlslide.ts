@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import path from "node:path";
 import { Command } from "commander";
+import { HTMLSLIDE_APP_VERSION } from "@htmlslide/core/version";
 import {
   checkLoadedProject,
   createProject,
@@ -110,7 +111,7 @@ const program = new Command();
 program
   .name("htmlslide")
   .description("Local-first CLI for HTMLslide deck projects.")
-  .version("0.1.0")
+  .version(HTMLSLIDE_APP_VERSION)
   .option("--json", "print machine-readable JSON");
 
 program

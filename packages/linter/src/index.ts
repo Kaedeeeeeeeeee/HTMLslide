@@ -10,6 +10,7 @@ import {
   type LoadedDeckProject,
   type ResolvedProjectSlide
 } from "@htmlslide/core";
+import { CHECK_REPORT_SCHEMA_VERSION } from "@htmlslide/core/version";
 
 export type IssueSeverity = CoreIssueSeverity;
 
@@ -35,7 +36,7 @@ export type CheckReportSummary = {
 };
 
 export type CheckReport = {
-  schemaVersion?: "0.1.0";
+  schemaVersion?: typeof CHECK_REPORT_SCHEMA_VERSION;
   status: IssueStatus;
   projectPath: string;
   summary: CheckReportSummary;
@@ -147,7 +148,7 @@ type ExportExpectation = {
   slideId: string;
 };
 
-const REPORT_SCHEMA_VERSION = "0.1.0";
+const REPORT_SCHEMA_VERSION = CHECK_REPORT_SCHEMA_VERSION;
 const DEFAULT_REPORT_FILE_NAMES = ["report.json", "check-report.json"] as const;
 const TITLE_MAX_CHARACTERS = 72;
 const BODY_MAX_WORDS = 120;

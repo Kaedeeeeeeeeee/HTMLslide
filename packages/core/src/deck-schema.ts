@@ -1,8 +1,7 @@
 import { z } from "zod";
 import type { HtmlslideIssue } from "./issues.js";
 import { normalizeDeckPath } from "./paths.js";
-
-export const DECK_SCHEMA_VERSION = "0.1.0";
+import { DECK_SCHEMA_VERSION } from "./version.js";
 
 const CanvasDimensionSchema = z.number().int().min(1).max(16384);
 

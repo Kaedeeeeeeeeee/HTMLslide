@@ -33,6 +33,13 @@ function run(command, args, options = {}) {
   }
 }
 
+function runVersionCheck() {
+  if (process.env.HTMLSLIDE_SKIP_VERSION_CHECK === "1") {
+    return;
+  }
+  run("pnpm", ["version:check"]);
+}
+
 function readJson(filePath) {
   return readFile(filePath, "utf8").then((contents) => JSON.parse(contents));
 }
@@ -387,6 +394,8 @@ function notarizeDmg(dmgPath, config) {
     stapled: config.staple !== false
   };
 }
+
+runVersionCheck();
 
 if (process.platform !== "darwin") {
   fail("macOS packaging must run on macOS because it uses Electron.app, hdiutil, ditto, codesign, and xcrun.");

@@ -7,6 +7,7 @@ import {
   type SkillRiskProfile,
   type SkillValidationIssue
 } from "./types.js";
+import { DECK_SCHEMA_VERSION, HTMLSLIDE_APP_VERSION } from "@htmlslide/core/version";
 import { validateSkillMetadata } from "./validation.js";
 
 export const OFFICIAL_SKILL_NAMES = [
@@ -86,7 +87,7 @@ ${DESCRIPTIONS[name]}
 
 - Edit HTMLslide source areas only: deck.json, slides, notes, theme, assets, and project-local skills.
 - Do not write generated exports or secrets.
-- Keep changes compatible with deck schema 0.1.0 and the fixed 1920x1080 canvas.
+- Keep changes compatible with deck schema ${DECK_SCHEMA_VERSION} and the fixed 1920x1080 canvas.
 - Prefer deterministic, inspectable edits that can be checked by htmlslide check.
 `;
 }
@@ -130,11 +131,11 @@ function createOfficialSkill(name: OfficialSkillName): OfficialSkillDefinition {
   const riskLevel: SkillRiskLevel = MEDIUM_RISK_SKILLS.has(name) ? "medium" : "low";
   const metadata: SkillMetadata = {
     name,
-    version: "0.1.0",
+    version: HTMLSLIDE_APP_VERSION,
     description: DESCRIPTIONS[name],
     license: OFFICIAL_BUNDLE_LICENSES[1],
     entrypoint: "SKILL.md",
-    supportedDeckSchema: ["0.1.0"],
+    supportedDeckSchema: [DECK_SCHEMA_VERSION],
     riskLevel,
     installTargets: ["global", "project"],
     author: "HTMLslide",

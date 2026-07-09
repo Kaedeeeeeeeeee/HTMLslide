@@ -7,6 +7,7 @@ import {
   type CompilerProjectInput
 } from "@htmlslide/compiler";
 import { loadDeckProject } from "@htmlslide/core";
+import { DECK_SCHEMA_VERSION, HTMLSLIDE_APP_VERSION } from "@htmlslide/core/version";
 import { checkProject } from "@htmlslide/linter";
 import {
   applyPresenterKeyboardAction,
@@ -27,7 +28,7 @@ type PerformanceMetric = {
 };
 
 type PerformanceReport = {
-  schemaVersion: "0.1.0";
+  schemaVersion: typeof DECK_SCHEMA_VERSION;
   generatedAt: string;
   slideCount: number;
   node: string;
@@ -110,7 +111,7 @@ async function main(): Promise<void> {
     metrics.push(measurePresenterNextSlideLatency(project));
 
     const report: PerformanceReport = {
-      schemaVersion: "0.1.0",
+      schemaVersion: DECK_SCHEMA_VERSION,
       generatedAt: new Date().toISOString(),
       slideCount: SLIDE_COUNT,
       node: process.version,
@@ -228,8 +229,8 @@ async function writeTwentySlideProject(projectPath: string): Promise<CompilerPro
   await writeFile(
     path.join(projectPath, "deck.json"),
     `${JSON.stringify({
-      schemaVersion: "0.1.0",
-      appVersion: "0.1.0",
+      schemaVersion: DECK_SCHEMA_VERSION,
+      appVersion: HTMLSLIDE_APP_VERSION,
       id: "performance_twenty_slide_deck",
       title: "Performance Twenty Slide Deck",
       language: "en-US",

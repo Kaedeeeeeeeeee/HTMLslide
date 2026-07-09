@@ -20,6 +20,12 @@ export default defineConfig({
         )
       },
       {
+        find: "@htmlslide/core/version",
+        replacement: fileURLToPath(
+          new URL("../../packages/core/src/version.ts", import.meta.url)
+        )
+      },
+      {
         find: "@htmlslide/presenter/session",
         replacement: fileURLToPath(
           new URL("../../packages/presenter/src/session.ts", import.meta.url)

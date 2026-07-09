@@ -5,6 +5,7 @@ The standard local checks are:
 ```bash
 pnpm docs:check
 pnpm docs:build
+pnpm version:check
 pnpm lint
 pnpm typecheck
 pnpm test
@@ -34,6 +35,7 @@ pnpm package:release:macos
 - Performance smoke records 20-slide preview, PDF export, checker, and presenter state timings with CI guardrails; alpha/RC hardware baselines remain manual validation data.
 - Security check scans tracked source files for common committed secret formats and runs `pnpm audit --audit-level high`.
 - Docs build renders the publishable GitHub Pages site into `dist/docs-site` and validates generated local links before upload.
+- Version check verifies all workspace package versions match `HTMLSLIDE_APP_VERSION`, keeps `DECK_SCHEMA_VERSION` independent, and rejects production version literals outside the core version contract.
 - Release-candidate acceptance uses `pnpm rc:checklist` to generate the mandatory manual evidence template for clean-account install, first launch, provider flows, fake external agent, export, external monitor presentation, reopen, revert, CLI uninstall, and post-delete cleanup.
 - package smoke covers DMG mount, packaged app launch, first-run CLI shim, official skills, moved-app CLI repair, deckpkg argument open, packaged CLI export, `htmlslide doctor`, and CLI uninstall. Release workflow contracts cover Developer ID signing, notarization, stapling, and artifact upload wiring.
 

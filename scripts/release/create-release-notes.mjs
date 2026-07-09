@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const root = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+const versionConstants = await readVersionConstants();
 const options = parseArgs(process.argv.slice(2));
 const tag = options.tag ?? process.env.GITHUB_REF_NAME ?? `v${packageJson.version ?? "0.0.0"}`;
 const currentRef = options.ref ?? tag;
@@ -17,6 +18,7 @@ const commits = await collectCommits(previousTag, currentRef);
 const notes = renderReleaseNotes({
   commits,
   currentRef,
+  deckSchemaVersion: versionConstants.DECK_SCHEMA_VERSION,
   generatedAt: new Date().toISOString(),
   packageVersion: packageJson.version ?? "0.0.0",
   previousTag,
@@ -66,6 +68,22 @@ function parseArgs(args) {
 
 function toCamelCase(value) {
   return value.replace(/-([a-z])/g, (_match, letter) => letter.toUpperCase());
+}
+
+async function readVersionConstants() {
+  const source = await readFile(path.join(root, "packages", "core", "src", "version.ts"), "utf8");
+  return {
+    DECK_SCHEMA_VERSION: readExportedString(source, "DECK_SCHEMA_VERSION"),
+    HTMLSLIDE_APP_VERSION: readExportedString(source, "HTMLSLIDE_APP_VERSION")
+  };
+}
+
+function readExportedString(source, name) {
+  const match = source.match(new RegExp(`export const ${name} = "([^"]+)";`, "u"));
+  if (!match?.[1]) {
+    throw new Error(`Missing ${name} in packages/core/src/version.ts.`);
+  }
+  return match[1];
 }
 
 async function findPreviousTag(currentRef) {
@@ -140,7 +158,7 @@ function renderReleaseNotes(metadata) {
 Generated at: ${metadata.generatedAt}
 
 Package version: ${metadata.packageVersion}
-Deck schema version: 0.1.0
+Deck schema version: ${metadata.deckSchemaVersion}
 Range: ${compareRange}
 
 ## Release Summary

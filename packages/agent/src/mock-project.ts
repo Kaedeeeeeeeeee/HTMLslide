@@ -1,4 +1,5 @@
 import path from "node:path";
+import { DECK_SCHEMA_VERSION, HTMLSLIDE_APP_VERSION } from "@htmlslide/core/version";
 import { applyAgentSourceWrites } from "./source-writes.js";
 import type {
   AgentBuildResult,
@@ -201,8 +202,8 @@ const buildDeckJson = (input: {
   runId: string;
   slides: Array<AgentOutlineSlide & { source: string; notes: string }>;
 }): JsonObject => ({
-  schemaVersion: "0.1.0",
-  appVersion: "0.1.0",
+  schemaVersion: DECK_SCHEMA_VERSION,
+  appVersion: HTMLSLIDE_APP_VERSION,
   id: slugDeckId(input.title),
   title: input.title,
   language: input.language,
@@ -492,7 +493,7 @@ const buildThemeCss = (direction: VisualDirection): string => {
 };
 
 const buildThemeTokens = (direction: VisualDirection): JsonObject => ({
-  schemaVersion: "0.1.0",
+  schemaVersion: DECK_SCHEMA_VERSION,
   direction: {
     id: direction.id,
     label: direction.label,

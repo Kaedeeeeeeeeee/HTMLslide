@@ -1,0 +1,6 @@
+export const HTMLSLIDE_APP_VERSION = "0.1.0";
+export const DECK_SCHEMA_VERSION = "0.1.0";
+export const DECK_PACKAGE_SCHEMA_VERSION = "0.1.0";
+export const CHECK_REPORT_SCHEMA_VERSION = "0.1.0";
+export const AGENT_RUN_REPORT_SCHEMA_VERSION = "0.1.0";
+export const CHECKPOINT_SCHEMA_VERSION = "0.1.0";

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { copyFile, lstat, mkdir, readdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { CHECKPOINT_SCHEMA_VERSION } from "@htmlslide/core/version";
 import type {
   CheckpointFile,
   CheckpointMetadata,
@@ -12,7 +13,6 @@ import type {
   RecordCheckpointChangesInput
 } from "./types.js";
 
-const checkpointSchemaVersion = "0.1.0";
 const manifestFileName = "manifest.json";
 const snapshotDirectoryName = "snapshot";
 
@@ -60,7 +60,7 @@ export const createFileCopyCheckpoint = async (
   }
 
   const checkpoint: CheckpointMetadata = {
-    schemaVersion: checkpointSchemaVersion,
+    schemaVersion: CHECKPOINT_SCHEMA_VERSION,
     id: checkpointIdForRun(runId),
     runId,
     projectRoot,

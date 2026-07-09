@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
+import { DECK_PACKAGE_SCHEMA_VERSION } from "../../presenter/src/index";
 import {
   buildDeckPackageManifest,
   exportDeck,
@@ -148,7 +149,7 @@ describe("exportDeck", () => {
 
       const notes = JSON.parse(await readFile(exported.artifacts.notes!, "utf8"));
       expect(notes).toMatchObject({
-        schemaVersion: "0.1.0",
+        schemaVersion: DECK_PACKAGE_SCHEMA_VERSION,
         title: "Golden Export Basic",
         language: "en-US",
         slideCount: 2
@@ -182,7 +183,7 @@ describe("exportDeck", () => {
 
       const manifest = JSON.parse(await zipText(deckpkg, "manifest.json"));
       expect(manifest).toMatchObject({
-        schemaVersion: "0.1.0",
+        schemaVersion: DECK_PACKAGE_SCHEMA_VERSION,
         title: "Golden Export Basic",
         pdf: "deck.pdf",
         html: "deck.html",
@@ -216,6 +217,9 @@ describe("exportDeck", () => {
 
       expect(await readPdfPageCount(await zipBytes(deckpkg, "deck.pdf"))).toBe(2);
       expect(JSON.parse(await zipText(deckpkg, "notes.json"))).toEqual(notes);
+      expect(JSON.parse(await zipText(deckpkg, "presenter-settings.json")).schemaVersion).toBe(
+        DECK_PACKAGE_SCHEMA_VERSION
+      );
       expect(readPngSize(await zipBytes(deckpkg, "thumbnails/001-title.png"))).toEqual({ width: 960, height: 540 });
     } finally {
       await rm(root, { recursive: true, force: true });

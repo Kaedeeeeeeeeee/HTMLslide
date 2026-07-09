@@ -18,7 +18,14 @@ import {
   type FileCopyCheckpointRevertResult
 } from "@htmlslide/agent";
 import { exportDeck, type CompilerProjectInput, type ExportOptions } from "@htmlslide/compiler";
-import { loadDeckProject, parseDeck, ProjectLoadError, type Deck, type LoadedDeckProject } from "@htmlslide/core";
+import {
+  loadDeckProject,
+  parseDeck,
+  ProjectLoadError,
+  type Deck,
+  type LoadedDeckProject
+} from "@htmlslide/core";
+import { DECK_SCHEMA_VERSION, HTMLSLIDE_APP_VERSION } from "@htmlslide/core/version";
 import { checkProject, type CheckReport } from "@htmlslide/linter";
 
 export const EXIT_CODES = {
@@ -427,7 +434,8 @@ const titleFromName = (name: string): string =>
 const defaultManifest = (name: string): Deck => {
   const deckId = `deck_${slug(name).replaceAll("-", "_")}`;
   return parseDeck({
-    schemaVersion: "0.1.0",
+    schemaVersion: DECK_SCHEMA_VERSION,
+    appVersion: HTMLSLIDE_APP_VERSION,
     id: deckId,
     title: titleFromName(name),
     language: "en",
@@ -752,7 +760,7 @@ export const doctor = async (options: CliShimTargetOptions = {}) => {
   return {
     status: "passed" as const,
     app: "HTMLslide",
-    version: "0.1.0",
+    version: HTMLSLIDE_APP_VERSION,
     checks: [
       {
         id: "node",

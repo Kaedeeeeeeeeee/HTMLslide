@@ -8,8 +8,9 @@ import {
   type IssueStatus,
   type IssueSummary
 } from "@htmlslide/core";
+import { DECK_PACKAGE_SCHEMA_VERSION as CORE_DECK_PACKAGE_SCHEMA_VERSION } from "@htmlslide/core/version";
 
-export const DECK_PACKAGE_SCHEMA_VERSION = "0.1.0" as const;
+export const DECK_PACKAGE_SCHEMA_VERSION = CORE_DECK_PACKAGE_SCHEMA_VERSION;
 export const PRESENTER_SESSION_MODE = "rehearsal" as const;
 export const DEFAULT_NOTES_FONT_SIZE_PX = 20;
 export const MIN_NOTES_FONT_SIZE_PX = 12;

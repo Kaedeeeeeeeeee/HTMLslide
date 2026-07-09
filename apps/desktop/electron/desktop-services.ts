@@ -37,6 +37,7 @@ import {
   type FetchLike,
   type ModelProvider
 } from "@htmlslide/agent";
+import { AGENT_RUN_REPORT_SCHEMA_VERSION } from "@htmlslide/core/version";
 import {
   DeckPackageValidationError,
   readDeckPackage,
@@ -233,7 +234,7 @@ export type DesktopAgentRunReportCliResult = {
 };
 
 export type DesktopAgentRunReport = {
-  schemaVersion: "0.1.0";
+  schemaVersion: typeof AGENT_RUN_REPORT_SCHEMA_VERSION;
   kind: "htmlslide-agent-run-report";
   runId: string;
   providerId: "htmlslide-mock" | "htmlslide-byok";
@@ -3198,7 +3199,7 @@ function createDesktopAgentRunReport({
   stages: DesktopMockAgentStageSummary[];
 }): DesktopAgentRunReport {
   const report: DesktopAgentRunReport = {
-    schemaVersion: "0.1.0",
+    schemaVersion: AGENT_RUN_REPORT_SCHEMA_VERSION,
     kind: "htmlslide-agent-run-report",
     runId: agent.runId,
     providerId,

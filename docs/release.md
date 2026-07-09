@@ -23,6 +23,8 @@ The docs build writes `.nojekyll`, renders Markdown from `docs/` into static HTM
 
 CI runs lint, typecheck, tests, performance smoke, security checks, build, docs checks, docs build, and Electron E2E. The alpha package workflow runs the package smoke before uploading unsigned artifacts. The release workflow runs the same quality gates before signing and notarization.
 
+Versioning is checked with `pnpm version:check`. The app version lives in `package.json` and `HTMLSLIDE_APP_VERSION`, while deck, deckpkg, check-report, agent-report, and checkpoint compatibility each have independent schema constants. Release notes and packaging scripts use those constants instead of local version literals.
+
 Every release candidate must also have a completed manual acceptance checklist generated with `pnpm rc:checklist`. The generated checklist is release evidence, not source code, and should be attached to the candidate notes.
 
 See [dev/release.md](dev/release.md) for the detailed release contract.

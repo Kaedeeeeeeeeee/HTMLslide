@@ -20,6 +20,7 @@ describe("macOS alpha packaging contract", () => {
 
     expect(packageJson.scripts).toMatchObject({
       "docs:build": "node scripts/docs/build-docs-site.mjs",
+      "version:check": "node scripts/release/check-versions.mjs",
       "package:alpha": "node scripts/release/package-alpha.mjs",
       "package:release:macos": "node scripts/release/package-release-macos.mjs",
       "release:notes": "node scripts/release/create-release-notes.mjs",
@@ -54,6 +55,8 @@ describe("macOS alpha packaging contract", () => {
 
     expect(packageScript).toContain("hdiutil");
     expect(packageScript).toContain("ditto");
+    expect(packageScript).toContain("runVersionCheck");
+    expect(packageScript).toContain("pnpm\", [\"version:check\"]");
     expect(packageScript).toContain("symlink(\"/Applications\"");
     expect(packageScript).toContain("writeDeckPackageDocumentTypes");
     expect(packageScript).toContain("codesign\", [\"--force\", \"--deep\", \"--sign\", \"-\"");
@@ -114,7 +117,9 @@ describe("macOS alpha packaging contract", () => {
     expect(workflow).toContain("runs-on: macos-latest");
     expect(workflow).toContain("CSC_IDENTITY_AUTO_DISCOVERY: \"false\"");
     expect(workflow).toContain("'docs:check', 'docs:build'");
+    expect(workflow).toContain("version:check");
     expect(workflow).toContain("pnpm docs:build");
+    expect(workflow).toContain("pnpm version:check");
     expect(packageIndex).toBeGreaterThan(-1);
     expect(smokeIndex).toBeGreaterThan(packageIndex);
     expect(workflow).toContain("*.dmg");
@@ -130,7 +135,9 @@ describe("macOS alpha packaging contract", () => {
     expect(workflow).toContain("fetch-depth: 0");
     expect(workflow).toContain("contents: write");
     expect(workflow).toContain("docs:build");
+    expect(workflow).toContain("version:check");
     expect(workflow).toContain("pnpm docs:build");
+    expect(workflow).toContain("pnpm version:check");
     expect(workflow).toContain("package:release:macos");
     expect(workflow).toContain("release:notes");
     expect(workflow).toContain("APPLE_DEVELOPER_ID_APPLICATION");
@@ -152,8 +159,31 @@ describe("macOS alpha packaging contract", () => {
     const workflow = await readText(".github/workflows/ci.yml");
 
     expect(workflow).toContain("'docs:check', 'docs:build'");
+    expect(workflow).toContain("version:check");
     expect(workflow).toContain("run: pnpm docs:check");
     expect(workflow).toContain("run: pnpm docs:build");
+    expect(workflow).toContain("run: pnpm version:check");
+  });
+
+  it("keeps release version checks anchored to core constants", async () => {
+    const versionSource = await readText("packages/core/src/version.ts");
+    const checkScript = await readText("scripts/release/check-versions.mjs");
+    const releaseNotesScript = await readText("scripts/release/create-release-notes.mjs");
+
+    expect(versionSource).toContain("HTMLSLIDE_APP_VERSION");
+    expect(versionSource).toContain("DECK_SCHEMA_VERSION");
+    expect(versionSource).toContain("DECK_PACKAGE_SCHEMA_VERSION");
+    expect(versionSource).toContain("CHECK_REPORT_SCHEMA_VERSION");
+    expect(versionSource).toContain("AGENT_RUN_REPORT_SCHEMA_VERSION");
+    expect(versionSource).toContain("CHECKPOINT_SCHEMA_VERSION");
+    expect(checkScript).toContain("HTMLSLIDE_APP_VERSION");
+    expect(checkScript).toContain("DECK_SCHEMA_VERSION");
+    expect(checkScript).toContain("DECK_PACKAGE_SCHEMA_VERSION");
+    expect(checkScript).toContain("package.json version");
+    expect(checkScript).toContain("Release tag");
+    expect(checkScript).toContain("GITHUB_REF_TYPE");
+    expect(checkScript).toContain("checkRiskyVersionLiterals");
+    expect(releaseNotesScript).toContain("deckSchemaVersion: versionConstants.DECK_SCHEMA_VERSION");
   });
 
   it("keeps docs site generation deterministic and Pages-ready", async () => {

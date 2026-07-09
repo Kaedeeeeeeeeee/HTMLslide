@@ -8,6 +8,7 @@
 - [ ] `pnpm typecheck`
 - [ ] `pnpm test`
 - [ ] `pnpm docs:build`
+- [ ] `pnpm version:check`
 - [ ] `pnpm build`
 - [ ] Relevant E2E, visual regression, packaging, or manual checks:
 

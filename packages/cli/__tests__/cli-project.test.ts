@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { DECK_SCHEMA_VERSION, HTMLSLIDE_APP_VERSION } from "@htmlslide/core/version";
 import {
   checkLoadedProject,
   createProject,
@@ -48,6 +49,14 @@ const runCli = (args: string[], env: NodeJS.ProcessEnv = {}) =>
   });
 
 describe("CLI project helpers", () => {
+  it("reports the centralized app version from CLI and doctor output", async () => {
+    const { stdout } = await runCli(["--version"]);
+    expect(stdout.trim()).toBe(HTMLSLIDE_APP_VERSION);
+
+    const report = await doctor();
+    expect(report.version).toBe(HTMLSLIDE_APP_VERSION);
+  });
+
   it("creates, checks, and exports a default deck project", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
     try {
@@ -63,7 +72,8 @@ describe("CLI project helpers", () => {
       expect(exported.artifacts.thumbnails).toHaveLength(2);
 
       const deckJson = JSON.parse(await readFile(path.join(project.projectPath, "deck.json"), "utf8"));
-      expect(deckJson.schemaVersion).toBe("0.1.0");
+      expect(deckJson.schemaVersion).toBe(DECK_SCHEMA_VERSION);
+      expect(deckJson.appVersion).toBe(HTMLSLIDE_APP_VERSION);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

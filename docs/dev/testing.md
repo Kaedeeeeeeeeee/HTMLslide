@@ -6,6 +6,7 @@ HTMLslide tests start with the package scripts and expand into fixtures as the a
 pnpm install --frozen-lockfile
 pnpm docs:check
 pnpm docs:build
+pnpm version:check
 pnpm lint
 pnpm typecheck
 pnpm test
@@ -19,7 +20,7 @@ Required root package contract:
 
 - `packageManager` pinned to a pnpm version.
 - `pnpm-lock.yaml` committed.
-- `docs:check`, `docs:build`, `lint`, `typecheck`, `test`, `perf:smoke`, `security:check`, `build`, and `e2e:desktop` scripts in `package.json`.
+- `docs:check`, `docs:build`, `version:check`, `lint`, `typecheck`, `test`, `perf:smoke`, `security:check`, `build`, and `e2e:desktop` scripts in `package.json`.
 - `package:alpha`, `smoke:package:alpha`, `package:release:macos`, `rc:checklist`, and `release:notes` scripts before macOS packaging is enabled.
 
 ## Test Layers
@@ -38,6 +39,7 @@ Use deterministic fixtures and avoid real provider credentials in automated test
 - Security tests: API keys absent from logs/project files/settings JSON, credential-store save/clear behavior through injected fakes, protected write-manifest boundaries including symlink escapes, MCP traversal denial, third-party skill warnings, remote asset detection, malformed deckpkg rejection, committed-secret scanning, and high-severity dependency audit.
 - Performance tests: `pnpm perf:smoke` generates a temporary 20-slide deck, warms and measures desktop project preview loading, reloads a preview after one slide change, exports a 20-slide PDF, checks the 20-slide deck, and measures presenter next-slide state latency. CI enforces broad guardrails to catch obvious regressions; the product targets in the plan remain alpha/RC baseline targets because real UI preview and PDF export timings depend on host hardware.
 - Docs publishing tests: `pnpm docs:build` renders `docs/**/*.md` into `dist/docs-site`, writes `.nojekyll`, copies static assets, and validates generated local links before GitHub Pages upload.
+- Version tests: `pnpm version:check` verifies every workspace `package.json` stays on the root app version, `packages/core/src/version.ts` exposes the matching `HTMLSLIDE_APP_VERSION`, `DECK_SCHEMA_VERSION` remains semver and independent, and production code does not reintroduce version literals where the core constants should be used.
 
 ## Performance Smoke
 

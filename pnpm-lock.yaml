@@ -50,6 +50,9 @@ importers:
       '@htmlslide/agent-adapters':
         specifier: workspace:*
         version: link:../../packages/agent-adapters
+      '@htmlslide/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@htmlslide/presenter':
         specifier: workspace:*
         version: link:../../packages/presenter
@@ -97,7 +100,11 @@ importers:
         specifier: ^3.2.4
         version: 3.2.7(@types/node@24.13.2)(tsx@4.23.0)
 
-  packages/agent: {}
+  packages/agent:
+    dependencies:
+      '@htmlslide/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/agent-adapters: {}
 
@@ -121,6 +128,9 @@ importers:
 
   packages/compiler:
     dependencies:
+      '@htmlslide/core':
+        specifier: workspace:*
+        version: link:../core
       '@htmlslide/renderer':
         specifier: workspace:*
         version: link:../renderer
@@ -188,7 +198,11 @@ importers:
         specifier: ^5.8.3
         version: 5.9.3
 
-  packages/skills: {}
+  packages/skills:
+    dependencies:
+      '@htmlslide/core':
+        specifier: workspace:*
+        version: link:../core
 
 packages:
 

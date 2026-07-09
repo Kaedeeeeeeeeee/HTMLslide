@@ -23,6 +23,7 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm docs:build
+pnpm version:check
 pnpm build
 pnpm e2e:desktop
 ```
@@ -32,6 +33,7 @@ Public documentation is checked and built with:
 ```bash
 pnpm docs:check
 pnpm docs:build
+pnpm version:check
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and [docs/testing.md](docs/testing.md).

@@ -3,6 +3,7 @@ import path from "node:path";
 import { deflateSync } from "node:zlib";
 import JSZip from "jszip";
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import { DECK_PACKAGE_SCHEMA_VERSION } from "@htmlslide/core/version";
 import { buildDeckHtml, type RenderDeck } from "@htmlslide/renderer";
 
 export type CompilerSlideInput = {
@@ -77,7 +78,7 @@ export type NotesSidecarSlide = {
 };
 
 export type NotesSidecar = {
-  schemaVersion: "0.1.0";
+  schemaVersion: typeof DECK_PACKAGE_SCHEMA_VERSION;
   title: string;
   language: string | null;
   slideCount: number;
@@ -96,7 +97,7 @@ export type DeckPackageManifestSlide = {
 };
 
 export type DeckPackageManifest = {
-  schemaVersion: "0.1.0";
+  schemaVersion: typeof DECK_PACKAGE_SCHEMA_VERSION;
   title: string;
   language: string | null;
   viewport: CompilerProjectInput["viewport"];
@@ -312,7 +313,7 @@ export const buildNotesSidecar = async (project: CompilerProjectInput): Promise<
 };
 
 const buildNotesSidecarFromPrepared = (project: CompilerProjectInput, prepared: PreparedProject): NotesSidecar => ({
-  schemaVersion: "0.1.0",
+  schemaVersion: DECK_PACKAGE_SCHEMA_VERSION,
   title: project.title,
   language: project.language ?? null,
   slideCount: prepared.slides.length,
@@ -339,7 +340,7 @@ export const buildDeckPackageManifest = (
   const thumbnailSize = options.thumbnailSize ?? DEFAULT_THUMBNAIL_SIZE;
 
   return {
-    schemaVersion: "0.1.0",
+    schemaVersion: DECK_PACKAGE_SCHEMA_VERSION,
     title: project.title,
     language: project.language ?? null,
     viewport: project.viewport,
@@ -733,7 +734,7 @@ const writeThumbnails = async (
 };
 
 const presenterSettings = {
-  schemaVersion: "0.1.0",
+  schemaVersion: DECK_PACKAGE_SCHEMA_VERSION,
   mode: "rehearsal",
   timer: true,
   notes: {

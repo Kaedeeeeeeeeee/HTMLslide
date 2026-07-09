@@ -1,3 +1,5 @@
+import type { CHECKPOINT_SCHEMA_VERSION } from "@htmlslide/core/version";
+
 export type AgentRunStage =
   | "brief"
   | "outline"
@@ -212,7 +214,7 @@ export type CheckpointMetadata = {
     canRevert: boolean;
     notes: string;
   };
-  schemaVersion?: string;
+  schemaVersion?: typeof CHECKPOINT_SCHEMA_VERSION;
   updatedAt?: string;
   manifestPath?: string;
   snapshotRoot?: string;

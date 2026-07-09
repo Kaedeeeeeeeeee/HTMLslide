@@ -1,9 +1,18 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { exportDeck, type CompilerProjectInput, type ExportResult } from "@htmlslide/compiler";
+import {
+  createFileCopyCheckpoint,
+  diffFileCopyCheckpoint,
+  revertFileCopyCheckpoint,
+  type CheckpointMetadata,
+  type FileCopyCheckpointDiff,
+  type FileCopyCheckpointRevertResult
+} from "@htmlslide/agent";
+import { exportDeck, type CompilerProjectInput, type ExportOptions, type ExportResult } from "@htmlslide/compiler";
 import { loadDeckProject, type LoadedDeckProject } from "@htmlslide/core";
 import { HTMLSLIDE_APP_VERSION } from "@htmlslide/core/version";
 import { checkProject, type CheckReport } from "@htmlslide/linter";
+import { getOfficialSkill, OFFICIAL_SKILLS, type SkillMetadata } from "@htmlslide/skills";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -91,6 +100,39 @@ export type ExportPdfResult = {
   projectRoot: string;
   pdf: string;
   export: ExportResult;
+  audit?: McpAuditEntry;
+};
+
+export type ExportDeckPackageResult = {
+  projectRoot: string;
+  deckpkg: string;
+  export: ExportResult;
+  audit: McpAuditEntry;
+};
+
+export type ExportDeckResult = {
+  projectRoot: string;
+  export: ExportResult;
+  audit: McpAuditEntry;
+};
+
+export type SkillListResult = {
+  skillCount: number;
+  skills: SkillMetadata[];
+};
+
+export type SkillInstructionsResult = {
+  skill: SkillMetadata;
+  markdown: string;
+};
+
+export type CheckpointCreateResult = {
+  checkpoint: CheckpointMetadata;
+  audit: McpAuditEntry;
+};
+
+export type CheckpointRevertToolResult = FileCopyCheckpointRevertResult & {
+  audit: McpAuditEntry;
 };
 
 export type HtmlslideMcpToolResult =
@@ -99,7 +141,14 @@ export type HtmlslideMcpToolResult =
   | TextFileResult
   | WriteFileResult
   | CheckReport
-  | ExportPdfResult;
+  | ExportPdfResult
+  | ExportDeckPackageResult
+  | ExportDeckResult
+  | SkillListResult
+  | SkillInstructionsResult
+  | CheckpointCreateResult
+  | FileCopyCheckpointDiff
+  | CheckpointRevertToolResult;
 
 export type HtmlslideMcpServer = {
   start(): Promise<HtmlslideMcpStartResult>;
@@ -117,8 +166,16 @@ export const implementedHtmlslideMcpTools: readonly HtmlslideMcpTool[] = [
   "theme_read",
   "theme_write",
   "check_deck",
+  "get_check_report",
   "export_pdf",
+  "export_deckpkg",
+  "checkpoint_create",
+  "checkpoint_diff",
+  "checkpoint_revert",
+  "skill_list",
+  "skill_get_instructions",
   "read_deck",
+  "export_deck",
   "list_slides",
   "read_slide",
   "write_slide"
@@ -161,8 +218,8 @@ export const htmlslideTools: ToolDescriptor[] = [
   defineTool("checkpoint_create", "project-write", "Create a project checkpoint before an agent run."),
   defineTool("checkpoint_diff", "read-only", "Return a checkpoint diff summary."),
   defineTool("checkpoint_revert", "dangerous", "Revert project files to a checkpoint after explicit user authorization."),
-  defineTool("skill_list", "read-only", "List installed HTMLslide skills."),
-  defineTool("skill_get_instructions", "read-only", "Read installed skill instructions for the active project."),
+  defineTool("skill_list", "read-only", "List bundled official HTMLslide skills."),
+  defineTool("skill_get_instructions", "read-only", "Read bundled official skill instructions."),
   defineTool("read_deck", "read-only", "Deprecated alias for project_get_manifest."),
   defineTool("export_deck", "project-write", "Deprecated alias that exports PDF, HTML, thumbnails, and deckpkg artifacts."),
   defineTool("list_slides", "read-only", "Deprecated alias for project_list_slides."),
@@ -214,12 +271,71 @@ const writeToolInputSchema: ToolInputSchema = {
   required: ["path", "content"]
 };
 
+const checkpointCreateInputSchema: ToolInputSchema = {
+  type: "object",
+  properties: {
+    runId: {
+      type: "string",
+      description: "Stable run id for the checkpoint, for example run-0001."
+    }
+  },
+  required: ["runId"]
+};
+
+const checkpointReferenceInputSchema: ToolInputSchema = {
+  type: "object",
+  properties: {
+    checkpointId: {
+      type: "string",
+      description: "Checkpoint id, for example checkpoint-run-0001."
+    },
+    runId: {
+      type: "string",
+      description: "Run id used to create the checkpoint."
+    }
+  }
+};
+
+const checkpointRevertInputSchema: ToolInputSchema = {
+  type: "object",
+  properties: {
+    checkpointId: {
+      type: "string",
+      description: "Checkpoint id, for example checkpoint-run-0001."
+    },
+    confirm: {
+      type: "boolean",
+      description: "Must be true to allow this destructive revert operation."
+    },
+    runId: {
+      type: "string",
+      description: "Run id used to create the checkpoint."
+    }
+  },
+  required: ["confirm"]
+};
+
+const skillNameInputSchema: ToolInputSchema = {
+  type: "object",
+  properties: {
+    name: {
+      type: "string",
+      description: "Official HTMLslide skill name."
+    }
+  },
+  required: ["name"]
+};
+
 const toolInputSchemas: Partial<Record<HtmlslideMcpTool, ToolInputSchema>> = {
+  checkpoint_create: checkpointCreateInputSchema,
+  checkpoint_diff: checkpointReferenceInputSchema,
+  checkpoint_revert: checkpointRevertInputSchema,
   notes_read: pathToolInputSchema,
   notes_write: writeToolInputSchema,
   read_slide: pathToolInputSchema,
   slide_read: pathToolInputSchema,
   slide_write: writeToolInputSchema,
+  skill_get_instructions: skillNameInputSchema,
   theme_read: pathToolInputSchema,
   theme_write: writeToolInputSchema,
   write_slide: writeToolInputSchema
@@ -313,6 +429,13 @@ export const createAuditEntry = (entry: Omit<McpAuditEntry, "createdAt">): McpAu
   createdAt: new Date().toISOString()
 });
 
+export const writeMcpAuditEntry = async (entry: McpAuditEntry): Promise<McpAuditEntry> => {
+  const logsPath = path.join(entry.projectPath, ".htmlslide", "logs");
+  await mkdir(logsPath, { recursive: true });
+  await appendFile(path.join(logsPath, "mcp-audit.jsonl"), `${JSON.stringify(entry)}\n`, "utf8");
+  return entry;
+};
+
 export const createHtmlslideMcpServer = (options: HtmlslideMcpServerOptions): HtmlslideMcpServer => {
   const projectRoot = path.resolve(options.projectRoot);
 
@@ -383,9 +506,11 @@ export const createHtmlslideMcpServer = (options: HtmlslideMcpServerOptions): Ht
             writeReport: true
           });
 
+        case "get_check_report":
+          return readLatestCheckReport(projectRoot);
+
         case "export_pdf": {
-          const project = await loadDeckProject(projectRoot);
-          const exported = await exportDeck(toCompilerInput(project), {
+          const exported = await exportLoadedDeck(projectRoot, {
             pdf: true,
             html: false,
             deckpkg: false,
@@ -394,10 +519,121 @@ export const createHtmlslideMcpServer = (options: HtmlslideMcpServerOptions): Ht
           if (!exported.artifacts.pdf) {
             throw new Error("PDF export did not produce an artifact.");
           }
+          const audit = await writeMcpAuditEntry(createAuditEntry({
+            action: "write",
+            projectPath: projectRoot,
+            summary: `Exported PDF artifact ${path.relative(projectRoot, exported.artifacts.pdf)}.`,
+            targetPath: path.relative(projectRoot, exported.artifacts.pdf),
+            tool: name
+          }));
           return {
             projectRoot,
             pdf: exported.artifacts.pdf,
-            export: exported
+            export: exported,
+            audit
+          };
+        }
+
+        case "export_deckpkg": {
+          const exported = await exportLoadedDeck(projectRoot, {
+            pdf: false,
+            html: false,
+            deckpkg: true,
+            thumbnails: false
+          });
+          if (!exported.artifacts.deckpkg) {
+            throw new Error("deckpkg export did not produce an artifact.");
+          }
+          const audit = await writeMcpAuditEntry(createAuditEntry({
+            action: "write",
+            projectPath: projectRoot,
+            summary: `Exported deckpkg artifact ${path.relative(projectRoot, exported.artifacts.deckpkg)}.`,
+            targetPath: path.relative(projectRoot, exported.artifacts.deckpkg),
+            tool: name
+          }));
+          return {
+            projectRoot,
+            deckpkg: exported.artifacts.deckpkg,
+            export: exported,
+            audit
+          };
+        }
+
+        case "export_deck": {
+          const exported = await exportLoadedDeck(projectRoot, {
+            pdf: true,
+            html: true,
+            deckpkg: true,
+            thumbnails: true
+          });
+          const audit = await writeMcpAuditEntry(createAuditEntry({
+            action: "write",
+            projectPath: projectRoot,
+            summary: "Exported full deck artifact set.",
+            targetPath: path.relative(projectRoot, exported.exportsPath),
+            tool: name
+          }));
+          return {
+            projectRoot,
+            export: exported,
+            audit
+          };
+        }
+
+        case "checkpoint_create": {
+          const checkpoint = await createFileCopyCheckpoint({
+            projectRoot,
+            runId: readPathInput(input, "runId")
+          });
+          const audit = await writeMcpAuditEntry(createAuditEntry({
+            action: "checkpoint",
+            projectPath: projectRoot,
+            summary: `Created checkpoint ${checkpoint.id}.`,
+            targetPath: path.relative(projectRoot, path.join(projectRoot, ".htmlslide", "checkpoints", checkpoint.runId, "manifest.json")),
+            tool: name
+          }));
+          return {
+            checkpoint,
+            audit
+          };
+        }
+
+        case "checkpoint_diff":
+          return diffFileCopyCheckpoint(readCheckpointReferenceInput(projectRoot, input));
+
+        case "checkpoint_revert": {
+          if (input.confirm !== true) {
+            throw new Error("checkpoint_revert requires confirm: true.");
+          }
+          const reverted = await revertFileCopyCheckpoint(readCheckpointReferenceInput(projectRoot, input));
+          const audit = await writeMcpAuditEntry(createAuditEntry({
+            action: "dangerous",
+            projectPath: projectRoot,
+            summary: `Reverted checkpoint ${reverted.checkpoint.id}.`,
+            targetPath: path.relative(projectRoot, path.join(projectRoot, ".htmlslide", "checkpoints", reverted.checkpoint.runId, "manifest.json")),
+            tool: name
+          }));
+          return {
+            ...reverted,
+            audit
+          };
+        }
+
+        case "skill_list":
+          return {
+            skillCount: OFFICIAL_SKILLS.length,
+            skills: OFFICIAL_SKILLS.map((skill) => skill.metadata)
+          };
+
+        case "skill_get_instructions": {
+          const skillName = readPathInput(input, "name");
+          const skill = getOfficialSkill(skillName);
+          if (!skill) {
+            throw new Error(`Unknown official HTMLslide skill: ${skillName}`);
+          }
+          return {
+            skill: skill.metadata,
+            markdown: skill.markdown
           };
         }
 
@@ -467,6 +703,18 @@ const readProjectTextFile = async (
   };
 };
 
+const readLatestCheckReport = async (projectRoot: string): Promise<CheckReport> => {
+  const reportPath = path.join(projectRoot, ".htmlslide", "reports", "check-report.json");
+  try {
+    return JSON.parse(await readFile(reportPath, "utf8")) as CheckReport;
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      throw new Error("No HTMLslide check report found. Run check_deck before get_check_report.");
+    }
+    throw error;
+  }
+};
+
 const writeProjectTextFile = async (
   projectRoot: string,
   relativePath: string,
@@ -477,16 +725,17 @@ const writeProjectTextFile = async (
   const filePath = resolveToolProjectPath(projectRoot, relativePath, requiredPrefix);
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, content, "utf8");
+  const audit = await writeMcpAuditEntry(createAuditEntry({
+    action: "write",
+    projectPath: projectRoot,
+    summary: `Wrote ${relativePath}.`,
+    targetPath: relativePath,
+    tool
+  }));
   return {
     path: relativePath,
     bytes: Buffer.byteLength(content, "utf8"),
-    audit: createAuditEntry({
-      action: "write",
-      projectPath: projectRoot,
-      summary: `Wrote ${relativePath}.`,
-      targetPath: relativePath,
-      tool
-    })
+    audit
   };
 };
 
@@ -519,6 +768,36 @@ const readContentInput = (input: Record<string, unknown>): string => {
     throw new Error("MCP write tool input must include string content.");
   }
   return value;
+};
+
+const errorCode = (error: unknown): string | undefined => {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return undefined;
+  }
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
+};
+
+const readOptionalStringInput = (input: Record<string, unknown>, key: string): string | undefined => {
+  const value = input[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`MCP tool input ${key} must be a non-empty string when provided.`);
+  }
+  return value;
+};
+
+const readCheckpointReferenceInput = (projectRoot: string, input: Record<string, unknown>) => ({
+  projectRoot,
+  checkpointId: readOptionalStringInput(input, "checkpointId"),
+  runId: readOptionalStringInput(input, "runId")
+});
+
+const exportLoadedDeck = async (projectRoot: string, options: ExportOptions): Promise<ExportResult> => {
+  const project = await loadDeckProject(projectRoot);
+  return exportDeck(toCompilerInput(project), options);
 };
 
 const toCompilerInput = (project: LoadedDeckProject): CompilerProjectInput => ({

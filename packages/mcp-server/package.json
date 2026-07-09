@@ -11,9 +11,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@htmlslide/agent": "workspace:*",
     "@htmlslide/compiler": "workspace:*",
     "@htmlslide/core": "workspace:*",
     "@htmlslide/linter": "workspace:*",
+    "@htmlslide/skills": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0"
   }
 }

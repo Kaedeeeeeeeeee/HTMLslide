@@ -427,7 +427,7 @@ describe("CLI project helpers", () => {
           safety: "project-write"
         }),
         expect.objectContaining({
-          implemented: false,
+          implemented: true,
           name: "checkpoint_revert",
           safety: "dangerous"
         }),

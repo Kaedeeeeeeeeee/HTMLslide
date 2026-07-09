@@ -37,6 +37,15 @@ describe("HTMLslide MCP tool registry", () => {
     expect(toolNames).toContain("export_pdf");
     expect(toolNames).toContain("checkpoint_revert");
     expect(toolNames).toContain("read_deck");
+    expect(htmlslideTools.find((tool) => tool.name === "export_deckpkg")).toMatchObject({
+      implemented: true
+    });
+    expect(htmlslideTools.find((tool) => tool.name === "checkpoint_revert")).toMatchObject({
+      implemented: true
+    });
+    expect(htmlslideTools.find((tool) => tool.name === "skill_list")).toMatchObject({
+      implemented: true
+    });
     expect(htmlslideTools.find((tool) => tool.name === "slide_write")).toMatchObject({
       implemented: true
     });
@@ -49,7 +58,7 @@ describe("HTMLslide MCP tool registry", () => {
     });
     expect(htmlslideTools.find((tool) => tool.name === "export_deck")).toMatchObject({
       deprecated: true,
-      implemented: false
+      implemented: true
     });
   });
 
@@ -158,6 +167,11 @@ describe("HTMLslide MCP in-process server", () => {
       const exported = await server.callTool("export_pdf");
 
       expect(exported).toMatchObject({
+        audit: {
+          action: "write",
+          targetPath: "exports/linter-valid-clean.pdf",
+          tool: "export_pdf"
+        },
         export: {
           artifacts: {
             pdf: path.join(projectPath, "exports", "linter-valid-clean.pdf")
@@ -168,6 +182,127 @@ describe("HTMLslide MCP in-process server", () => {
       });
       const pdfStat = await stat(path.join(projectPath, "exports", "linter-valid-clean.pdf"));
       expect(pdfStat.size).toBeGreaterThan(0);
+      await expect(readFile(path.join(projectPath, ".htmlslide", "logs", "mcp-audit.jsonl"), "utf8")).resolves.toContain(
+        "\"tool\":\"export_pdf\""
+      );
+    });
+  });
+
+  it("reads check reports, exports deckpkg, exposes skills, and manages checkpoints", async () => {
+    await withTempFixture("linter-valid-clean", async (projectPath) => {
+      const server = createHtmlslideMcpServer({ projectRoot: projectPath });
+
+      await expect(server.callTool("get_check_report")).rejects.toThrow("Run check_deck before get_check_report");
+
+      const checked = await server.callTool("check_deck");
+      expect(checked).toMatchObject({
+        status: "passed"
+      });
+      const report = await server.callTool("get_check_report");
+      expect(report).toMatchObject({
+        projectPath,
+        status: "passed"
+      });
+
+      const deckpkg = await server.callTool("export_deckpkg");
+      expect(deckpkg).toMatchObject({
+        audit: {
+          action: "write",
+          targetPath: "exports/linter-valid-clean.deckpkg",
+          tool: "export_deckpkg"
+        },
+        deckpkg: path.join(projectPath, "exports", "linter-valid-clean.deckpkg")
+      });
+      const deckpkgStat = await stat(path.join(projectPath, "exports", "linter-valid-clean.deckpkg"));
+      expect(deckpkgStat.size).toBeGreaterThan(0);
+
+      const fullExport = await server.callTool("export_deck");
+      expect(fullExport).toMatchObject({
+        audit: {
+          action: "write",
+          tool: "export_deck"
+        },
+        export: {
+          artifacts: {
+            deckpkg: path.join(projectPath, "exports", "linter-valid-clean.deckpkg"),
+            html: path.join(projectPath, "exports", "linter-valid-clean.html"),
+            pdf: path.join(projectPath, "exports", "linter-valid-clean.pdf")
+          }
+        }
+      });
+      expect((fullExport as { export: { artifacts: { thumbnails?: string[] } } }).export.artifacts.thumbnails).toHaveLength(1);
+
+      const skills = await server.callTool("skill_list");
+      expect(skills).toMatchObject({
+        skillCount: expect.any(Number),
+        skills: expect.arrayContaining([
+          expect.objectContaining({
+            name: "deck-architect"
+          })
+        ])
+      });
+      const skill = await server.callTool("skill_get_instructions", {
+        name: "deck-architect"
+      });
+      expect(skill).toMatchObject({
+        markdown: expect.stringContaining("# deck-architect"),
+        skill: {
+          name: "deck-architect"
+        }
+      });
+      await expect(server.callTool("skill_get_instructions", {
+        name: "missing-skill"
+      })).rejects.toThrow("Unknown official HTMLslide skill");
+
+      const checkpointCreated = await server.callTool("checkpoint_create", {
+        runId: "run-mcp"
+      });
+      expect(checkpointCreated).toMatchObject({
+        audit: {
+          action: "checkpoint",
+          tool: "checkpoint_create"
+        },
+        checkpoint: {
+          id: "checkpoint-run-mcp",
+          runId: "run-mcp"
+        }
+      });
+
+      await server.callTool("slide_write", {
+        content: '<section class="slide" data-slide-id="001-clean"><h1>Changed after checkpoint</h1></section>\n',
+        path: "slides/001-clean.html"
+      });
+      const checkpointDiff = await server.callTool("checkpoint_diff", {
+        checkpointId: "checkpoint-run-mcp"
+      });
+      expect(checkpointDiff).toMatchObject({
+        summary: {
+          changed: 1
+        }
+      });
+
+      await expect(server.callTool("checkpoint_revert", {
+        checkpointId: "checkpoint-run-mcp"
+      })).rejects.toThrow("confirm: true");
+
+      const checkpointReverted = await server.callTool("checkpoint_revert", {
+        checkpointId: "checkpoint-run-mcp",
+        confirm: true
+      });
+      expect(checkpointReverted).toMatchObject({
+        audit: {
+          action: "dangerous",
+          tool: "checkpoint_revert"
+        },
+        restored: expect.arrayContaining(["slides/001-clean.html"])
+      });
+      await expect(readFile(path.join(projectPath, "slides", "001-clean.html"), "utf8")).resolves.toContain(
+        "Local QA Clean Slide"
+      );
+      const auditLog = await readFile(path.join(projectPath, ".htmlslide", "logs", "mcp-audit.jsonl"), "utf8");
+      expect(auditLog).toContain("\"tool\":\"checkpoint_create\"");
+      expect(auditLog).toContain("\"tool\":\"slide_write\"");
+      expect(auditLog).toContain("\"tool\":\"checkpoint_revert\"");
     });
   });
 
@@ -212,7 +347,8 @@ describe("HTMLslide MCP stdio server", () => {
         expect(toolNames).toContain("project_get_manifest");
         expect(toolNames).toContain("slide_read");
         expect(toolNames).toContain("check_deck");
-        expect(toolNames).not.toContain("checkpoint_revert");
+        expect(toolNames).toContain("checkpoint_revert");
+        expect(toolNames).not.toContain("render_slide");
         expect(tools.tools.find((tool) => tool.name === "project_get_manifest")?._meta).toMatchObject({
           implemented: true,
           safety: "read-only"

@@ -4,7 +4,8 @@ HTMLslide includes an MCP server package for alpha agent integrations.
 
 The current alpha package exposes an in-process server harness and a stdio transport for local clients and tests. It can
 start against a deck project, list implemented tools, read project metadata/slides, write scoped slide/notes/theme
-source files, run `check_deck` through the linter, and create `export_pdf` artifacts through the shared compiler path.
+source files, run `check_deck` and read the latest check report, export PDF/deckpkg artifacts through the shared
+compiler path, create/diff/revert file-copy checkpoints, and return bundled official skill instructions.
 
 The CLI exposes the stdio server plus alpha discovery and startup checks:
 
@@ -22,7 +23,7 @@ manually validated.
 
 ## Alpha boundary
 
-MCP tools must respect the selected project boundary. They must reject path traversal, absolute paths outside the deck project, invalid project roots, and unsafe artifact writes.
+MCP tools must respect the selected project boundary. They must reject path traversal, absolute paths outside the deck project, invalid project roots, and unsafe artifact writes. Write, export, checkpoint, and dangerous revert tools append audit entries to `.htmlslide/logs/mcp-audit.jsonl`.
 
 Protocol mode must not include human-readable status text on stdout.
 
@@ -31,7 +32,10 @@ Protocol mode must not include human-readable status text on stdout.
 - Read project metadata.
 - List and read slides.
 - Run Check.
+- Read latest Check report.
 - Export artifacts through the shared compiler path.
+- Create, diff, and revert file-copy checkpoints.
+- List bundled official skills and read skill instructions.
 - Return schema-valid reports.
 
 CI should use local fixtures and fake clients. Do not require provider credentials or external agent login for MCP tests.

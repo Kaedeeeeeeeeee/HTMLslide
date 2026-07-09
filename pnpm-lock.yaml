@@ -168,6 +168,9 @@ importers:
 
   packages/mcp-server:
     dependencies:
+      '@htmlslide/agent':
+        specifier: workspace:*
+        version: link:../agent
       '@htmlslide/compiler':
         specifier: workspace:*
         version: link:../compiler
@@ -177,6 +180,9 @@ importers:
       '@htmlslide/linter':
         specifier: workspace:*
         version: link:../linter
+      '@htmlslide/skills':
+        specifier: workspace:*
+        version: link:../skills
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.4.3)

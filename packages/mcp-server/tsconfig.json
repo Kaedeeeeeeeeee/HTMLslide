@@ -7,8 +7,10 @@
   },
   "include": ["src"],
   "references": [
+    { "path": "../agent" },
     { "path": "../compiler" },
     { "path": "../core" },
-    { "path": "../linter" }
+    { "path": "../linter" },
+    { "path": "../skills" }
   ]
 }

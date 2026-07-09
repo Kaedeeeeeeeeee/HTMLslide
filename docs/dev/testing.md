@@ -19,7 +19,7 @@ Required root package contract:
 - `packageManager` pinned to a pnpm version.
 - `pnpm-lock.yaml` committed.
 - `docs:check`, `lint`, `typecheck`, `test`, `perf:smoke`, `security:check`, `build`, and `e2e:desktop` scripts in `package.json`.
-- `package:alpha`, `smoke:package:alpha`, `package:release:macos`, and `rc:checklist` scripts before macOS packaging is enabled.
+- `package:alpha`, `smoke:package:alpha`, `package:release:macos`, `rc:checklist`, and `release:notes` scripts before macOS packaging is enabled.
 
 ## Test Layers
 

@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Validate signed release contract
         shell: bash
@@ -36,11 +38,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          required_scripts=(docs:check lint typecheck test perf:smoke security:check build e2e:desktop package:release:macos rc:checklist)
+          required_scripts=(docs:check lint typecheck test perf:smoke security:check build e2e:desktop package:release:macos rc:checklist release:notes)
           missing_scripts="$(node <<'NODE'
           const fs = require('fs');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          const required = ['docs:check', 'lint', 'typecheck', 'test', 'perf:smoke', 'security:check', 'build', 'e2e:desktop', 'package:release:macos', 'rc:checklist'];
+          const required = ['docs:check', 'lint', 'typecheck', 'test', 'perf:smoke', 'security:check', 'build', 'e2e:desktop', 'package:release:macos', 'rc:checklist', 'release:notes'];
           process.stdout.write(required.filter((name) => !pkg.scripts || !pkg.scripts[name]).join('\n'));
           NODE
           )"
@@ -202,6 +204,11 @@ jobs:
 
           find release-artifacts -type f -print | sort
 
+      - name: Generate release notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          pnpm release:notes -- --tag "${GITHUB_REF_NAME}" --output release-artifacts/RELEASE_NOTES.md
+
       - name: Upload signed notarized artifact
         uses: actions/upload-artifact@v4
         with:
@@ -220,7 +227,9 @@ jobs:
 
           tag="${GITHUB_REF_NAME}"
           if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" --title "HTMLslide $tag" --notes "Signed and notarized macOS release artifacts."
+            gh release create "$tag" --title "HTMLslide $tag" --notes-file release-artifacts/RELEASE_NOTES.md
+          else
+            gh release edit "$tag" --title "HTMLslide $tag" --notes-file release-artifacts/RELEASE_NOTES.md
           fi
 
           gh release upload "$tag" release-artifacts/* --clobber

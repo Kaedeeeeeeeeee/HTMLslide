@@ -11,6 +11,7 @@ The alpha workflow builds unsigned alpha DMG/ZIP artifacts. These artifacts are 
 A production release uses the `Release macOS` GitHub Actions workflow and `pnpm package:release:macos`. It requires Developer ID signing, notarization, stapling, release artifact naming, and documented secret ownership. Signing and notarization secrets must live in GitHub Actions repository or organization secrets, not in the repository.
 
 The signed workflow writes `signed-notarized` DMG and manifest artifacts, uploads them as workflow artifacts, and attaches them to the matching GitHub Release when run from a `v*` tag.
+Tag releases generate `RELEASE_NOTES.md` from git history with `pnpm release:notes` and use that file as the GitHub Release body.
 
 ## GitHub Actions
 

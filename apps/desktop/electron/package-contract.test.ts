@@ -21,6 +21,8 @@ describe("macOS alpha packaging contract", () => {
     expect(packageJson.scripts).toMatchObject({
       "package:alpha": "node scripts/release/package-alpha.mjs",
       "package:release:macos": "node scripts/release/package-release-macos.mjs",
+      "release:notes": "node scripts/release/create-release-notes.mjs",
+      "rc:checklist": "node scripts/release/create-rc-acceptance.mjs",
       "smoke:package:alpha": "node scripts/release/smoke-alpha-package.mjs",
       "verify:package:alpha": "pnpm package:alpha && pnpm smoke:package:alpha"
     });
@@ -122,8 +124,10 @@ describe("macOS alpha packaging contract", () => {
     const workflow = await readText(".github/workflows/release-macos.yml");
 
     expect(workflow).toContain("runs-on: macos-latest");
+    expect(workflow).toContain("fetch-depth: 0");
     expect(workflow).toContain("contents: write");
     expect(workflow).toContain("package:release:macos");
+    expect(workflow).toContain("release:notes");
     expect(workflow).toContain("APPLE_DEVELOPER_ID_APPLICATION");
     expect(workflow).toContain("APPLE_DEVELOPER_ID_CERTIFICATE_BASE64");
     expect(workflow).toContain("APPLE_APP_SPECIFIC_PASSWORD");
@@ -132,6 +136,9 @@ describe("macOS alpha packaging contract", () => {
     expect(workflow).toContain("manifest.notarized !== true");
     expect(workflow).toContain("manifest.stapled !== true");
     expect(workflow).toContain("signed-notarized");
+    expect(workflow).toContain("release-artifacts/RELEASE_NOTES.md");
+    expect(workflow).toContain("gh release create \"$tag\" --title \"HTMLslide $tag\" --notes-file release-artifacts/RELEASE_NOTES.md");
+    expect(workflow).toContain("gh release edit \"$tag\" --title \"HTMLslide $tag\" --notes-file release-artifacts/RELEASE_NOTES.md");
     expect(workflow).toContain("name: htmlslide-signed-notarized-${{ github.run_number }}");
     expect(workflow).toContain("gh release upload");
   });

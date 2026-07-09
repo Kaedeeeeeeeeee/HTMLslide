@@ -2,6 +2,9 @@ import { _electron as electron, expect, test } from "@playwright/test";
 import type { ElectronApplication, Page } from "@playwright/test";
 import { readDeckPackage } from "@htmlslide/presenter";
 import { execFile as execFileCallback } from "node:child_process";
+import { createServer } from "node:http";
+import type { IncomingMessage, Server, ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { createRequire } from "node:module";
 import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -55,6 +58,200 @@ function collectBrowserErrors(page: Page): string[] {
     browserErrors.push(error.message);
   });
   return browserErrors;
+}
+
+type FakeOpenAiServer = {
+  baseUrl: string;
+  calls: Array<{ method: string; path: string; stage?: string }>;
+  close: () => Promise<void>;
+};
+
+async function startFakeOpenAiCompatibleServer(title: string): Promise<FakeOpenAiServer> {
+  const calls: FakeOpenAiServer["calls"] = [];
+  const server = createServer(async (request, response) => {
+    try {
+      const url = new URL(request.url ?? "/", "http://127.0.0.1");
+      const method = request.method ?? "GET";
+      if (method === "GET" && url.pathname === "/v1/models/gpt-5-mini") {
+        calls.push({ method, path: url.pathname });
+        writeJson(response, 200, { id: "gpt-5-mini" });
+        return;
+      }
+
+      if (method === "POST" && url.pathname === "/v1/chat/completions") {
+        const body = await readJsonBody(request);
+        const requestBody = body as { messages?: Array<{ content?: string }> };
+        const userContent = requestBody.messages?.[1]?.content ?? "{}";
+        const userInput = JSON.parse(userContent) as { stage?: string };
+        calls.push({ method, path: url.pathname, stage: userInput.stage });
+        writeJson(response, 200, {
+          choices: [
+            {
+              message: {
+                content: JSON.stringify(fakeOpenAiStageOutput(userInput.stage, title))
+              }
+            }
+          ],
+          usage: {
+            completion_tokens: 9,
+            prompt_tokens: 13,
+            total_tokens: 22
+          }
+        });
+        return;
+      }
+
+      calls.push({ method, path: url.pathname });
+      writeJson(response, 500, { error: { message: `Unexpected fake provider request: ${method} ${url.pathname}` } });
+    } catch (error) {
+      writeJson(response, 500, { error: { message: error instanceof Error ? error.message : String(error) } });
+    }
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  const address = server.address() as AddressInfo;
+
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}/v1`,
+    calls,
+    close: () => closeServer(server)
+  };
+}
+
+function closeServer(server: Server): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+async function readJsonBody(request: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  const raw = Buffer.concat(chunks).toString("utf8");
+  return raw.trim().length > 0 ? JSON.parse(raw) : {};
+}
+
+function writeJson(response: ServerResponse, status: number, value: unknown): void {
+  response.writeHead(status, { "content-type": "application/json" });
+  response.end(JSON.stringify(value));
+}
+
+function fakeOpenAiStageOutput(stage: string | undefined, title: string): unknown {
+  switch (stage) {
+    case "brief":
+      return {
+        title,
+        brief: "Build a provider-backed deck from the desktop wizard.",
+        language: "en-US",
+        audience: "reviewers",
+        durationMinutes: 8
+      };
+    case "outline":
+      return {
+        title,
+        language: "en-US",
+        audience: "reviewers",
+        durationMinutes: 8,
+        slides: [{ id: "001-title", title, kind: "title", goal: "Prove provider-backed generation." }]
+      };
+    case "visual-direction":
+      return {
+        directions: [
+          {
+            id: "direction-e2e-provider",
+            label: "Provider Proof",
+            rationale: "A readable provider-backed smoke deck for release validation.",
+            sampleSlideIds: ["001-title"],
+            tokens: {
+              accent: "#2357d9",
+              background: "#ffffff",
+              text: "#111827"
+            }
+          }
+        ],
+        selectedDirectionId: null
+      };
+    case "build":
+      return {
+        filesChanged: ["deck.json", "slides/001-title.html", "notes/001-title.md"],
+        notesChanged: ["001-title"],
+        slidesChanged: ["001-title"],
+        themeChanged: [],
+        sourceWrites: byokE2eSourceWrites(title)
+      };
+    case "check":
+      return {
+        status: "passed",
+        summary: { errors: 0, warnings: 0, info: 0 },
+        issues: []
+      };
+    case "export":
+      return {
+        artifacts: [{ type: "pdf", path: "exports/provider-e2e.pdf" }]
+      };
+    case "review":
+      return {
+        summary: "Provider-backed desktop E2E deck is ready for review.",
+        filesChanged: ["deck.json", "slides/001-title.html", "notes/001-title.md"],
+        issuesRemaining: 0,
+        nextActions: ["Review deck"]
+      };
+    default:
+      throw new Error(`Unexpected fake OpenAI stage: ${stage ?? "unknown"}`);
+  }
+}
+
+function byokE2eSourceWrites(title: string): Array<{ path: string; content: string }> {
+  return [
+    {
+      path: "deck.json",
+      content: `${JSON.stringify(
+        {
+          schemaVersion: "0.1.0",
+          id: "deck_byok_e2e",
+          title,
+          language: "en-US",
+          aspectRatio: "16:9",
+          viewport: { width: 1920, height: 1080 },
+          slides: [
+            {
+              id: "001-title",
+              title,
+              source: "slides/001-title.html",
+              notes: "notes/001-title.md",
+              durationSec: 75,
+              kind: "title",
+              status: "ready"
+            }
+          ]
+        },
+        null,
+        2
+      )}\n`
+    },
+    {
+      path: "slides/001-title.html",
+      content: `<section class="slide" data-slide-id="001-title"><h1>${title}</h1><p>Provider-backed generation reached check and export from the desktop wizard.</p></section>\n`
+    },
+    {
+      path: "notes/001-title.md",
+      content: `# ${title}\n\nUse this talk track to confirm provider-backed generation, checkpoint review, check, and export all completed from the desktop wizard.\n`
+    }
+  ];
 }
 
 test.describe("HTMLslide desktop smoke", () => {
@@ -415,6 +612,131 @@ test.describe("HTMLslide desktop smoke", () => {
       "Deck title: Investor Demo"
     );
     await expectNoFrameworkOverlay(page);
+  });
+
+  test("generates a new deck through HTMLslide Agent with a local OpenAI-compatible provider", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
+    const fakeProviderTitle = "BYOK Provider E2E Deck";
+    const fakeApiKey = "sk-e2e-compatible-provider-key";
+    const fakeProvider = await startFakeOpenAiCompatibleServer(fakeProviderTitle);
+    const homeDir = path.join(tempRoot, "home");
+    const userDataDir = path.join(tempRoot, "user-data");
+    const workspaceDir = path.join(tempRoot, "workspace");
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(userDataDir, { recursive: true });
+    await mkdir(workspaceDir, { recursive: true });
+
+    try {
+      electronApp = await electron.launch({
+        executablePath: electronExecutable,
+        args: [electronMain],
+        env: {
+          ...process.env,
+          ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+          HOME: homeDir,
+          HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir,
+          HTMLSLIDE_E2E_CREDENTIAL_STORE: "memory",
+          HTMLSLIDE_USER_DATA_DIR: userDataDir
+        }
+      });
+
+      const page = await electronApp.firstWindow();
+      await page.waitForLoadState("domcontentloaded");
+      await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+      await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+
+      await page.getByRole("button", { name: "AI Engines", exact: true }).click();
+      await page.getByRole("button", { name: /HTMLslide Agent/ }).click();
+      await page.getByLabel("Provider").selectOption("compatible");
+      await page.getByLabel("Model").fill("gpt-5-mini");
+      await page.getByLabel("Base URL").fill(fakeProvider.baseUrl);
+      await page.getByLabel("API key").fill(fakeApiKey);
+      await page.getByRole("button", { name: "Save Key", exact: true }).click();
+      await expect(page.getByText("AI engine key saved")).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByText("OpenAI-compatible key saved")).toBeVisible();
+
+      await page.getByRole("button", { name: "Recent", exact: true }).click();
+      await page.locator(".library-main").getByRole("button", { name: "New Deck", exact: true }).first().click();
+      const newDeckPanel = page.locator(".new-deck-panel");
+      await expect(newDeckPanel).toBeVisible();
+      await newDeckPanel.getByLabel("Deck title").fill("Provider Demo");
+      await newDeckPanel.getByLabel("Brief").fill("Create a provider-backed smoke deck with one title slide.");
+      await newDeckPanel.getByRole("button", { name: /HTMLslide Agent/ }).click();
+      await expect(newDeckPanel.getByText("Key ready")).toBeVisible();
+      await newDeckPanel.getByRole("button", { name: "Create & Generate", exact: true }).click();
+
+      await expect(page.getByText("HTMLslide Agent completed check and export")).toBeVisible({ timeout: 60_000 });
+      await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: fakeProviderTitle })).toBeVisible();
+      await expect(page.getByText("generate: HTMLslide Agent complete")).toBeVisible();
+      await expect(page.getByText(/check: Check passed/)).toBeVisible();
+      await expect(page.getByText(/export: [1-9][0-9]* artifacts/)).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Review changes" })).toBeVisible();
+
+      const stages = fakeProvider.calls.map((call) => call.stage).filter(Boolean);
+      expect(fakeProvider.calls).toContainEqual({ method: "GET", path: "/v1/models/gpt-5-mini" });
+      expect(stages).toEqual(["brief", "outline", "visual-direction", "build", "check", "export", "review"]);
+
+      const projectDir = path.join(workspaceDir, "provider-demo");
+      const settingsText = await readFile(path.join(userDataDir, "ai-engine-settings.json"), "utf8");
+      expect(settingsText).toContain('"provider": "compatible"');
+      expect(settingsText).toContain(fakeProvider.baseUrl);
+      expect(settingsText).not.toContain(fakeApiKey);
+
+      const manifestText = await readFile(path.join(projectDir, "deck.json"), "utf8");
+      const manifest = JSON.parse(manifestText) as {
+        slides?: unknown[];
+        title?: string;
+      };
+      expect(manifest.title).toBe(fakeProviderTitle);
+      expect(manifest.slides).toHaveLength(1);
+      const slideText = await readFile(path.join(projectDir, "slides", "001-title.html"), "utf8");
+      const notesText = await readFile(path.join(projectDir, "notes", "001-title.md"), "utf8");
+      expect(slideText).toContain(fakeProviderTitle);
+      expect(notesText).toContain("provider-backed generation");
+      await expect(access(path.join(projectDir, "exports", "byok-provider-e2e-deck.pdf"))).resolves.toBeUndefined();
+      await expect(access(path.join(projectDir, "exports", "byok-provider-e2e-deck.deckpkg"))).resolves.toBeUndefined();
+
+      const agentReportText = await readFile(
+        path.join(projectDir, ".htmlslide", "reports", "latest-agent-run.json"),
+        "utf8"
+      );
+      const agentReport = JSON.parse(agentReportText) as {
+        applied?: { filesChanged?: string[]; source?: string; writeCount?: number };
+        outputs?: {
+          build?: { sourceWriteCount?: number; sourceWritePaths?: string[] };
+          outline?: { slides?: unknown[] };
+          visualDirection?: { directions?: Array<{ id?: string }> };
+        };
+        providerId?: string;
+        runId?: string;
+        status?: string;
+      };
+      expect(agentReport).toMatchObject({
+        providerId: "htmlslide-byok",
+        status: "succeeded"
+      });
+      expect(agentReport.runId).toMatch(/^run-/);
+      expect(agentReport.outputs?.outline?.slides).toHaveLength(1);
+      expect(agentReport.outputs?.visualDirection?.directions?.map((direction) => direction.id)).toEqual([
+        "direction-e2e-provider"
+      ]);
+      expect(agentReport.outputs?.build).toMatchObject({
+        sourceWriteCount: 3,
+        sourceWritePaths: ["deck.json", "slides/001-title.html", "notes/001-title.md"]
+      });
+      expect(agentReport.applied).toMatchObject({
+        filesChanged: ["deck.json", "slides/001-title.html", "notes/001-title.md"],
+        source: "provider-source-writes",
+        writeCount: 3
+      });
+      expect(agentReportText).not.toContain('"content":');
+      for (const text of [settingsText, manifestText, slideText, notesText, agentReportText]) {
+        expect(text).not.toContain(fakeApiKey);
+      }
+      await expectNoFrameworkOverlay(page);
+    } finally {
+      await fakeProvider.close();
+    }
   });
 
   test("loads the Electron shell, reaches the library, and opens a sample deck", async () => {

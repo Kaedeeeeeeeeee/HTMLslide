@@ -38,7 +38,7 @@ These gates are expected before each alpha candidate:
 | Open Folder opens a project | Electron E2E covers opening fixture and created projects. |
 | Project Library shows recent projects | Electron E2E covers recent project management. |
 | Local Mock provider completes the flow | Agent tests, CLI tests, and Electron E2E cover deterministic mock generation. |
-| BYOK source writes/check/export path | Provider adapters use fake fetch tests; desktop BYOK wiring is covered without real credentials. |
+| BYOK source writes/check/export path | Provider adapters use fake fetch tests; Electron E2E covers a local OpenAI-compatible fake provider through AI Engines, New Deck, source writes, check, export, and sanitized run reports without real credentials. |
 | Generate outline, visual direction, and full deck | Agent orchestrator tests and desktop mock generation cover the staged flow. |
 | Check finds overflow | Linter fixtures and Electron QA panel E2E cover text overflow issues. |
 | Check finds missing asset | Linter fixtures and Electron QA panel E2E cover missing asset issues. |

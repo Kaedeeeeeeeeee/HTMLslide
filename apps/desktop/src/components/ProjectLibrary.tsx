@@ -288,8 +288,10 @@ function RecentProjects({
     hasApiKey: aiEngineSettings.apiKey.hasKey,
     selectedExternalReady: selectedExternalStatus.status === "ready"
   });
+  const newDeckStatusId = "new-deck-status";
   const busy = operationStatus.kind === "running" && operationStatus.message === "Creating deck";
   const canCreate = !busy && validationMessage === undefined;
+  const statusMessage = validationMessage ?? (operationStatus.kind === "failed" ? operationStatus.message : undefined);
   const engineOptions = buildNewDeckEngineOptions({
     apiKeyStatus: formatRedactedKeyStatus(aiEngineSettings),
     hasApiKey: aiEngineSettings.apiKey.hasKey,
@@ -593,6 +595,7 @@ function RecentProjects({
           </div>
           <div className="new-deck-panel__actions">
             <Button
+              aria-describedby={statusMessage ? newDeckStatusId : undefined}
               disabled={!canCreate}
               icon={<Plus />}
               type="submit"
@@ -608,8 +611,16 @@ function RecentProjects({
             >
               Cancel
             </Button>
-            {validationMessage ? <span>{validationMessage}</span> : null}
-            {!validationMessage && operationStatus.kind === "failed" ? <span>{operationStatus.message}</span> : null}
+            {statusMessage ? (
+              <p
+                aria-live="polite"
+                className="settings-note is-danger"
+                id={newDeckStatusId}
+                role="alert"
+              >
+                {statusMessage}
+              </p>
+            ) : null}
           </div>
         </form>
       ) : null}

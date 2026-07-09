@@ -489,7 +489,8 @@ svg {
 }
 
 .new-deck-panel__path > span,
-.new-deck-panel__actions > span {
+.new-deck-panel__actions > span,
+.new-deck-panel__actions > .settings-note {
   color: var(--hs-text-muted);
   font-size: 12px;
 }

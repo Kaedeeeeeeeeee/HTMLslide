@@ -111,7 +111,13 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(newDeckPanel.getByLabel("Template")).toHaveValue("default");
     await expect(newDeckPanel.getByRole("button", { name: /No AI/ })).toHaveAttribute("aria-pressed", "true");
     await newDeckPanel.getByRole("button", { name: /HTMLslide Agent/ }).click();
-    await expect(newDeckPanel.getByText("Save a provider API key in AI Engines before using HTMLslide Agent.")).toBeVisible();
+    const generationBlockedAlert = newDeckPanel.getByRole("alert");
+    await expect(generationBlockedAlert).toHaveText("Save a provider API key in AI Engines before using HTMLslide Agent.");
+    const createAndGenerateButton = newDeckPanel.getByRole("button", { name: "Create & Generate", exact: true });
+    await expect(createAndGenerateButton).toBeDisabled();
+    const blockedAlertId = await generationBlockedAlert.getAttribute("id");
+    expect(blockedAlertId).toBeTruthy();
+    await expect(createAndGenerateButton).toHaveAttribute("aria-describedby", blockedAlertId ?? "");
     await newDeckPanel.getByRole("button", { name: /No AI/ }).click();
     await newDeckPanel.getByLabel("Deck title").fill("Investor Update");
     await expect(newDeckPanel.getByLabel("Folder")).toHaveValue("investor-update");

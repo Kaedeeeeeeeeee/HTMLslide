@@ -523,21 +523,28 @@ function PresenterMode({
   );
   const currentSlidePreview = findSlidePreview(slides, view.currentSlide.id);
   const nextSlidePreview = view.nextSlide ? findSlidePreview(slides, view.nextSlide.id) : undefined;
-  const currentSlideSourceHtml = currentSlidePreview?.html?.trim() ? currentSlidePreview.html : undefined;
+  const currentSlideDocumentHtml = view.currentSlide.htmlDocument?.trim() ? view.currentSlide.htmlDocument : undefined;
+  const currentSlideSourceHtml = currentSlidePreview?.html?.trim()
+    ? currentSlidePreview.html
+    : view.currentSlide.html?.trim()
+      ? view.currentSlide.html
+      : undefined;
   const audiencePayload = useMemo<DesktopAudienceSlidePayload>(() => ({
     accent: currentSlidePreview?.accent,
     deckTitle: deck.title,
-    imageDataUrl: currentSlideSourceHtml ? undefined : view.currentSlide.thumbnail.dataUrl,
+    imageDataUrl: currentSlideDocumentHtml || currentSlideSourceHtml ? undefined : view.currentSlide.thumbnail.dataUrl,
     screen: view.screen,
     section: currentSlidePreview?.section,
     slideCount: view.slideCount,
     slideId: view.currentSlide.id,
     slideNumber: view.slideNumber,
     slideTitle: view.currentSlide.title,
-    sourceHtml: currentSlideSourceHtml
+    sourceDocumentHtml: currentSlideDocumentHtml,
+    sourceHtml: currentSlideDocumentHtml ? undefined : currentSlideSourceHtml
   }), [
     currentSlidePreview?.accent,
     currentSlidePreview?.section,
+    currentSlideDocumentHtml,
     currentSlideSourceHtml,
     deck.title,
     view.currentSlide.id,
@@ -977,10 +984,16 @@ function PresenterSlidePreview({
   slide?: SlideSummary;
   variant: "current" | "next";
 }): ReactNode {
-  const sourceHtml = slide?.html?.trim() ? slide.html : undefined;
-  const hasSourcePreview = variant === "current" && sourceHtml !== undefined;
+  const documentHtml = presenterSlide.htmlDocument?.trim() ? presenterSlide.htmlDocument : undefined;
+  const sourceHtml = slide?.html?.trim()
+    ? slide.html
+    : presenterSlide.html?.trim()
+      ? presenterSlide.html
+      : undefined;
+  const hasDocumentPreview = documentHtml !== undefined;
+  const hasSourcePreview = !hasDocumentPreview && variant === "current" && sourceHtml !== undefined;
   const thumbnailDataUrl = presenterSlide.thumbnail.dataUrl;
-  const hasImagePreview = !hasSourcePreview && thumbnailDataUrl !== undefined;
+  const hasImagePreview = !hasDocumentPreview && !hasSourcePreview && thumbnailDataUrl !== undefined;
   const accent = slide?.accent ?? "#7da2ff";
 
   return (
@@ -988,7 +1001,9 @@ function PresenterSlidePreview({
       aria-label={`${presenterSlide.title} presenter preview`}
       className={[
         "presenter-slide-preview",
-        hasSourcePreview
+        hasDocumentPreview
+          ? "presenter-slide-preview--document"
+          : hasSourcePreview
           ? "slide-canvas slide-canvas--source"
           : hasImagePreview
             ? "presenter-slide-preview--visual"
@@ -997,7 +1012,14 @@ function PresenterSlidePreview({
       ].filter(Boolean).join(" ")}
       style={{ "--slide-accent": accent } as CSSProperties}
     >
-      {hasSourcePreview ? (
+      {hasDocumentPreview ? (
+        <iframe
+          className="presenter-slide-preview__frame"
+          sandbox=""
+          srcDoc={documentHtml}
+          title={`${presenterSlide.title} slide document`}
+        />
+      ) : hasSourcePreview ? (
         <div
           className="slide-fragment-preview"
           dangerouslySetInnerHTML={{ __html: sourceHtml ?? "" }}

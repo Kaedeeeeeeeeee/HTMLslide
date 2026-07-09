@@ -117,13 +117,32 @@ const settings = {
   }
 };
 
+const deckHtml = `<!doctype html>
+<html lang="en-US">
+  <head>
+    <meta charset="utf-8" />
+    <title>Presenter Fixture</title>
+    <style>.htmlslide-page { width: 1920px; height: 1080px; }</style>
+  </head>
+  <body data-htmlslide-mode="print" data-htmlslide-notes="closed">
+    <main class="htmlslide-deck" aria-label="Presenter Fixture">
+<article class="htmlslide-page" data-slide-id="001-title" data-slide-index="0" data-slide-title="Opening" aria-current="true" tabindex="-1">
+<section class="slide" data-slide-id="001-title"><h1>Package HTML title</h1></section>
+</article>
+<article class="htmlslide-page" data-slide-id="002-plan" data-slide-index="1" data-slide-title="Plan" aria-current="false" tabindex="-1">
+<section class="slide" data-slide-id="002-plan"><h2>Package HTML plan</h2></section>
+</article>
+    </main>
+  </body>
+</html>`;
+
 const writeFixtureDeckPackage = async (
   deckpkgPath: string,
   options: { manifestOverride?: unknown; omitSecondThumbnail?: boolean; notesOverride?: unknown } = {}
 ): Promise<void> => {
   const zip = new JSZip();
   zip.file("manifest.json", `${JSON.stringify(options.manifestOverride ?? manifest, null, 2)}\n`, { date: ZIP_DATE });
-  zip.file("deck.html", "<!doctype html><title>Presenter Fixture</title>\n", { date: ZIP_DATE });
+  zip.file("deck.html", `${deckHtml}\n`, { date: ZIP_DATE });
   zip.file("deck.pdf", PDF_BYTES, { date: ZIP_DATE });
   zip.file("notes.json", `${JSON.stringify(options.notesOverride ?? notes, null, 2)}\n`, { date: ZIP_DATE });
   zip.file("presenter-settings.json", `${JSON.stringify(settings, null, 2)}\n`, { date: ZIP_DATE });
@@ -167,6 +186,9 @@ describe("@htmlslide/presenter deckpkg reader", () => {
       expect(deckPackage.sourcePath).toBe(deckpkgPath);
       expect(deckPackage.manifest.title).toBe("Presenter Fixture");
       expect(deckPackage.artifacts.html.text).toContain("<title>Presenter Fixture</title>");
+      expect(deckPackage.slides[0]?.html).toContain("Package HTML title");
+      expect(deckPackage.slides[0]?.htmlDocument).toContain('data-htmlslide-mode="present"');
+      expect(deckPackage.slides[1]?.htmlDocument).toContain('aria-current="true"');
       expect(deckPackage.artifacts.pdf.bytes.byteLength).toBeGreaterThan(0);
       expect(deckPackage.slides.map((slide) => [slide.id, slide.slideNumber, slide.notesMarkdown])).toEqual([
         ["001-title", 1, "Open with the fixed artifact contract."],

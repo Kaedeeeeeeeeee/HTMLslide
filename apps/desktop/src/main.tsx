@@ -139,7 +139,8 @@ function presenterDeckToWorkspaceState(
         speakerNotes: slide.notesMarkdown,
         bullets: bulletsFromSpeakerNotes(slide.notesMarkdown, slide.title),
         sourcePath: slide.source,
-        notesPath: slide.notesPath ?? undefined
+        notesPath: slide.notesPath ?? undefined,
+        html: slide.html
       };
     })
   };

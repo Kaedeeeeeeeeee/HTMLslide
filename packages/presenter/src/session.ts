@@ -45,6 +45,8 @@ export type PresenterSlide = {
   durationSec: number;
   notesMarkdown: string;
   hasNotes: boolean;
+  html?: string;
+  htmlDocument?: string;
   thumbnail: PresenterThumbnail;
 };
 
@@ -60,6 +62,8 @@ export type RehearsalPresenterSlideInput = {
   source?: string | null;
   notesPath?: string | null;
   notesMarkdown?: string | null;
+  html?: string | null;
+  htmlDocument?: string | null;
   durationSec?: number | null;
   duration?: string | null;
 };
@@ -179,6 +183,8 @@ export function createRehearsalPresenterDeck(
       durationSec,
       notesMarkdown,
       hasNotes: notesMarkdown.length > 0,
+      html: slide.html?.trim() ? slide.html : undefined,
+      htmlDocument: slide.htmlDocument?.trim() ? slide.htmlDocument : undefined,
       thumbnail: {
         slideId: slide.id,
         path: "",

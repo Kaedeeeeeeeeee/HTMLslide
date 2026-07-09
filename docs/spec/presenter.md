@@ -98,8 +98,10 @@ The desktop Presenter console also reads Electron display metadata and exposes a
 internal/external, scale, and resolution details. The selector can open a separate audience BrowserWindow on the selected
 display. The renderer session remains the source of truth: slide navigation, jump, black screen, and white screen changes
 are pushed to the audience window as sanitized slide payloads. When source HTML is available, the audience window renders
-the slide fragment full bleed; package-only sessions render the package's validated PNG thumbnails in Presenter and
-Audience windows until full package HTML/page rendering is wired into the renderer.
+the slide fragment full bleed. Package-backed sessions extract per-slide HTML from `deck.html`, render the single-slide
+document in sandboxed frames for Presenter and Audience views, and keep the package's validated PNG thumbnails as the
+fallback when package HTML is unavailable. Standalone package parity still depends on asset embedding for local
+images/fonts referenced by the exported HTML.
 
 ## Keyboard Controls
 

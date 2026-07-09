@@ -128,6 +128,7 @@ type DesktopAudienceSlidePayload = {
   slideCount: number;
   screen: "normal" | "black" | "white";
   sourceHtml?: string;
+  sourceDocumentHtml?: string;
   imageDataUrl?: string;
   section?: string;
   accent?: string;
@@ -206,7 +207,10 @@ function isAudienceSlidePayload(value: unknown): value is DesktopAudienceSlidePa
     typeof payload.slideTitle === "string" &&
     Number.isInteger(payload.slideNumber) &&
     Number.isInteger(payload.slideCount) &&
-    (payload.screen === "normal" || payload.screen === "black" || payload.screen === "white")
+    (payload.screen === "normal" || payload.screen === "black" || payload.screen === "white") &&
+    (payload.sourceHtml === undefined || typeof payload.sourceHtml === "string") &&
+    (payload.sourceDocumentHtml === undefined || typeof payload.sourceDocumentHtml === "string") &&
+    (payload.imageDataUrl === undefined || typeof payload.imageDataUrl === "string")
   );
 }
 
@@ -322,6 +326,7 @@ function audienceSlideDataUrl(payload: DesktopAudienceSlidePayload): string {
 }
 
 function audienceSlideHtml(payload: DesktopAudienceSlidePayload): string {
+  const safeSourceDocumentHtml = payload.sourceDocumentHtml ?? "";
   const safeSourceHtml = payload.sourceHtml ? sanitizeAudienceSlideHtml(payload.sourceHtml) : "";
   const safeImageDataUrl = safeAudienceImageDataUrl(payload.imageDataUrl);
   const screenLabel = payload.screen === "black" ? "Black screen" : payload.screen === "white" ? "White screen" : "";
@@ -374,6 +379,13 @@ function audienceSlideHtml(payload: DesktopAudienceSlidePayload): string {
       display: grid;
       place-items: center;
       background: #050505;
+    }
+    .audience-slide-frame {
+      border: 0;
+      display: block;
+      width: 100%;
+      height: 100%;
+      background: #fff;
     }
     .audience-slide--image img {
       display: block;
@@ -434,7 +446,9 @@ function audienceSlideHtml(payload: DesktopAudienceSlidePayload): string {
 </head>
 <body>
   <main class="audience-stage" aria-label="HTMLslide audience window">
-    ${safeSourceHtml
+    ${safeSourceDocumentHtml
+      ? `<iframe class="audience-slide-frame" sandbox="" srcdoc="${escapeHtml(safeSourceDocumentHtml)}" title="${escapeHtml(payload.slideTitle)}"></iframe>`
+      : safeSourceHtml
       ? `<div class="audience-slide">${safeSourceHtml}</div>`
       : safeImageDataUrl
         ? `<div class="audience-slide audience-slide--image"><img src="${safeImageDataUrl}" alt="${escapeHtml(payload.slideTitle)}" /></div>`

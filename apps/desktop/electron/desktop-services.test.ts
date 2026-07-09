@@ -2069,6 +2069,8 @@ function requireArg(args, name) {
     expect(result.ok && result.deck.title).toBe("Desktop Test Deck");
     expect(result.ok && result.deck.slides).toHaveLength(1);
     expect(result.ok && result.deck.slides[0]?.notesMarkdown).toContain("Speaker note body.");
+    expect(result.ok && result.deck.slides[0]?.html).toContain('data-slide-id="001-title"');
+    expect(result.ok && result.deck.slides[0]?.htmlDocument).toContain('data-htmlslide-mode="present"');
     expect(result.ok && result.deck.slides[0]?.thumbnail.bytes.byteLength).toBe(0);
     expect(result.ok && result.deck.slides[0]?.thumbnail.dataUrl).toMatch(/^data:image\/png;base64,/u);
   });

@@ -1150,12 +1150,15 @@ test.describe("HTMLslide desktop smoke", () => {
 
     const presenter = page.getByLabel("Presenter rehearsal mode");
     const currentSlideHeading = presenter.locator(".presenter-current .hs-panel-header h2");
+    const currentSlideFrame = presenter.frameLocator(".presenter-current .presenter-slide-preview__frame");
     const screenCover = presenter.locator(".presenter-screen-cover");
     const presenterNotes = presenter.locator(".presenter-notes");
     await expect(presenter).toBeVisible();
     await expect(presenter.getByText("Deck Package Presenter / Rehearsal Mode")).toBeVisible();
     await expect(presenter.getByText("1 / 2")).toBeVisible();
     await expect(currentSlideHeading).toHaveText("HTML as source");
+    await expect(presenter.locator(".presenter-current .presenter-slide-preview__frame")).toBeVisible();
+    await expect(currentSlideFrame.getByRole("heading", { name: "HTML as source" })).toBeVisible();
     await expect(presenter.getByRole("heading", { name: "Speaker Notes" })).toBeVisible();
     await expect(presenter.getByLabel("Presenter target display")).toBeVisible();
     await expect(presenter.locator(".presenter-notes").getByText("今天我们把 HTML 作为源码")).toBeVisible();
@@ -1164,22 +1167,26 @@ test.describe("HTMLslide desktop smoke", () => {
     await presenter.getByRole("button", { name: "Open audience", exact: true }).click();
     const audiencePage = await audienceWindowPromise;
     await audiencePage.waitForLoadState("domcontentloaded");
+    const audienceFrame = audiencePage.frameLocator(".audience-slide-frame");
     await expect(audiencePage.getByLabel("HTMLslide audience window")).toBeVisible();
-    await expect(audiencePage.getByText("HTML as source")).toBeVisible();
+    await expect(audiencePage.locator(".audience-slide-frame")).toBeVisible();
+    await expect(audienceFrame.getByRole("heading", { name: "HTML as source" })).toBeVisible();
     await expect(audiencePage.getByText("1 / 2")).toBeVisible();
     await page.bringToFront();
 
     await page.keyboard.press("ArrowRight");
     await expect(presenter.getByText("2 / 2")).toBeVisible();
     await expect(currentSlideHeading).toHaveText("Project structure");
+    await expect(currentSlideFrame.getByRole("heading", { name: "Project structure" })).toBeVisible();
     await expect(presenter.getByText("Project folders stay readable")).toBeVisible();
-    await expect(audiencePage.getByText("Project structure")).toBeVisible();
+    await expect(audienceFrame.getByRole("heading", { name: "Project structure" })).toBeVisible();
     await expect(audiencePage.getByText("2 / 2")).toBeVisible();
 
     await page.keyboard.press("ArrowLeft");
     await expect(presenter.getByText("1 / 2")).toBeVisible();
     await expect(currentSlideHeading).toHaveText("HTML as source");
-    await expect(audiencePage.getByText("HTML as source")).toBeVisible();
+    await expect(currentSlideFrame.getByRole("heading", { name: "HTML as source" })).toBeVisible();
+    await expect(audienceFrame.getByRole("heading", { name: "HTML as source" })).toBeVisible();
 
     await page.keyboard.press("T");
     await expect(presenter.getByText("paused")).toBeVisible();
@@ -1328,29 +1335,33 @@ test.describe("HTMLslide desktop smoke", () => {
     await page.waitForLoadState("domcontentloaded");
     const presenter = page.getByLabel("Presenter rehearsal mode");
     const currentSlideHeading = presenter.locator(".presenter-current .hs-panel-header h2");
+    const currentSlideFrame = presenter.frameLocator(".presenter-current .presenter-slide-preview__frame");
     await expect(presenter).toBeVisible({ timeout: 30_000 });
     await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible();
     await expect(presenter.getByText("Deck Package Presenter / Rehearsal Mode")).toBeVisible();
     await expect(presenter.getByText("1 / 2")).toBeVisible();
     await expect(currentSlideHeading).toHaveText("HTML as source");
+    await expect(presenter.locator(".presenter-current .presenter-slide-preview__frame")).toBeVisible();
+    await expect(currentSlideFrame.getByRole("heading", { name: "HTML as source" })).toBeVisible();
     await expect(presenter.getByRole("heading", { name: "Speaker Notes" })).toBeVisible();
     await expect(presenter.getByLabel("Presenter target display")).toBeVisible();
-    await expect(presenter.locator(".presenter-current .presenter-slide-preview__image")).toBeVisible();
     await expect(presenter.locator(".presenter-notes").getByText("今天我们把 HTML 作为源码")).toBeVisible();
 
     const audiencePromise = electronApp.waitForEvent("window");
     await presenter.getByRole("button", { name: "Open audience", exact: true }).click();
     const audiencePage = await audiencePromise;
     await audiencePage.waitForLoadState("domcontentloaded");
-    await expect(audiencePage.locator(".audience-slide--image img")).toBeVisible();
+    const audienceFrame = audiencePage.frameLocator(".audience-slide-frame");
+    await expect(audiencePage.locator(".audience-slide-frame")).toBeVisible();
+    await expect(audienceFrame.getByRole("heading", { name: "HTML as source" })).toBeVisible();
     await expect(audiencePage.locator(".audience-meta")).toHaveText("1 / 2");
     await page.bringToFront();
 
     await page.keyboard.press("ArrowRight");
     await expect(presenter.getByText("2 / 2")).toBeVisible();
     await expect(currentSlideHeading).toHaveText("Project structure");
-    await expect(presenter.locator(".presenter-current .presenter-slide-preview__image")).toBeVisible();
-    await expect(audiencePage.locator(".audience-slide--image img")).toBeVisible();
+    await expect(currentSlideFrame.getByRole("heading", { name: "Project structure" })).toBeVisible();
+    await expect(audienceFrame.getByRole("heading", { name: "Project structure" })).toBeVisible();
     await expect(audiencePage.locator(".audience-meta")).toHaveText("2 / 2");
 
     await audiencePage.close();
@@ -1402,11 +1413,14 @@ test.describe("HTMLslide desktop smoke", () => {
 
     const presenter = page.getByLabel("Presenter rehearsal mode");
     const currentSlideHeading = presenter.locator(".presenter-current .hs-panel-header h2");
+    const currentSlideFrame = presenter.frameLocator(".presenter-current .presenter-slide-preview__frame");
     await expect(presenter).toBeVisible({ timeout: 30_000 });
     await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible();
     await expect(presenter.getByText("Deck Package Presenter / Rehearsal Mode")).toBeVisible();
     await expect(presenter.getByText("1 / 2")).toBeVisible();
     await expect(currentSlideHeading).toHaveText("HTML as source");
+    await expect(presenter.locator(".presenter-current .presenter-slide-preview__frame")).toBeVisible();
+    await expect(currentSlideFrame.getByRole("heading", { name: "HTML as source" })).toBeVisible();
     await expect(presenter.locator(".presenter-notes").getByText("今天我们把 HTML 作为源码")).toBeVisible();
 
     await page.keyboard.press("Escape");

@@ -2308,6 +2308,26 @@ svg {
   overflow: hidden;
 }
 
+.presenter-slide-preview--document {
+  aspect-ratio: 16 / 9;
+  background: #050505;
+  border: 1px solid rgba(221, 228, 238, 0.18);
+  border-radius: 6px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.28);
+  display: block;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+.presenter-slide-preview__frame {
+  background: #fff;
+  border: 0;
+  display: block;
+  height: 100%;
+  pointer-events: none;
+  width: 100%;
+}
+
 .presenter-slide-preview__image {
   background: #050505;
   display: block;
@@ -2323,6 +2343,10 @@ svg {
 }
 
 .presenter-slide-preview--visual.presenter-slide-preview--next {
+  padding: 0;
+}
+
+.presenter-slide-preview--document.presenter-slide-preview--next {
   padding: 0;
 }
 

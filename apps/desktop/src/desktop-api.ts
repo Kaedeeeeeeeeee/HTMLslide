@@ -352,6 +352,7 @@ export type DesktopAudienceSlidePayload = {
   slideCount: number;
   screen: "normal" | "black" | "white";
   sourceHtml?: string;
+  sourceDocumentHtml?: string;
   imageDataUrl?: string;
   section?: string;
   accent?: string;

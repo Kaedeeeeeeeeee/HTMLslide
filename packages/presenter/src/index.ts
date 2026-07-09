@@ -108,6 +108,8 @@ export type PresenterSlide = {
   durationSec: number;
   notesMarkdown: string;
   hasNotes: boolean;
+  html?: string;
+  htmlDocument?: string;
   thumbnail: PresenterThumbnail;
 };
 
@@ -219,6 +221,7 @@ export async function readDeckPackageBytes(
   }
 
   const htmlText = await readPackageText(zip, manifest.html);
+  const slideHtmlById = extractSlideHtmlById(htmlText);
   const pdfBytes = await readPackageBytes(zip, manifest.pdf);
   const thumbnails: PresenterThumbnail[] = [];
   if (htmlText.trim().length === 0) {
@@ -263,6 +266,8 @@ export async function readDeckPackageBytes(
       durationSec: slide.durationSec,
       notesMarkdown: notesSlide.markdown,
       hasNotes: notesSlide.hasNotes,
+      html: slideHtmlById.get(slide.id)?.html,
+      htmlDocument: slideHtmlById.get(slide.id)?.htmlDocument,
       thumbnail
     };
   });
@@ -735,6 +740,129 @@ const readPackageBytes = async (zip: JSZip, filePath: string): Promise<Uint8Arra
   }
   return file.async("uint8array");
 };
+
+type ExtractedSlideHtml = {
+  html: string;
+  htmlDocument: string;
+};
+
+type ExtractedHtmlslidePage = {
+  slideId: string;
+  startTag: string;
+  innerHtml: string;
+};
+
+const extractSlideHtmlById = (deckHtml: string): Map<string, ExtractedSlideHtml> => {
+  const headHtml = stripScriptTags(extractTagInnerHtml(deckHtml, "head") ?? "");
+  const pages = extractHtmlslidePages(deckHtml);
+  const slideHtmlById = new Map<string, ExtractedSlideHtml>();
+
+  for (const page of pages) {
+    const html = page.innerHtml.trim();
+    if (html.length === 0) {
+      continue;
+    }
+    slideHtmlById.set(page.slideId, {
+      html,
+      htmlDocument: buildSingleSlideHtmlDocument(headHtml, page)
+    });
+  }
+
+  return slideHtmlById;
+};
+
+const extractHtmlslidePages = (deckHtml: string): ExtractedHtmlslidePage[] => {
+  const pageStarts: Array<{ start: number; end: number; startTag: string; slideId: string }> = [];
+  const pageStartPattern = /<article\b[^>]*\bhtmlslide-page\b[^>]*>/giu;
+  let match: RegExpExecArray | null;
+  while ((match = pageStartPattern.exec(deckHtml)) !== null) {
+    const startTag = match[0] ?? "";
+    const slideId = getHtmlAttribute(startTag, "data-slide-id");
+    if (!slideId) {
+      continue;
+    }
+    pageStarts.push({
+      start: match.index,
+      end: match.index + startTag.length,
+      startTag,
+      slideId
+    });
+  }
+
+  return pageStarts.flatMap((pageStart, index): ExtractedHtmlslidePage[] => {
+    const nextPageStart = pageStarts[index + 1]?.start;
+    const mainEnd = deckHtml.indexOf("</main>", pageStart.end);
+    const segmentEnd = nextPageStart ?? (mainEnd >= 0 ? mainEnd : deckHtml.length);
+    const segment = deckHtml.slice(pageStart.end, segmentEnd);
+    const closingIndex = segment.toLowerCase().lastIndexOf("</article>");
+    if (closingIndex < 0) {
+      return [];
+    }
+
+    return [{
+      slideId: pageStart.slideId,
+      startTag: forceCurrentSlidePageTag(pageStart.startTag),
+      innerHtml: segment.slice(0, closingIndex).trim()
+    }];
+  });
+};
+
+const buildSingleSlideHtmlDocument = (headHtml: string, page: ExtractedHtmlslidePage): string => `<!doctype html>
+<html>
+  <head>
+${headHtml}
+  </head>
+  <body data-htmlslide-mode="present" data-htmlslide-notes="closed">
+    <main class="htmlslide-deck" aria-label="HTMLslide presenter slide">
+${page.startTag}
+${page.innerHtml}
+</article>
+    </main>
+  </body>
+</html>`;
+
+const forceCurrentSlidePageTag = (startTag: string): string => {
+  if (/\saria-current\s*=/iu.test(startTag)) {
+    return startTag.replace(/\saria-current\s*=\s*(["'])(.*?)\1/iu, ' aria-current="true"');
+  }
+  return startTag.replace(/>$/u, ' aria-current="true">');
+};
+
+const extractTagInnerHtml = (html: string, tagName: string): string | undefined => {
+  const match = new RegExp(`<${tagName}\\b[^>]*>([\\s\\S]*?)<\\/${tagName}>`, "iu").exec(html);
+  return match?.[1];
+};
+
+const stripScriptTags = (html: string): string =>
+  html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/giu, "");
+
+const getHtmlAttribute = (tagHtml: string, attributeName: string): string | undefined => {
+  const match = new RegExp(`\\b${attributeName}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "iu").exec(tagHtml);
+  const value = match?.[1] ?? match?.[2];
+  return value === undefined ? undefined : decodeHtmlEntities(value);
+};
+
+const decodeHtmlEntities = (value: string): string =>
+  value
+    .replace(/&#x([0-9a-f]+);/giu, (_match, codePoint: string) => String.fromCodePoint(Number.parseInt(codePoint, 16)))
+    .replace(/&#(\d+);/gu, (_match, codePoint: string) => String.fromCodePoint(Number.parseInt(codePoint, 10)))
+    .replace(/&(amp|lt|gt|quot|apos|#39);/giu, (_match, entity: string) => {
+      switch (entity.toLowerCase()) {
+        case "amp":
+          return "&";
+        case "lt":
+          return "<";
+        case "gt":
+          return ">";
+        case "quot":
+          return '"';
+        case "apos":
+        case "#39":
+          return "'";
+        default:
+          return _match;
+      }
+    });
 
 const validateRequiredPackageFile = (
   zip: JSZip,

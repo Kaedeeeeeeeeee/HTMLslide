@@ -6,21 +6,40 @@ import {
   renderBuiltInDeckTemplate
 } from "../src/index.js";
 
+const expectedTemplateIds = [
+  "default",
+  "swiss-editorial",
+  "consulting-clean",
+  "technical-dark",
+  "product-launch",
+  "data-report"
+] as const;
+
 describe("built-in deck templates", () => {
-  it("lists the default template metadata", () => {
-    expect(listBuiltInDeckTemplates()).toEqual([
+  it("lists the official starter template metadata", () => {
+    const templates = listBuiltInDeckTemplates();
+
+    expect(templates.map((template) => template.id)).toEqual(expectedTemplateIds);
+    expect(templates).toContainEqual(
       expect.objectContaining({
         id: DEFAULT_DECK_TEMPLATE_ID,
         name: "Default",
         slideCount: 2
       })
-    ]);
+    );
+    expect(templates).toContainEqual(
+      expect.objectContaining({
+        id: "technical-dark",
+        name: "Technical Dark",
+        slideCount: 2
+      })
+    );
   });
 
-  it("renders a schema-valid default project without artifact paths", () => {
-    const rendered = renderBuiltInDeckTemplate({ name: "Quarterly Launch Review" });
+  it.each(expectedTemplateIds)("renders a schema-valid %s project without artifact paths", (templateId) => {
+    const rendered = renderBuiltInDeckTemplate({ name: "Quarterly Launch Review", templateId });
 
-    expect(rendered.template.id).toBe(DEFAULT_DECK_TEMPLATE_ID);
+    expect(rendered.template.id).toBe(templateId);
     expect(rendered.manifest).toMatchObject({
       id: "deck_quarterly_launch_review",
       schemaVersion: "0.1.0",

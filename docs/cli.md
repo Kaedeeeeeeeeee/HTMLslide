@@ -6,6 +6,8 @@ The `htmlslide` CLI is the agent-facing and CI-facing surface for the same proje
 
 ```bash
 htmlslide new demo
+htmlslide new report --template data-report
+htmlslide templates list --json
 htmlslide check demo --json
 htmlslide export demo --pdf --deckpkg --thumbnails --json
 htmlslide doctor --json

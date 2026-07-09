@@ -108,7 +108,16 @@ test.describe("HTMLslide desktop smoke", () => {
 
     const newDeckPanel = page.locator(".new-deck-panel");
     await expect(newDeckPanel).toBeVisible();
-    await expect(newDeckPanel.getByLabel("Template")).toHaveValue("default");
+    const templateSelect = newDeckPanel.getByLabel("Template");
+    await expect(templateSelect).toHaveValue("default");
+    await expect(templateSelect.locator("option")).toHaveText([
+      "Default",
+      "Swiss Editorial",
+      "Consulting Clean",
+      "Technical Dark",
+      "Product Launch",
+      "Data Report"
+    ]);
     await expect(newDeckPanel.getByRole("button", { name: /No AI/ })).toHaveAttribute("aria-pressed", "true");
     await newDeckPanel.getByRole("button", { name: /HTMLslide Agent/ }).click();
     const generationBlockedAlert = newDeckPanel.getByRole("alert");

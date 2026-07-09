@@ -15,3 +15,5 @@ Decks use a fixed 1920x1080 canvas. Slides should not rely on responsive reflow 
 - `data-report`: metric hierarchy and insight-led reports.
 
 Design skills should improve source files, speaker notes, and theme constraints without editing `exports/`.
+
+The same ids are also available as built-in deck templates for `htmlslide new --template <id>` and the desktop Templates library. Deck templates create starter source files; design skills guide agents when revising existing decks.

@@ -34,11 +34,14 @@ All important commands must support JSON output suitable for external agents.
 Built-in deck templates are resolved by id. Unknown ids must fail before any project files are written. The current public alpha template registry contains:
 
 ```json
-{
-  "id": "default",
-  "name": "Default",
-  "slideCount": 2
-}
+[
+  { "id": "default", "name": "Default", "slideCount": 2 },
+  { "id": "swiss-editorial", "name": "Swiss Editorial", "slideCount": 2 },
+  { "id": "consulting-clean", "name": "Consulting Clean", "slideCount": 2 },
+  { "id": "technical-dark", "name": "Technical Dark", "slideCount": 2 },
+  { "id": "product-launch", "name": "Product Launch", "slideCount": 2 },
+  { "id": "data-report", "name": "Data Report", "slideCount": 2 }
+]
 ```
 
 `new` and `init` write only source/project files such as `deck.json`, `README.md`, `AGENTS.md`, `slides/`, `notes/`, and `theme/`. They must not write generated `exports/` files or secrets.

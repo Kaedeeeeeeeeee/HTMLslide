@@ -107,13 +107,50 @@ describe("CLI project helpers", () => {
     };
 
     expect(result.status).toBe("passed");
-    expect(result.templates).toEqual([
+    expect(result.templates.map((template) => template.id)).toEqual([
+      "default",
+      "swiss-editorial",
+      "consulting-clean",
+      "technical-dark",
+      "product-launch",
+      "data-report"
+    ]);
+    expect(result.templates).toContainEqual(
       expect.objectContaining({
-        id: "default",
-        name: "Default",
+        id: "data-report",
+        name: "Data Report",
         slideCount: 2
       })
-    ]);
+    );
+  });
+
+  it("creates a deck project from a named built-in template", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
+    try {
+      const projectPath = path.join(root, "technical-demo");
+      const { stdout } = await runCli([
+        "new",
+        projectPath,
+        "--template",
+        "technical-dark",
+        "--title",
+        "Technical Demo",
+        "--json"
+      ]);
+      const result = JSON.parse(stdout) as { status: string; template: string; title: string };
+      const css = await readFile(path.join(projectPath, "theme", "theme.css"), "utf8");
+      const agents = await readFile(path.join(projectPath, "AGENTS.md"), "utf8");
+
+      expect(result).toMatchObject({
+        status: "passed",
+        template: "technical-dark",
+        title: "Technical Demo"
+      });
+      expect(css).toContain("--slide-bg: #10141c");
+      expect(agents).toContain("Template guidance: Use dark technical contrast");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("rejects unknown built-in templates from the CLI", async () => {

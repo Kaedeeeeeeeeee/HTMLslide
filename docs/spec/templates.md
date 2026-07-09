@@ -17,7 +17,18 @@ Every built-in deck template exposes:
 
 Rendering a template returns a validated `deck.json` manifest plus project-relative file writes. Template file paths must be relative, must not contain traversal segments, and must not point into `exports/`.
 
-The default template writes:
+The public alpha registry includes:
+
+| id | purpose |
+| --- | --- |
+| `default` | General local-first deck starter. |
+| `swiss-editorial` | Large type, strict grid, high whitespace, and restrained color. |
+| `consulting-clean` | Conclusion-led business reporting, matrices, comparisons, and frameworks. |
+| `technical-dark` | Dark technical architecture, code, and developer workflow storytelling. |
+| `product-launch` | Product announcement flow, feature proof, and rollout narrative. |
+| `data-report` | Metric hierarchy, trend framing, dashboards, and insight-led reporting. |
+
+Every built-in deck template writes:
 
 - `deck.json`
 - `README.md`

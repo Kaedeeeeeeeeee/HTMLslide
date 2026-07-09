@@ -2,38 +2,48 @@ import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const root = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
-const versionConstants = await readVersionConstants();
-const options = parseArgs(process.argv.slice(2));
-const tag = options.tag ?? process.env.GITHUB_REF_NAME ?? `v${packageJson.version ?? "0.0.0"}`;
-const currentRef = options.ref ?? tag;
-const previousTag = options.previousTag ?? await findPreviousTag(currentRef);
-const outputPath = path.resolve(root, options.output ?? path.join("dist", "release", `HTMLslide-${tag}-release-notes.md`));
-const commits = await collectCommits(previousTag, currentRef);
-const notes = renderReleaseNotes({
-  commits,
-  currentRef,
-  deckSchemaVersion: versionConstants.DECK_SCHEMA_VERSION,
-  generatedAt: new Date().toISOString(),
-  packageVersion: packageJson.version ?? "0.0.0",
-  previousTag,
-  tag
-});
 
-if (options.stdout) {
-  process.stdout.write(notes);
-} else {
-  await mkdir(path.dirname(outputPath), { recursive: true });
-  await writeFile(outputPath, notes, "utf8");
-  process.stdout.write(`Release notes written to ${outputPath}\n`);
+if (isDirectRun()) {
+  await main(process.argv.slice(2));
 }
 
-function parseArgs(args) {
+export async function main(args) {
+  const versionConstants = await readVersionConstants();
+  const options = parseArgs(args);
+  const tag = options.tag ?? process.env.GITHUB_REF_NAME ?? `v${packageJson.version ?? "0.0.0"}`;
+  const currentRef = options.ref ?? tag;
+  const previousTag = options.previousTag ?? await findPreviousTag(currentRef);
+  const outputPath = path.resolve(
+    root,
+    options.output ?? path.join("dist", "release", `HTMLslide-${tag}-release-notes.md`)
+  );
+  const commits = await collectCommits(previousTag, currentRef);
+  const notes = renderReleaseNotes({
+    commits,
+    currentRef,
+    deckSchemaVersion: versionConstants.DECK_SCHEMA_VERSION,
+    generatedAt: new Date().toISOString(),
+    packageVersion: packageJson.version ?? "0.0.0",
+    previousTag,
+    tag
+  });
+
+  if (options.stdout) {
+    process.stdout.write(notes);
+  } else {
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, notes, "utf8");
+    process.stdout.write(`Release notes written to ${outputPath}\n`);
+  }
+}
+
+export function parseArgs(args) {
   const parsed = {};
 
   for (let index = 0; index < args.length; index += 1) {
@@ -145,7 +155,7 @@ async function git(args, options = {}) {
   }
 }
 
-function renderReleaseNotes(metadata) {
+export function renderReleaseNotes(metadata) {
   const compareRange = metadata.previousTag
     ? `${metadata.previousTag}...${metadata.tag}`
     : `initial history through ${metadata.tag}`;
@@ -182,4 +192,8 @@ ${commitLines}
 - Unsigned alpha artifacts are tester-only and may trigger Gatekeeper warnings.
 - Real provider keys, physical display behavior, and real Claude/Codex/Gemini support claims require manual validation before being described as supported.
 `;
+}
+
+function isDirectRun() {
+  return process.argv[1] !== undefined && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
 }

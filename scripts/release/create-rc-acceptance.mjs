@@ -1,42 +1,48 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 
-const options = parseArgs(process.argv.slice(2));
-const version = options.version ?? packageJson.version ?? "0.0.0";
-const channel = options.channel ?? "alpha";
-const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
-const outputPath = path.resolve(
-  root,
-  options.output ?? path.join("dist", "acceptance", `htmlslide-${version}-${channel}-rc-acceptance-${stamp}.md`)
-);
-
-if (channel !== "alpha" && channel !== "release") {
-  throw new Error(`Unsupported channel: ${channel}. Expected alpha or release.`);
+if (isDirectRun()) {
+  await main(process.argv.slice(2));
 }
 
-const checklist = renderChecklist({
-  artifactUrl: options.artifactUrl,
-  channel,
-  ciRunUrl: options.ciRunUrl,
-  packageRunUrl: options.packageRunUrl,
-  releaseTag: options.releaseTag,
-  version
-});
+export async function main(args) {
+  const options = parseArgs(args);
+  const version = options.version ?? packageJson.version ?? "0.0.0";
+  const channel = options.channel ?? "alpha";
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  const outputPath = path.resolve(
+    root,
+    options.output ?? path.join("dist", "acceptance", `htmlslide-${version}-${channel}-rc-acceptance-${stamp}.md`)
+  );
 
-if (options.stdout) {
-  process.stdout.write(checklist);
-} else {
-  await mkdir(path.dirname(outputPath), { recursive: true });
-  await writeFile(outputPath, checklist, "utf8");
-  process.stdout.write(`Release candidate acceptance checklist written to ${outputPath}\n`);
+  if (channel !== "alpha" && channel !== "release") {
+    throw new Error(`Unsupported channel: ${channel}. Expected alpha or release.`);
+  }
+
+  const checklist = renderChecklist({
+    artifactUrl: options.artifactUrl,
+    channel,
+    ciRunUrl: options.ciRunUrl,
+    packageRunUrl: options.packageRunUrl,
+    releaseTag: options.releaseTag,
+    version
+  });
+
+  if (options.stdout) {
+    process.stdout.write(checklist);
+  } else {
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, checklist, "utf8");
+    process.stdout.write(`Release candidate acceptance checklist written to ${outputPath}\n`);
+  }
 }
 
-function parseArgs(args) {
+export function parseArgs(args) {
   const parsed = {};
 
   for (let index = 0; index < args.length; index += 1) {
@@ -73,7 +79,7 @@ function toCamelCase(value) {
   return value.replace(/-([a-z])/g, (_match, letter) => letter.toUpperCase());
 }
 
-function renderChecklist(metadata) {
+export function renderChecklist(metadata) {
   const automatedReleaseGate = metadata.channel === "release"
     ? "\n- [ ] Release macOS completed with signed, notarized, stapled manifest."
     : "";
@@ -217,4 +223,8 @@ Blocking issues:
 
 - TODO
 `;
+}
+
+function isDirectRun() {
+  return process.argv[1] !== undefined && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
 }

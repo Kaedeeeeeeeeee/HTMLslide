@@ -124,6 +124,113 @@ test.describe("HTMLslide desktop smoke", () => {
     await expectNoFrameworkOverlay(page);
   });
 
+  test("saves fake API key metadata from AI Engines settings", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
+    const homeDir = path.join(tempRoot, "home");
+    const userDataDir = path.join(tempRoot, "user-data");
+    const workspaceDir = path.join(tempRoot, "workspace");
+    const fakeApiKey = "sk-e2e-fake-provider-key";
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(userDataDir, { recursive: true });
+    await mkdir(workspaceDir, { recursive: true });
+
+    electronApp = await electron.launch({
+      executablePath: electronExecutable,
+      args: [electronMain],
+      env: {
+        ...process.env,
+        ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+        HOME: homeDir,
+        HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir,
+        HTMLSLIDE_E2E_CREDENTIAL_STORE: "memory",
+        HTMLSLIDE_USER_DATA_DIR: userDataDir
+      }
+    });
+
+    const page = await electronApp.firstWindow();
+    await page.waitForLoadState("domcontentloaded");
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "AI Engines", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "API Key Metadata", exact: true })).toBeVisible();
+    await expect(page.getByText("No provider key saved")).toBeVisible();
+    await page.getByRole("button", { name: /HTMLslide Agent/ }).click();
+    await page.getByLabel("API key").fill(fakeApiKey);
+    await page.getByRole("button", { name: "Save Key", exact: true }).click();
+    await expect(page.getByText("AI engine key saved")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("OpenAI key saved")).toBeVisible();
+
+    const savedSettingsText = await readFile(path.join(userDataDir, "ai-engine-settings.json"), "utf8");
+    expect(savedSettingsText).toContain('"provider": "openai"');
+    expect(savedSettingsText).toContain('"hasKey": true');
+    expect(savedSettingsText).not.toContain(fakeApiKey);
+
+    await page.getByRole("button", { name: "Recent", exact: true }).click();
+    await page.locator(".library-main").getByRole("button", { name: "New Deck", exact: true }).first().click();
+    const newDeckPanel = page.locator(".new-deck-panel");
+    await expect(newDeckPanel).toBeVisible();
+    await newDeckPanel.getByRole("button", { name: /HTMLslide Agent/ }).click();
+    await expect(newDeckPanel.getByText("Key ready")).toBeVisible();
+    await expect(newDeckPanel.getByText("Save a provider API key in AI Engines before using HTMLslide Agent.")).toHaveCount(0);
+    await expectNoFrameworkOverlay(page);
+  });
+
+  test("chooses a workspace before creating a deck", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
+    const homeDir = path.join(tempRoot, "home");
+    const userDataDir = path.join(tempRoot, "user-data");
+    const initialWorkspaceDir = path.join(tempRoot, "workspace-initial");
+    const nextWorkspaceDir = path.join(tempRoot, "workspace-next");
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(userDataDir, { recursive: true });
+    await mkdir(initialWorkspaceDir, { recursive: true });
+    await mkdir(nextWorkspaceDir, { recursive: true });
+
+    electronApp = await electron.launch({
+      executablePath: electronExecutable,
+      args: [electronMain],
+      env: {
+        ...process.env,
+        ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+        HOME: homeDir,
+        HTMLSLIDE_DEFAULT_WORKSPACE: initialWorkspaceDir,
+        HTMLSLIDE_E2E_CHOOSE_WORKSPACE_PATH: nextWorkspaceDir,
+        HTMLSLIDE_USER_DATA_DIR: userDataDir
+      }
+    });
+
+    const page = await electronApp.firstWindow();
+    await page.waitForLoadState("domcontentloaded");
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+    await expect(page.getByText(`Workspace: ${initialWorkspaceDir}`)).toBeVisible();
+
+    await page.getByRole("button", { name: "Change Workspace", exact: true }).click();
+    await expect(page.getByText(`Workspace: ${nextWorkspaceDir}`)).toBeVisible();
+    const library = JSON.parse(await readFile(path.join(userDataDir, "library.json"), "utf8")) as {
+      defaultWorkspace?: string;
+    };
+    expect(library.defaultWorkspace).toBe(nextWorkspaceDir);
+
+    await page.locator(".library-main").getByRole("button", { name: "New Deck", exact: true }).first().click();
+    const newDeckPanel = page.locator(".new-deck-panel");
+    await expect(newDeckPanel).toBeVisible();
+    await expect(newDeckPanel.locator(".new-deck-panel__title span")).toHaveText(nextWorkspaceDir);
+    await newDeckPanel.getByLabel("Deck title").fill("Workspace Switch Deck");
+    await expect(newDeckPanel.getByLabel("Folder")).toHaveValue("workspace-switch-deck");
+    await newDeckPanel.getByRole("button", { name: "Create Deck", exact: true }).click();
+
+    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Workspace Switch Deck" })).toBeVisible({
+      timeout: 30_000
+    });
+    await expect(access(path.join(nextWorkspaceDir, "workspace-switch-deck", "deck.json"))).resolves.toBeUndefined();
+    await expect(access(path.join(initialWorkspaceDir, "workspace-switch-deck", "deck.json"))).rejects.toMatchObject({
+      code: "ENOENT"
+    });
+    await expectNoFrameworkOverlay(page);
+  });
+
   test("manages recent project entries from the project library", async () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
     const homeDir = path.join(tempRoot, "home");

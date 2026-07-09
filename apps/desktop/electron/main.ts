@@ -34,6 +34,7 @@ import {
   type DesktopCliIntegrationOptions,
   type DesktopAiEngineSettingsSaveRequest,
   type DesktopCreateProjectRequest,
+  type DesktopCredentialStore,
   type DesktopProjectRecord
 } from "./desktop-services.js";
 
@@ -71,6 +72,28 @@ const configuredWorkspacePath = (): string =>
   process.env.HTMLSLIDE_DEFAULT_WORKSPACE
     ? resolve(process.env.HTMLSLIDE_DEFAULT_WORKSPACE)
     : defaultWorkspacePath();
+const e2eCredentialStore = process.env.HTMLSLIDE_E2E_CREDENTIAL_STORE === "memory"
+  ? createMemoryCredentialStore()
+  : undefined;
+
+function createMemoryCredentialStore(): DesktopCredentialStore {
+  const entries = new Map<string, string>();
+
+  return {
+    available: true,
+    label: "E2E credential store",
+    async getPassword(service, account) {
+      return entries.get(`${service}:${account}`);
+    },
+    async setPassword(service, account, password) {
+      entries.set(`${service}:${account}`, password);
+    },
+    async deletePassword(service, account) {
+      entries.delete(`${service}:${account}`);
+    }
+  };
+}
+
 const currentDarwinAppBundlePath = (): string | undefined => {
   if (process.platform !== "darwin") {
     return undefined;
@@ -544,24 +567,32 @@ function registerIpcHandlers(): void {
   ipcMain.handle("htmlslide:get-ai-engine-settings", async () => readAiEngineSettings(aiEngineSettingsPath()));
 
   ipcMain.handle("htmlslide:save-ai-engine-settings", async (_event, request: DesktopAiEngineSettingsSaveRequest) =>
-    saveAiEngineSettings(aiEngineSettingsPath(), request)
+    saveAiEngineSettings(aiEngineSettingsPath(), request, e2eCredentialStore)
   );
 
   ipcMain.handle("htmlslide:detect-external-agents", async () => detectExternalAgentStatuses());
 
   ipcMain.handle("htmlslide:choose-workspace", async () => {
-    const result = await dialog.showOpenDialog({
-      buttonLabel: "Use Workspace",
-      properties: ["openDirectory", "createDirectory"]
-    });
-    if (result.canceled || !result.filePaths[0]) {
-      return undefined;
+    const selectedWorkspacePath = process.env.HTMLSLIDE_E2E_CHOOSE_WORKSPACE_PATH
+      ? resolve(process.env.HTMLSLIDE_E2E_CHOOSE_WORKSPACE_PATH)
+      : undefined;
+    let nextWorkspacePath = selectedWorkspacePath;
+
+    if (!nextWorkspacePath) {
+      const result = await dialog.showOpenDialog({
+        buttonLabel: "Use Workspace",
+        properties: ["openDirectory", "createDirectory"]
+      });
+      if (result.canceled || !result.filePaths[0]) {
+        return undefined;
+      }
+      nextWorkspacePath = result.filePaths[0];
     }
 
     const library = await readDesktopLibrary(libraryPath(), configuredWorkspacePath());
     const nextLibrary = {
       ...library,
-      defaultWorkspace: result.filePaths[0]
+      defaultWorkspace: nextWorkspacePath
     };
     await writeDesktopLibrary(libraryPath(), nextLibrary);
     return nextLibrary.defaultWorkspace;
@@ -704,7 +735,12 @@ function registerIpcHandlers(): void {
         maxRepairRounds?: number;
         runId?: string;
       }
-    ) => runDesktopByokAgent(request, { cliRuntime, settingsPath: aiEngineSettingsPath() })
+    ) =>
+      runDesktopByokAgent(request, {
+        cliRuntime,
+        settingsPath: aiEngineSettingsPath(),
+        ...(e2eCredentialStore ? { credentialStore: e2eCredentialStore } : {})
+      })
   );
 
   ipcMain.handle(

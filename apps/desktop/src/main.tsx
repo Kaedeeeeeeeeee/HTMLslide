@@ -1,7 +1,7 @@
 import "@htmlslide/shared-ui/styles.css";
 import "./app.css";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { PresenterDeck } from "@htmlslide/presenter/session";
 import { Onboarding } from "./components/Onboarding";
@@ -235,6 +235,7 @@ function App(): React.ReactNode {
   const [agentRunEvents, setAgentRunEvents] = useState<AgentRunEventLike[]>([]);
   const [agentRunLogs, setAgentRunLogs] = useState<AgentRunLogLike[]>([]);
   const [aiEngineSettings, setAiEngineSettings] = useState<AiEngineSettings>(() => createDefaultAiEngineSettings());
+  const aiEngineSettingsTouchedRef = useRef(false);
   const [cliIntegration, setCliIntegration] = useState<DesktopCliIntegrationState | undefined>();
   const [cliIntegrationStatus, setCliIntegrationStatus] = useState<OperationStatus>({
     kind: "idle",
@@ -330,7 +331,9 @@ function App(): React.ReactNode {
         const projectSummaries = projectRecordsToSummaries(records);
         setWorkspacePath(setup.workspacePath);
         setProjects(projectSummaries);
-        setAiEngineSettings(normalizeAiEngineSettings(settings));
+        if (!aiEngineSettingsTouchedRef.current) {
+          setAiEngineSettings(normalizeAiEngineSettings(settings));
+        }
         setCliIntegration(setup.cliIntegration);
         setOfficialSkills(setup.officialSkills);
         setCliIntegrationStatus({
@@ -868,6 +871,7 @@ function App(): React.ReactNode {
   const handleSaveAiEngineSettings = useCallback(
     (draft: AiEngineSettingsDraft): void => {
       const nextSettings = buildAiEngineSettingsUpdate(aiEngineSettings, draft);
+      aiEngineSettingsTouchedRef.current = true;
       setAiEngineSettings(nextSettings);
       setAiEngineStatus({ kind: "running", message: "Saving AI engine settings" });
 

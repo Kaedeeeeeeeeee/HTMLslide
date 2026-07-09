@@ -10,6 +10,7 @@ HTMLslide uses SemVer for app releases and a separate schema version for deck fo
 
 - `CI`: runs `pnpm install --frozen-lockfile`, `pnpm docs:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` on Ubuntu, plus `pnpm e2e:desktop` on macOS for Electron workspace/presenter smoke coverage.
 - `Alpha Package`: runs on manual dispatch, nightly schedule, and `v*` tags. It repeats the CI checks, runs macOS desktop Electron E2E before packaging, runs `pnpm package:alpha`, smokes the generated package, and uploads unsigned artifacts.
+- `Release macOS`: runs on manual dispatch and `v*` tags. It repeats docs/lint/typecheck/test/build/Electron E2E, imports a Developer ID certificate from GitHub Actions secrets, runs `pnpm package:release:macos`, notarizes and staples the DMG, uploads signed artifacts, and attaches them to the matching GitHub Release for tag builds.
 
 Both workflows intentionally fail early if the root package scaffold is missing required scripts. Add those scripts in the app scaffold rather than weakening workflow checks.
 
@@ -63,7 +64,30 @@ Before calling an alpha build public, verify:
 
 ## Signed Releases
 
-Signed and notarized macOS releases are intentionally out of the unsigned alpha workflow. A production release must use a separate workflow with Developer ID signing, notarization, stapling, helper/CLI binary signing, release artifact naming, and documented secret ownership. Signing and notarization secrets must be repository or organization secrets, never committed files.
+Signed and notarized macOS releases are intentionally out of the unsigned alpha workflow. Production releases use `.github/workflows/release-macos.yml` and the release packaging contract:
+
+```bash
+pnpm package:release:macos
+```
+
+The release script uses `build/package/release-macos.json` and writes:
+
+- `dist/release/HTMLslide-<version>-signed-notarized-<arch>.dmg`
+- `dist/release/HTMLslide-<version>-signed-notarized-<arch>.json`
+
+The workflow requires these repository or organization secrets:
+
+- `APPLE_DEVELOPER_ID_APPLICATION`
+- `APPLE_DEVELOPER_ID_CERTIFICATE_BASE64`
+- `APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD`
+- `APPLE_ID`
+- `APPLE_TEAM_ID`
+- `APPLE_APP_SPECIFIC_PASSWORD`
+- `KEYCHAIN_PASSWORD`
+
+The certificate secret must be a base64-encoded Developer ID Application `.p12`. The workflow imports it into a temporary keychain, signs the app with hardened runtime, signs the DMG, submits the DMG with `xcrun notarytool --wait`, staples and validates the DMG with `xcrun stapler`, then checks the manifest for `channel: release`, `signing: developer-id`, `notarized: true`, and `stapled: true`.
+
+Signing and notarization secrets must be company-owned repository or organization secrets, never committed files or personal local credentials.
 
 ## Release Notes
 

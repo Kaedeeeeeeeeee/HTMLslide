@@ -1,0 +1,226 @@
+name: Release macOS
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-macos-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  signed-notarized:
+    name: Build signed notarized macOS artifact
+    runs-on: macos-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate signed release contract
+        shell: bash
+        env:
+          APPLE_DEVELOPER_ID_APPLICATION: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION }}
+          APPLE_DEVELOPER_ID_CERTIFICATE_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          required_scripts=(docs:check lint typecheck test build e2e:desktop package:release:macos)
+          missing_scripts="$(node <<'NODE'
+          const fs = require('fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const required = ['docs:check', 'lint', 'typecheck', 'test', 'build', 'e2e:desktop', 'package:release:macos'];
+          process.stdout.write(required.filter((name) => !pkg.scripts || !pkg.scripts[name]).join('\n'));
+          NODE
+          )"
+
+          if [[ -n "$missing_scripts" ]]; then
+            echo "::error title=Missing release scripts::package.json is missing: $missing_scripts"
+            exit 1
+          fi
+
+          for name in \
+            APPLE_DEVELOPER_ID_APPLICATION \
+            APPLE_DEVELOPER_ID_CERTIFICATE_BASE64 \
+            APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD \
+            APPLE_ID \
+            APPLE_TEAM_ID \
+            APPLE_APP_SPECIFIC_PASSWORD \
+            KEYCHAIN_PASSWORD
+          do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error title=Missing signing secret::$name must be configured as a repository or organization secret."
+              exit 1
+            fi
+          done
+
+          if [[ ! -f build/package/release-macos.json ]]; then
+            echo "::error title=Missing release package config::build/package/release-macos.json must exist."
+            exit 1
+          fi
+
+          echo "Signed release contract is present."
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check public docs
+        run: pnpm docs:check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Run desktop Electron E2E
+        run: pnpm e2e:desktop
+
+      - name: Import Developer ID certificate
+        shell: bash
+        env:
+          APPLE_DEVELOPER_ID_CERTIFICATE_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          certificate_path="$RUNNER_TEMP/htmlslide-developer-id.p12"
+          keychain_path="$RUNNER_TEMP/htmlslide-signing.keychain-db"
+
+          CERTIFICATE_PATH="$certificate_path" python3 <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          Path(os.environ["CERTIFICATE_PATH"]).write_bytes(
+              base64.b64decode(os.environ["APPLE_DEVELOPER_ID_CERTIFICATE_BASE64"])
+          )
+          PY
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+          security import "$certificate_path" -P "$APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+          security default-keychain -s "$keychain_path"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$keychain_path"
+          security find-identity -v -p codesigning "$keychain_path"
+
+      - name: Package signed notarized release
+        env:
+          APPLE_DEVELOPER_ID_APPLICATION: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          HTMLSLIDE_RELEASE_CHANNEL: release
+        run: pnpm package:release:macos
+
+      - name: Validate signed release manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          manifest="$(find dist/release -name '*.json' -type f -print | sort | tail -n 1)"
+          if [[ -z "$manifest" ]]; then
+            echo "::error title=Missing release manifest::package:release:macos must write a JSON manifest to dist/release."
+            exit 1
+          fi
+
+          node - "$manifest" <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const manifest = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const artifacts = Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
+          const dmg = artifacts.find((artifact) => artifact.endsWith('.dmg'));
+
+          function fail(message) {
+            console.error(`::error title=Invalid release manifest::${message}`);
+            process.exit(1);
+          }
+
+          if (manifest.channel !== 'release') fail(`channel must be release, got ${manifest.channel}`);
+          if (manifest.signing !== 'developer-id') fail(`signing must be developer-id, got ${manifest.signing}`);
+          if (manifest.notarized !== true) fail('notarized must be true');
+          if (manifest.stapled !== true) fail('stapled must be true');
+          if (manifest.bundleIdentifier !== 'app.htmlslide') fail(`bundleIdentifier must be app.htmlslide, got ${manifest.bundleIdentifier}`);
+          if (!dmg || !fs.existsSync(dmg)) fail(`release DMG is missing from artifacts: ${JSON.stringify(artifacts)}`);
+          if (!path.basename(dmg).includes('signed-notarized')) fail(`release DMG name must include signed-notarized: ${dmg}`);
+          NODE
+
+      - name: Collect release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p release-artifacts
+          shopt -s nullglob
+          artifacts=(dist/release/*.dmg dist/release/*.json)
+
+          if (( ${#artifacts[@]} == 0 )); then
+            echo "::error title=No release artifacts::No release DMG or manifest was found under dist/release."
+            exit 1
+          fi
+
+          for artifact in "${artifacts[@]}"; do
+            cp "$artifact" release-artifacts/
+          done
+
+          find release-artifacts -type f -print | sort
+
+      - name: Upload signed notarized artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: htmlslide-signed-notarized-${{ github.run_number }}
+          path: release-artifacts/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach artifacts to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          tag="${GITHUB_REF_NAME}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --title "HTMLslide $tag" --notes "Signed and notarized macOS release artifacts."
+          fi
+
+          gh release upload "$tag" release-artifacts/* --clobber
+
+      - name: Delete signing keychain
+        if: always()
+        shell: bash
+        run: |
+          security delete-keychain "$RUNNER_TEMP/htmlslide-signing.keychain-db" >/dev/null 2>&1 || true

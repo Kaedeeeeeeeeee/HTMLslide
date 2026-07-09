@@ -17,7 +17,7 @@ Required root package contract:
 - `packageManager` pinned to a pnpm version.
 - `pnpm-lock.yaml` committed.
 - `docs:check`, `lint`, `typecheck`, `test`, `build`, and `e2e:desktop` scripts in `package.json`.
-- `package:alpha` and `smoke:package:alpha` scripts before unsigned alpha packaging is enabled.
+- `package:alpha`, `smoke:package:alpha`, and `package:release:macos` scripts before macOS packaging is enabled.
 
 ## Test Layers
 
@@ -31,7 +31,7 @@ Use deterministic fixtures and avoid real provider credentials in automated test
 - Agent tests: use mock model providers, fake BYOK provider factories, injected fake fetch implementations, and fake external commands. Source-write tests must verify accepted source roots, parser shapes, duplicate rejection, traversal denial, artifact/private-runtime denial, and no partial writes after validation failure. OpenAI-compatible provider tests must verify model validation requests, Chat Completions structured-output request bodies, `sourceWrites` schemas for build/repair, token-usage mapping, abort-signal forwarding, malformed output rejection, missing source-write rejection, and API-key/error-message sanitization. Anthropic provider tests must verify model validation headers, forced Messages API tool request bodies, `tool_use.input` parsing, usage mapping, abort-signal forwarding, malformed or missing tool-use rejection, missing source-write rejection, unsafe source-write rejection, and API-key/error-message sanitization. BYOK desktop tests must verify Keychain-gated credential loading, compatible base URL metadata, default OpenAI/OpenAI-compatible/Anthropic adapter wiring through injected fake fetch, no secret leakage in logs/results, provider `sourceWrites` application, sanitized `.htmlslide/reports/agent-run-<runId>.json` output, checkpoint diffs, and check/export gating without real provider credentials. Generic command runs must verify project-local prompt/manifest handling, source-write boundaries, checkpoint diffs, and check/export gating. CI must not require real Claude Code, Codex, or provider login.
 - MCP tests: verify server startup, tool listing, path boundary enforcement, schema-valid reports, and artifact creation.
 - Electron and presenter tests: cover onboarding, workspace choice, mock agent deck creation, preview, checks, export, rehearsal mode, settings, notes, next/previous navigation, timer, and keyboard shortcuts.
-- Packaging tests: unsigned CI build, DMG/package smoke checks, first-run setup, official skill installation, CLI shim install/repair/uninstall, and `htmlslide doctor`.
+- Packaging tests: unsigned CI build, signed/notarized release workflow contract, DMG/package smoke checks, first-run setup, official skill installation, CLI shim install/repair/uninstall, and `htmlslide doctor`.
 - Security tests: API keys absent from logs/project files/settings JSON, credential-store save/clear behavior through injected fakes, protected-mode write boundaries, MCP traversal denial, third-party skill warnings, remote asset detection, malformed deckpkg rejection.
 - Performance tests: track warm project open, single-slide render, 20-slide export, 20-slide check, and presenter next-slide latency.
 
@@ -73,7 +73,7 @@ pnpm smoke:package:alpha
 
 The smoke mounts the generated DMG, verifies the packaged app and `Applications` symlink, copies the app to a temporary install directory, verifies the packaged app declares `.deckpkg` as an owned macOS document type, launches it with isolated app data, verifies packaged first-run CLI provisioning and official skill installation into isolated target directories, moves the app to a second temporary install location and relaunches it so the CLI shim's recorded app path is repaired, exports a fixture deck through the packaged CLI, launches the packaged app with that `.deckpkg` as a direct file argument, verifies the renderer reports presenter mode for the expected deck, installs a temporary CLI shim against the packaged CLI runtime, verifies `htmlslide doctor --json`, and uninstalls the shim.
 
-The `Alpha Package` GitHub Actions workflow remains the CI packaging verifier for scheduled, tagged, and manual runs. Do not add provider credentials or local machine state to this path.
+The `Alpha Package` GitHub Actions workflow remains the unsigned CI packaging verifier for scheduled, tagged, and manual runs. The `Release macOS` workflow is the signed/notarized verifier for manual or `v*` tag release runs, and requires Apple Developer ID and notary secrets before it can produce a production DMG. Do not add provider credentials or local machine state to either path.
 
 ## Visual Regression
 

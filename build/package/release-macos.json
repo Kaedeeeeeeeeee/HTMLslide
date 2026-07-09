@@ -1,0 +1,19 @@
+{
+  "appName": "HTMLslide",
+  "bundleIdentifier": "app.htmlslide",
+  "channel": "release",
+  "artifactName": "HTMLslide-${version}-signed-notarized-${arch}",
+  "outputDirectory": "dist/release",
+  "volumeName": "HTMLslide",
+  "minimumSystemVersion": "13.0",
+  "deckPackageDocumentType": {
+    "name": "HTMLslide Deck Package",
+    "extension": "deckpkg",
+    "mimeType": "application/vnd.htmlslide.deckpkg"
+  },
+  "signing": "developer-id",
+  "signDmg": true,
+  "notarize": true,
+  "staple": true,
+  "createZip": false
+}

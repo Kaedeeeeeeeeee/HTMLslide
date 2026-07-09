@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, "..", "..");
 const desktopDir = path.join(root, "apps", "desktop");
-const configPath = path.join(root, "build", "package", "alpha-macos.json");
+const configPath = path.resolve(root, process.env.HTMLSLIDE_PACKAGE_CONFIG ?? "build/package/alpha-macos.json");
 
 function fail(message) {
   process.stderr.write(`${message}\n`);
@@ -281,7 +281,7 @@ async function deployDesktopRuntime(appResourcesPath) {
 
 async function createDmg({ appPath, artifactBaseName, outputDir, volumeName }) {
   const dmgPath = path.join(outputDir, `${artifactBaseName}.dmg`);
-  const dmgRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-alpha-dmg-"));
+  const dmgRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-dmg-"));
 
   try {
     await cp(appPath, path.join(dmgRoot, path.basename(appPath)), {
@@ -303,8 +303,93 @@ function createZip({ appPath, artifactBaseName, outputDir }) {
   return zipPath;
 }
 
+function requiredEnv(name) {
+  const value = process.env[name];
+  if (!value) {
+    fail(`${name} must be set for Developer ID signing and notarization.`);
+  }
+  return value;
+}
+
+function developerIdIdentity() {
+  return requiredEnv("APPLE_DEVELOPER_ID_APPLICATION");
+}
+
+function signAppBundle(appPath, config) {
+  if (config.signing === "developer-id") {
+    run("codesign", [
+      "--force",
+      "--deep",
+      "--options",
+      "runtime",
+      "--timestamp",
+      "--sign",
+      developerIdIdentity(),
+      appPath
+    ]);
+    run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath]);
+    return "developer-id";
+  }
+
+  if (config.adHocSign && process.env.HTMLSLIDE_ALPHA_SKIP_ADHOC_SIGN !== "1") {
+    run("codesign", ["--force", "--deep", "--sign", "-", appPath]);
+    return "ad-hoc";
+  }
+
+  return "none";
+}
+
+function signDmg(dmgPath, config) {
+  if (!config.signDmg) {
+    return;
+  }
+
+  if (config.signing !== "developer-id") {
+    fail("signDmg requires Developer ID signing.");
+  }
+
+  run("codesign", ["--force", "--timestamp", "--sign", developerIdIdentity(), dmgPath]);
+  run("codesign", ["--verify", "--verbose=2", dmgPath]);
+}
+
+function notarizeDmg(dmgPath, config) {
+  if (!config.notarize) {
+    return {
+      notarized: false,
+      stapled: false
+    };
+  }
+
+  if (config.signing !== "developer-id") {
+    fail("notarize requires Developer ID signing.");
+  }
+
+  run("xcrun", [
+    "notarytool",
+    "submit",
+    dmgPath,
+    "--apple-id",
+    requiredEnv("APPLE_ID"),
+    "--team-id",
+    requiredEnv("APPLE_TEAM_ID"),
+    "--password",
+    requiredEnv("APPLE_APP_SPECIFIC_PASSWORD"),
+    "--wait"
+  ]);
+
+  if (config.staple !== false) {
+    run("xcrun", ["stapler", "staple", dmgPath]);
+    run("xcrun", ["stapler", "validate", dmgPath]);
+  }
+
+  return {
+    notarized: true,
+    stapled: config.staple !== false
+  };
+}
+
 if (process.platform !== "darwin") {
-  fail("Unsigned alpha macOS packaging must run on macOS because it uses Electron.app, hdiutil, and ditto.");
+  fail("macOS packaging must run on macOS because it uses Electron.app, hdiutil, ditto, codesign, and xcrun.");
 }
 
 const [rootPackage, desktopPackage, config] = await Promise.all([
@@ -315,6 +400,7 @@ const [rootPackage, desktopPackage, config] = await Promise.all([
 
 const version = desktopPackage.version ?? rootPackage.version ?? "0.0.0";
 const arch = normalizeArch(process.env.HTMLSLIDE_PACKAGE_ARCH ?? process.arch);
+const channel = process.env.HTMLSLIDE_RELEASE_CHANNEL ?? config.channel ?? "alpha";
 const artifactBaseName = formatArtifactName(config.artifactName, { version, arch });
 const outputDir = path.resolve(root, config.outputDirectory);
 const appPath = path.join(outputDir, `${config.appName}.app`);
@@ -363,9 +449,7 @@ plistSet(plistPath, "LSMinimumSystemVersion", config.minimumSystemVersion);
 plistDelete(plistPath, "ElectronAsarIntegrity");
 writeDeckPackageDocumentTypes(plistPath, config.bundleIdentifier, config.deckPackageDocumentType);
 
-if (config.adHocSign && process.env.HTMLSLIDE_ALPHA_SKIP_ADHOC_SIGN !== "1") {
-  run("codesign", ["--force", "--deep", "--sign", "-", appPath]);
-}
+const signing = signAppBundle(appPath, config);
 
 const dmgPath = await createDmg({
   appPath,
@@ -373,8 +457,11 @@ const dmgPath = await createDmg({
   outputDir,
   volumeName: config.volumeName
 });
-const zipPath = createZip({ appPath, artifactBaseName, outputDir });
+signDmg(dmgPath, config);
+const notarization = notarizeDmg(dmgPath, config);
+const zipPath = config.createZip === false ? undefined : createZip({ appPath, artifactBaseName, outputDir });
 const manifestPath = path.join(outputDir, `${artifactBaseName}.json`);
+const artifacts = [dmgPath, zipPath].filter(Boolean);
 
 await writeFile(
   manifestPath,
@@ -383,18 +470,19 @@ await writeFile(
       appName: config.appName,
       version,
       arch,
-      channel: "alpha",
+      channel,
       bundleIdentifier: config.bundleIdentifier,
       documentTypes: [config.deckPackageDocumentType?.extension ?? "deckpkg"],
-      signing: config.adHocSign ? "ad-hoc" : "none",
-      notarized: false,
-      artifacts: [dmgPath, zipPath]
+      signing,
+      notarized: notarization.notarized,
+      stapled: notarization.stapled,
+      artifacts
     },
     null,
     2
   )}\n`
 );
 
-for (const artifact of [dmgPath, zipPath, manifestPath]) {
+for (const artifact of [...artifacts, manifestPath]) {
   process.stdout.write(`${artifact}\n`);
 }

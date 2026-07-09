@@ -1,6 +1,6 @@
 # Release
 
-HTMLslide currently has an unsigned alpha package workflow and a future signed release path.
+HTMLslide has an unsigned alpha package workflow and a separate signed/notarized macOS release workflow.
 
 ## unsigned alpha
 
@@ -8,10 +8,12 @@ The alpha workflow builds unsigned alpha DMG/ZIP artifacts. These artifacts are 
 
 ## signed and notarized
 
-A production release requires Developer ID signing, notarization, stapling, helper/CLI binary signing, release artifact naming, and documented secret ownership. Signing and notarization secrets must live in GitHub Actions secrets or organization-owned secret storage, not in the repository.
+A production release uses the `Release macOS` GitHub Actions workflow and `pnpm package:release:macos`. It requires Developer ID signing, notarization, stapling, release artifact naming, and documented secret ownership. Signing and notarization secrets must live in GitHub Actions repository or organization secrets, not in the repository.
+
+The signed workflow writes `signed-notarized` DMG and manifest artifacts, uploads them as workflow artifacts, and attaches them to the matching GitHub Release when run from a `v*` tag.
 
 ## GitHub Actions
 
-CI runs lint, typecheck, tests, build, docs checks, and Electron E2E. The alpha package workflow runs the package smoke before uploading artifacts.
+CI runs lint, typecheck, tests, build, docs checks, and Electron E2E. The alpha package workflow runs the package smoke before uploading unsigned artifacts. The release workflow runs the same quality gates before signing and notarization.
 
 See [dev/release.md](dev/release.md) for the detailed release contract.

@@ -20,6 +20,7 @@ describe("macOS alpha packaging contract", () => {
 
     expect(packageJson.scripts).toMatchObject({
       "package:alpha": "node scripts/release/package-alpha.mjs",
+      "package:release:macos": "node scripts/release/package-release-macos.mjs",
       "smoke:package:alpha": "node scripts/release/smoke-alpha-package.mjs",
       "verify:package:alpha": "pnpm package:alpha && pnpm smoke:package:alpha"
     });
@@ -53,7 +54,38 @@ describe("macOS alpha packaging contract", () => {
     expect(packageScript).toContain("symlink(\"/Applications\"");
     expect(packageScript).toContain("writeDeckPackageDocumentTypes");
     expect(packageScript).toContain("codesign\", [\"--force\", \"--deep\", \"--sign\", \"-\"");
-    expect(packageScript).toContain("notarized: false");
+    expect(packageScript).toContain("APPLE_DEVELOPER_ID_APPLICATION");
+    expect(packageScript).toContain("notarytool");
+    expect(packageScript).toContain("stapler");
+    expect(packageScript).toContain("notarized: notarization.notarized");
+  });
+
+  it("keeps signed release artifact metadata explicit", async () => {
+    const config = await readJson<{
+      artifactName?: string;
+      bundleIdentifier?: string;
+      channel?: string;
+      createZip?: boolean;
+      notarize?: boolean;
+      outputDirectory?: string;
+      signDmg?: boolean;
+      signing?: string;
+      staple?: boolean;
+      volumeName?: string;
+    }>("build/package/release-macos.json");
+
+    expect(config).toMatchObject({
+      artifactName: "HTMLslide-${version}-signed-notarized-${arch}",
+      bundleIdentifier: "app.htmlslide",
+      channel: "release",
+      createZip: false,
+      notarize: true,
+      outputDirectory: "dist/release",
+      signDmg: true,
+      signing: "developer-id",
+      staple: true,
+      volumeName: "HTMLslide"
+    });
   });
 
   it("keeps package smoke aligned with 19.13 install and repair requirements", async () => {
@@ -84,5 +116,23 @@ describe("macOS alpha packaging contract", () => {
     expect(workflow).toContain("*.zip");
     expect(workflow).toContain("*.json");
     expect(workflow).toContain("name: htmlslide-unsigned-alpha-${{ github.run_number }}");
+  });
+
+  it("keeps the signed release workflow gated, notarized, and release-publishing", async () => {
+    const workflow = await readText(".github/workflows/release-macos.yml");
+
+    expect(workflow).toContain("runs-on: macos-latest");
+    expect(workflow).toContain("contents: write");
+    expect(workflow).toContain("package:release:macos");
+    expect(workflow).toContain("APPLE_DEVELOPER_ID_APPLICATION");
+    expect(workflow).toContain("APPLE_DEVELOPER_ID_CERTIFICATE_BASE64");
+    expect(workflow).toContain("APPLE_APP_SPECIFIC_PASSWORD");
+    expect(workflow).toContain("security import");
+    expect(workflow).toContain("pnpm package:release:macos");
+    expect(workflow).toContain("manifest.notarized !== true");
+    expect(workflow).toContain("manifest.stapled !== true");
+    expect(workflow).toContain("signed-notarized");
+    expect(workflow).toContain("name: htmlslide-signed-notarized-${{ github.run_number }}");
+    expect(workflow).toContain("gh release upload");
   });
 });

@@ -22,7 +22,7 @@ pnpm smoke:package:alpha
 
 - Unit tests cover core, CLI, compiler, linter, agent, MCP, skills, and desktop services.
 - Desktop Electron E2E covers onboarding, project library, mock generation, checks, export, presenter, deckpkg open, CLI setup, and official skills setup.
-- package smoke covers DMG mount, packaged app launch, first-run CLI shim, official skills, deckpkg argument open, packaged CLI export, and `htmlslide doctor`.
+- package smoke covers DMG mount, packaged app launch, first-run CLI shim, official skills, moved-app CLI repair, deckpkg argument open, packaged CLI export, `htmlslide doctor`, and CLI uninstall.
 
 CI uses mock providers and fake external commands. Real provider credentials and real Claude/Codex login must remain manual validation steps.
 

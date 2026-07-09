@@ -75,6 +75,23 @@ async function readLatestManifest() {
     fail(`Alpha manifest does not point to an existing ZIP: ${manifestPath}`);
   }
 
+  if (
+    manifest.appName !== "HTMLslide" ||
+    manifest.channel !== "alpha" ||
+    manifest.notarized !== false ||
+    !String(manifest.bundleIdentifier ?? "").includes("htmlslide") ||
+    !Array.isArray(manifest.documentTypes) ||
+    !manifest.documentTypes.includes("deckpkg")
+  ) {
+    fail(`Alpha manifest does not match the unsigned alpha package contract: ${JSON.stringify(manifest, null, 2)}`);
+  }
+
+  for (const artifactPath of [dmgPath, zipPath]) {
+    if (!path.basename(artifactPath).includes("unsigned-alpha")) {
+      fail(`Alpha artifact name must include unsigned-alpha: ${artifactPath}`);
+    }
+  }
+
   return {
     dmgPath,
     manifestPath,
@@ -152,16 +169,14 @@ function detachDmg(mountPoint) {
   });
 }
 
-async function launchAppOnce(appPath, smokeRoot) {
+async function launchPackagedAppForStartup(appPath, smokeRoot, options) {
   const executablePath = packagedAppExecutablePath(appPath);
-  const smokeReadyFile = path.join(smokeRoot, "startup", "ready.json");
-  const firstRunCliTargetDir = path.join(smokeRoot, "first-run-bin");
-  const firstRunHtmlslideHome = path.join(smokeRoot, "first-run-home");
+  const smokeReadyFile = path.join(smokeRoot, options.name, "ready.json");
 
   await Promise.all([
-    mkdir(path.join(smokeRoot, "home"), { recursive: true }),
-    mkdir(path.join(smokeRoot, "workspace"), { recursive: true }),
-    mkdir(path.join(smokeRoot, "user-data"), { recursive: true })
+    mkdir(path.join(smokeRoot, options.name, "home"), { recursive: true }),
+    mkdir(path.join(smokeRoot, options.name, "workspace"), { recursive: true }),
+    mkdir(path.join(smokeRoot, options.name, "user-data"), { recursive: true })
   ]);
 
   const child = spawn(executablePath, [], {
@@ -169,13 +184,13 @@ async function launchAppOnce(appPath, smokeRoot) {
     env: {
       ...process.env,
       ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
-      HOME: path.join(smokeRoot, "home"),
-      HTMLSLIDE_CLI_TARGET_DIR: firstRunCliTargetDir,
-      HTMLSLIDE_DEFAULT_WORKSPACE: path.join(smokeRoot, "workspace"),
-      HTMLSLIDE_HOME: firstRunHtmlslideHome,
+      HOME: path.join(smokeRoot, options.name, "home"),
+      HTMLSLIDE_CLI_TARGET_DIR: options.cliTargetDir,
+      HTMLSLIDE_DEFAULT_WORKSPACE: path.join(smokeRoot, options.name, "workspace"),
+      HTMLSLIDE_HOME: options.htmlslideHome,
       HTMLSLIDE_SMOKE_QUIT_AFTER_READY: "1",
       HTMLSLIDE_SMOKE_READY_FILE: smokeReadyFile,
-      HTMLSLIDE_USER_DATA_DIR: path.join(smokeRoot, "user-data")
+      HTMLSLIDE_USER_DATA_DIR: path.join(smokeRoot, options.name, "user-data")
     },
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -219,9 +234,25 @@ async function launchAppOnce(appPath, smokeRoot) {
   if (marker.status !== "passed") {
     fail(`Packaged app startup smoke marker did not pass: ${JSON.stringify(marker)}`);
   }
+}
+
+async function launchAppOnce(appPath, smokeRoot) {
+  const firstRunHtmlslideHome = path.join(smokeRoot, "first-run-home");
+  const firstRunCliTargetDir = path.join(firstRunHtmlslideHome, "bin");
+
+  await launchPackagedAppForStartup(appPath, smokeRoot, {
+    cliTargetDir: firstRunCliTargetDir,
+    htmlslideHome: firstRunHtmlslideHome,
+    name: "startup"
+  });
 
   await smokeFirstRunCliProvisioning(appPath, firstRunCliTargetDir, firstRunHtmlslideHome);
   await smokeFirstRunOfficialSkills(firstRunHtmlslideHome);
+
+  return {
+    cliTargetDir: firstRunCliTargetDir,
+    htmlslideHome: firstRunHtmlslideHome
+  };
 }
 
 async function exportFixtureDeckPackageWithPackagedCli(appPath, smokeRoot) {
@@ -431,6 +462,37 @@ async function smokeCliShim(appPath, smokeRoot) {
   }
 }
 
+async function smokeMovedAppCliRepair(originalAppPath, smokeRoot, firstRunState) {
+  const movedRoot = path.join(smokeRoot, "Moved Applications");
+  const movedAppPath = path.join(movedRoot, appName);
+  await mkdir(movedRoot, { recursive: true });
+  await cp(originalAppPath, movedAppPath, {
+    recursive: true,
+    verbatimSymlinks: true
+  });
+  await rm(originalAppPath, { recursive: true, force: true });
+
+  await launchPackagedAppForStartup(movedAppPath, smokeRoot, {
+    cliTargetDir: firstRunState.cliTargetDir,
+    htmlslideHome: firstRunState.htmlslideHome,
+    name: "moved-app"
+  });
+  await smokeFirstRunCliProvisioning(movedAppPath, firstRunState.cliTargetDir, firstRunState.htmlslideHome);
+
+  const shimPath = path.join(firstRunState.cliTargetDir, "htmlslide");
+  const env = {
+    HTMLSLIDE_HOME: firstRunState.htmlslideHome,
+    PATH: `${path.dirname(shimPath)}${path.delimiter}${process.env.PATH ?? ""}`
+  };
+  const doctor = readJsonOutput(run(shimPath, ["doctor", "--json"], { env }), "moved app htmlslide doctor");
+  const cliShim = doctor.checks?.find((check) => check.id === "cli-shim");
+  if (doctor.status !== "passed" || cliShim?.status !== "passed") {
+    fail(`htmlslide doctor did not pass after moved app CLI repair: ${JSON.stringify(doctor, null, 2)}`);
+  }
+
+  return movedAppPath;
+}
+
 async function main() {
   if (process.platform !== "darwin") {
     fail("Alpha package smoke must run on macOS because it mounts DMG artifacts and launches a .app bundle.");
@@ -464,9 +526,10 @@ async function main() {
     detachDmg(mountPoint);
 
     assertDeckPackageDocumentType(installedAppPath);
-    await launchAppOnce(installedAppPath, smokeRoot);
-    await launchAppWithDeckPackage(installedAppPath, smokeRoot);
-    await smokeCliShim(installedAppPath, smokeRoot);
+    const firstRunState = await launchAppOnce(installedAppPath, smokeRoot);
+    const movedAppPath = await smokeMovedAppCliRepair(installedAppPath, smokeRoot, firstRunState);
+    await launchAppWithDeckPackage(movedAppPath, smokeRoot);
+    await smokeCliShim(movedAppPath, smokeRoot);
 
     process.stdout.write("Alpha package smoke passed.\n");
   } finally {

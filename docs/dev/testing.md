@@ -71,7 +71,7 @@ After an alpha package already exists, run the smoke directly with:
 pnpm smoke:package:alpha
 ```
 
-The smoke mounts the generated DMG, verifies the packaged app and `Applications` symlink, copies the app to a temporary install directory, verifies the packaged app declares `.deckpkg` as an owned macOS document type, launches it with isolated app data, verifies packaged first-run CLI provisioning and official skill installation into isolated target directories, exports a fixture deck through the packaged CLI, launches the packaged app with that `.deckpkg` as a direct file argument, verifies the renderer reports presenter mode for the expected deck, installs a temporary CLI shim against the packaged CLI runtime, verifies `htmlslide doctor --json`, and uninstalls the shim.
+The smoke mounts the generated DMG, verifies the packaged app and `Applications` symlink, copies the app to a temporary install directory, verifies the packaged app declares `.deckpkg` as an owned macOS document type, launches it with isolated app data, verifies packaged first-run CLI provisioning and official skill installation into isolated target directories, moves the app to a second temporary install location and relaunches it so the CLI shim's recorded app path is repaired, exports a fixture deck through the packaged CLI, launches the packaged app with that `.deckpkg` as a direct file argument, verifies the renderer reports presenter mode for the expected deck, installs a temporary CLI shim against the packaged CLI runtime, verifies `htmlslide doctor --json`, and uninstalls the shim.
 
 The `Alpha Package` GitHub Actions workflow remains the CI packaging verifier for scheduled, tagged, and manual runs. Do not add provider credentials or local machine state to this path.
 

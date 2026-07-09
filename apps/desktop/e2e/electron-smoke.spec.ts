@@ -68,7 +68,7 @@ test.describe("HTMLslide desktop smoke", () => {
     }
 
     if (tempRoot) {
-      await rm(tempRoot, { recursive: true, force: true });
+      await rm(tempRoot, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
       tempRoot = undefined;
     }
   });

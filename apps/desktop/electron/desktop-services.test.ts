@@ -30,6 +30,7 @@ import {
   type DesktopCliRunner,
   type DesktopAiEngineSettings,
   type DesktopCredentialStore,
+  type DesktopAgentRunReport,
   type DesktopProjectRecord
 } from "./desktop-services.js";
 
@@ -794,6 +795,57 @@ describe("desktop services", () => {
       path.join(projectPath, "exports", "notes.json"),
       path.join(projectPath, "exports", "thumbnails", "001-title.png")
     ]);
+    const expectedReportPath = path.join(projectPath, ".htmlslide", "reports", "agent-run-run-desktop-test.json");
+    expect(result.agentReportPath).toBe(expectedReportPath);
+    const reportText = await readFile(path.join(projectPath, ".htmlslide", "reports", "latest-agent-run.json"), "utf8");
+    const report = JSON.parse(reportText) as DesktopAgentRunReport;
+    expect(report).toMatchObject({
+      kind: "htmlslide-agent-run-report",
+      providerId: "htmlslide-mock",
+      runId: "run-desktop-test",
+      schemaVersion: "0.1.0",
+      status: "succeeded"
+    });
+    expect(report.outputs.outline?.slides.map((slide) => slide.id)).toEqual([
+      "001-title",
+      "002-workflow",
+      "003-review"
+    ]);
+    expect(report.outputs.visualDirection?.directions.map((direction) => direction.id)).toEqual([
+      "direction-editorial",
+      "direction-systems"
+    ]);
+    expect(report.outputs.selectedVisualDirectionId).toBe("direction-editorial");
+    expect(report.outputs.build).toMatchObject({
+      slidesChanged: ["001-title", "002-workflow", "003-review"],
+      sourceWriteCount: 0,
+      sourceWritePaths: []
+    });
+    expect(report.applied).toMatchObject({
+      source: "mock-project-writer",
+      selectedVisualDirectionId: "direction-editorial",
+      slideIds: ["001-title", "002-workflow", "003-review"]
+    });
+    expect(report.checkpointDiff?.summary).toMatchObject({
+      added: 6,
+      changed: 3,
+      deleted: 0
+    });
+    expect(report.cli.check).toMatchObject({
+      ok: true,
+      status: "passed",
+      summary: {
+        errors: 0,
+        warnings: 1
+      }
+    });
+    expect(report.cli.export?.artifactPaths).toEqual([
+      path.join(projectPath, "exports", "deck.html"),
+      path.join(projectPath, "exports", "notes.json"),
+      path.join(projectPath, "exports", "thumbnails", "001-title.png")
+    ]);
+    await expect(readFile(expectedReportPath, "utf8")).resolves.toBe(reportText);
+    expect(reportText).not.toContain('"content":');
     expect(result.stages.map((stage) => stage.stage)).toEqual([
       "brief",
       "outline",
@@ -932,6 +984,34 @@ describe("desktop services", () => {
     const deck = JSON.parse(await readFile(path.join(projectPath, "deck.json"), "utf8"));
     expect(deck.title).toBe("BYOK OpenAI Deck");
     expect(JSON.stringify(result.logs)).not.toContain("sk-openai-secret");
+    const reportText = await readFile(path.join(projectPath, ".htmlslide", "reports", "latest-agent-run.json"), "utf8");
+    const report = JSON.parse(reportText) as DesktopAgentRunReport;
+    expect(result.agentReportPath).toBe(path.join(projectPath, ".htmlslide", "reports", "agent-run-run-byok-openai.json"));
+    expect(report).toMatchObject({
+      kind: "htmlslide-agent-run-report",
+      providerId: "htmlslide-byok",
+      runId: "run-byok-openai",
+      status: "succeeded"
+    });
+    expect(report.outputs.outline?.slides.map((slide) => slide.id)).toEqual(["001-title"]);
+    expect(report.outputs.visualDirection?.directions.map((direction) => direction.id)).toEqual(["direction-provider"]);
+    expect(report.outputs.build).toMatchObject({
+      sourceWriteCount: 3,
+      sourceWritePaths: ["deck.json", "slides/001-title.html", "notes/001-title.md"]
+    });
+    expect(report.applied).toMatchObject({
+      filesChanged: ["deck.json", "slides/001-title.html", "notes/001-title.md"],
+      source: "provider-source-writes",
+      writeCount: 3
+    });
+    expect(report.cli.export?.artifactPaths).toEqual([
+      path.join(projectPath, "exports", "openai.deckpkg"),
+      path.join(projectPath, "exports", "openai.pdf")
+    ]);
+    expect(reportText).not.toContain("sk-openai-secret");
+    expect(reportText).not.toContain("Provider source write");
+    expect(reportText).not.toContain("Generated through provider source writes");
+    expect(reportText).not.toContain('"content":');
     expect(providerFetch.calls[0]).toMatchObject({
       method: "GET",
       url: "https://api.openai.com/v1/models/gpt-5-mini"

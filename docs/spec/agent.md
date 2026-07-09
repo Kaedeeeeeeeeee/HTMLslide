@@ -125,6 +125,12 @@ Writers may only target `deck.json`, `slides/`, `notes/`, `theme/`, and `assets/
 
 Provider `build` and `repair` outputs may include `sourceWrites` so desktop and CLI callers can apply model-generated source edits through the same boundary before running real `htmlslide check --json`.
 
+## Desktop Agent Run Reports
+
+Desktop Local Mock and BYOK runs write a sanitized review artifact under `.htmlslide/reports/agent-run-<runId>.json` and refresh `.htmlslide/reports/latest-agent-run.json` with the same payload. The report records the run id, provider id, stage summaries, normalized brief, generated outline, visual-direction options, selected visual direction, build/check/repair/export/review summaries, applied file paths, checkpoint summary, and real desktop CLI check/export status.
+
+Reports are intentionally not raw `AgentRunResult` dumps. They must not include provider API keys, credential values, raw provider prompts, CLI stdout/stderr, checkpoint text diffs, or `sourceWrites[].content`. Provider-backed source writes are represented by path lists and counts only.
+
 ## Provider Adapters
 
 `@htmlslide/agent` includes an OpenAI-compatible provider adapter for BYOK model calls. The adapter uses Chat Completions with `response_format.type = "json_schema"`, `strict: true`, and `store: false`, and validates credentials with `GET /models/{model}` against the configured base URL. Desktop OpenAI runs use the OpenAI API base URL by default; OpenAI-compatible runs require a saved compatible base URL in AI Engines settings. Automated coverage uses injected fake `fetch` implementations only; no CI path requires real provider credentials or network access.

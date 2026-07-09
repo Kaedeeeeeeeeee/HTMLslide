@@ -252,6 +252,30 @@ test.describe("HTMLslide desktop smoke", () => {
     expect(manifest.title).toBe("Mock HTMLslide Deck");
     expect(manifest.agent?.lastRunId).toMatch(/^run-/);
     expect(manifest.slides).toHaveLength(3);
+    const agentReportText = await readFile(
+      path.join(projectDir, ".htmlslide", "reports", "latest-agent-run.json"),
+      "utf8"
+    );
+    const agentReport = JSON.parse(agentReportText) as {
+      applied?: { slideIds?: string[] };
+      outputs?: {
+        build?: { slidesChanged?: string[] };
+        outline?: { slides?: unknown[] };
+        visualDirection?: { directions?: Array<{ id?: string }> };
+      };
+      providerId?: string;
+      runId?: string;
+    };
+    expect(agentReport.providerId).toBe("htmlslide-mock");
+    expect(agentReport.runId).toBe(manifest.agent?.lastRunId);
+    expect(agentReport.outputs?.outline?.slides).toHaveLength(3);
+    expect(agentReport.outputs?.visualDirection?.directions?.map((direction) => direction.id)).toEqual([
+      "direction-editorial",
+      "direction-systems"
+    ]);
+    expect(agentReport.outputs?.build?.slidesChanged).toEqual(["001-title", "002-workflow", "003-review"]);
+    expect(agentReport.applied?.slideIds).toEqual(["001-title", "002-workflow", "003-review"]);
+    expect(agentReportText).not.toContain('"content":');
     await expect(readFile(path.join(projectDir, "notes", "001-title.md"), "utf8")).resolves.toContain(
       "Deck title: Investor Demo"
     );

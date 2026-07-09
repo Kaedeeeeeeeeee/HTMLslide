@@ -196,6 +196,74 @@ export type DesktopMockAgentRunSummary = {
   exportArtifacts: string[];
 };
 
+export type DesktopAgentRunReportCliResult = {
+  ok: boolean;
+  exitCode: number;
+  status?: string;
+  summary?: unknown;
+  artifactPaths: string[];
+};
+
+export type DesktopAgentRunReport = {
+  schemaVersion: "0.1.0";
+  kind: "htmlslide-agent-run-report";
+  runId: string;
+  providerId: "htmlslide-mock" | "htmlslide-byok";
+  projectPath: string;
+  generatedAt: string;
+  ok: boolean;
+  status: AgentRunResult["status"];
+  stages: DesktopMockAgentStageSummary[];
+  outputs: {
+    brief?: AgentRunResult["outputs"]["brief"];
+    outline?: AgentRunResult["outputs"]["outline"];
+    visualDirection?: AgentRunResult["outputs"]["visualDirection"];
+    selectedVisualDirectionId?: string;
+    build?: {
+      filesChanged: string[];
+      slidesChanged: string[];
+      notesChanged: string[];
+      themeChanged: string[];
+      sourceWriteCount: number;
+      sourceWritePaths: string[];
+    };
+    checks: AgentRunResult["outputs"]["checks"];
+    repairs: Array<{
+      attempt: number;
+      filesChanged: string[];
+      issuesAddressed: string[];
+      sourceWriteCount: number;
+      sourceWritePaths: string[];
+    }>;
+    export?: AgentRunResult["outputs"]["export"];
+    review?: AgentRunResult["outputs"]["review"];
+  };
+  applied?: {
+    source: "mock-project-writer" | "provider-source-writes";
+    filesChanged: string[];
+    slideIds?: string[];
+    selectedVisualDirectionId?: string;
+    writeCount?: number;
+    stages?: DesktopByokAgentAppliedResult["stages"];
+  };
+  checkpoint?: {
+    id: string;
+    strategy: string;
+    manifestPath?: string;
+    canRevert: boolean;
+  };
+  checkpointDiff?: {
+    summary: FileCopyCheckpointDiff["summary"];
+    changedPaths: string[];
+    addedPaths: string[];
+    deletedPaths: string[];
+  };
+  cli: {
+    check?: DesktopAgentRunReportCliResult;
+    export?: DesktopAgentRunReportCliResult;
+  };
+};
+
 export type DesktopMockAgentRunResult = {
   ok: boolean;
   providerId: "htmlslide-mock";
@@ -210,6 +278,7 @@ export type DesktopMockAgentRunResult = {
   export?: CliRunResult;
   project?: DesktopProjectPreview;
   summary: DesktopMockAgentRunSummary;
+  agentReportPath?: string;
 };
 
 export type DesktopByokAgentRunRequest = DesktopMockAgentRunRequest;
@@ -253,6 +322,7 @@ export type DesktopByokAgentRunResult = {
   project?: DesktopProjectPreview;
   error?: string;
   summary: DesktopByokAgentRunSummary;
+  agentReportPath?: string;
 };
 
 export type DesktopExternalAgentRunRequest = {
@@ -1326,13 +1396,24 @@ export async function runDesktopMockAgent(
     project = await loadProjectPreview(projectPath);
   }
 
+  const stages = summarizeAgentStages(agent.events);
   const summary = summarizeDesktopMockAgentRun(agent, check, exportResult);
+  const agentReportPath = await writeDesktopAgentRunReport({
+    agent,
+    applied,
+    check,
+    checkpointDiff,
+    exportResult,
+    projectPath,
+    providerId: "htmlslide-mock",
+    stages
+  });
 
   return {
     ok: agent.ok && (check === undefined || check.ok) && (exportResult === undefined || exportResult.ok),
     providerId: "htmlslide-mock",
     projectPath,
-    stages: summarizeAgentStages(agent.events),
+    stages,
     events: agent.events,
     logs,
     agent,
@@ -1341,7 +1422,8 @@ export async function runDesktopMockAgent(
     check,
     export: exportResult,
     project,
-    summary
+    summary,
+    agentReportPath
   };
 }
 
@@ -1541,12 +1623,25 @@ export async function runDesktopByokAgent(
     project = await loadProjectPreview(projectPath);
   }
 
+  const stages = summarizeAgentStages(agent.events);
+  const summary = summarizeDesktopByokAgentRun(agent, check, exportResult, settingsSummary);
+  const agentReportPath = await writeDesktopAgentRunReport({
+    agent,
+    applied,
+    check,
+    checkpointDiff,
+    exportResult,
+    projectPath,
+    providerId: "htmlslide-byok",
+    stages
+  });
+
   return {
     ok: agent.ok && (check === undefined || check.ok) && (exportResult === undefined || exportResult.ok),
     providerId: "htmlslide-byok",
     projectPath,
     settings: settingsSummary,
-    stages: summarizeAgentStages(agent.events),
+    stages,
     events: agent.events,
     logs,
     agent,
@@ -1555,7 +1650,8 @@ export async function runDesktopByokAgent(
     check,
     export: exportResult,
     project,
-    summary: summarizeDesktopByokAgentRun(agent, check, exportResult, settingsSummary)
+    summary,
+    agentReportPath
   };
 }
 
@@ -2831,6 +2927,220 @@ async function applyByokAgentSourceWrites({
     stages: stageResults,
     writeCount: stageResults.reduce((total, stage) => total + stage.writeCount, 0)
   };
+}
+
+async function writeDesktopAgentRunReport({
+  agent,
+  applied,
+  check,
+  checkpointDiff,
+  exportResult,
+  projectPath,
+  providerId,
+  stages
+}: {
+  agent: AgentRunResult;
+  applied?: ApplyMockAgentProjectResult | DesktopByokAgentAppliedResult;
+  check?: CliRunResult;
+  checkpointDiff?: FileCopyCheckpointDiff;
+  exportResult?: CliRunResult;
+  projectPath: string;
+  providerId: DesktopAgentRunReport["providerId"];
+  stages: DesktopMockAgentStageSummary[];
+}): Promise<string> {
+  const reportsPath = path.join(projectPath, ".htmlslide", "reports");
+  await fs.mkdir(reportsPath, { recursive: true });
+
+  const report = createDesktopAgentRunReport({
+    agent,
+    applied,
+    check,
+    checkpointDiff,
+    exportResult,
+    projectPath,
+    providerId,
+    stages
+  });
+  const payload = `${JSON.stringify(report, null, 2)}\n`;
+  const reportPath = path.join(reportsPath, `agent-run-${safeAgentRunReportId(agent.runId)}.json`);
+  await Promise.all([
+    fs.writeFile(reportPath, payload, "utf8"),
+    fs.writeFile(path.join(reportsPath, "latest-agent-run.json"), payload, "utf8")
+  ]);
+
+  return reportPath;
+}
+
+function createDesktopAgentRunReport({
+  agent,
+  applied,
+  check,
+  checkpointDiff,
+  exportResult,
+  projectPath,
+  providerId,
+  stages
+}: {
+  agent: AgentRunResult;
+  applied?: ApplyMockAgentProjectResult | DesktopByokAgentAppliedResult;
+  check?: CliRunResult;
+  checkpointDiff?: FileCopyCheckpointDiff;
+  exportResult?: CliRunResult;
+  projectPath: string;
+  providerId: DesktopAgentRunReport["providerId"];
+  stages: DesktopMockAgentStageSummary[];
+}): DesktopAgentRunReport {
+  const report: DesktopAgentRunReport = {
+    schemaVersion: "0.1.0",
+    kind: "htmlslide-agent-run-report",
+    runId: agent.runId,
+    providerId,
+    projectPath: path.resolve(projectPath),
+    generatedAt: new Date().toISOString(),
+    ok: agent.ok,
+    status: agent.status,
+    stages,
+    outputs: sanitizeAgentOutputsForReport(agent.outputs),
+    cli: {}
+  };
+
+  const appliedSummary = summarizeAppliedAgentRunForReport(applied);
+  if (appliedSummary) {
+    report.applied = appliedSummary;
+  }
+
+  if (agent.checkpoint) {
+    const checkpoint: NonNullable<DesktopAgentRunReport["checkpoint"]> = {
+      id: agent.checkpoint.id,
+      strategy: agent.checkpoint.strategy,
+      canRevert: agent.checkpoint.restore.canRevert
+    };
+    if (agent.checkpoint.manifestPath) {
+      checkpoint.manifestPath = agent.checkpoint.manifestPath;
+    }
+    report.checkpoint = checkpoint;
+  }
+
+  if (checkpointDiff) {
+    report.checkpointDiff = {
+      summary: checkpointDiff.summary,
+      changedPaths: checkpointDiff.changed.map((file) => file.path),
+      addedPaths: checkpointDiff.added.map((file) => file.path),
+      deletedPaths: checkpointDiff.deleted.map((file) => file.path)
+    };
+  }
+
+  const checkSummary = summarizeCliRunForAgentReport(check);
+  if (checkSummary) {
+    report.cli.check = checkSummary;
+  }
+
+  const exportSummary = summarizeCliRunForAgentReport(exportResult);
+  if (exportSummary) {
+    report.cli.export = exportSummary;
+  }
+
+  return report;
+}
+
+function sanitizeAgentOutputsForReport(outputs: AgentRunResult["outputs"]): DesktopAgentRunReport["outputs"] {
+  const reportOutputs: DesktopAgentRunReport["outputs"] = {
+    checks: outputs.checks,
+    repairs: outputs.repairs.map((repair) => ({
+      attempt: repair.attempt,
+      filesChanged: repair.filesChanged,
+      issuesAddressed: repair.issuesAddressed,
+      sourceWriteCount: repair.sourceWrites?.length ?? 0,
+      sourceWritePaths: sourceWritePathsForReport(repair.sourceWrites)
+    }))
+  };
+
+  if (outputs.brief) {
+    reportOutputs.brief = outputs.brief;
+  }
+  if (outputs.outline) {
+    reportOutputs.outline = outputs.outline;
+  }
+  if (outputs.visualDirection) {
+    reportOutputs.visualDirection = outputs.visualDirection;
+  }
+  if (outputs.selectedVisualDirectionId) {
+    reportOutputs.selectedVisualDirectionId = outputs.selectedVisualDirectionId;
+  }
+  if (outputs.build) {
+    reportOutputs.build = {
+      filesChanged: outputs.build.filesChanged,
+      slidesChanged: outputs.build.slidesChanged,
+      notesChanged: outputs.build.notesChanged,
+      themeChanged: outputs.build.themeChanged,
+      sourceWriteCount: outputs.build.sourceWrites?.length ?? 0,
+      sourceWritePaths: sourceWritePathsForReport(outputs.build.sourceWrites)
+    };
+  }
+  if (outputs.export) {
+    reportOutputs.export = outputs.export;
+  }
+  if (outputs.review) {
+    reportOutputs.review = outputs.review;
+  }
+
+  return reportOutputs;
+}
+
+function summarizeAppliedAgentRunForReport(
+  applied: ApplyMockAgentProjectResult | DesktopByokAgentAppliedResult | undefined
+): DesktopAgentRunReport["applied"] | undefined {
+  if (!applied) {
+    return undefined;
+  }
+
+  if ("source" in applied) {
+    return {
+      source: applied.source,
+      filesChanged: applied.filesChanged,
+      writeCount: applied.writeCount,
+      stages: applied.stages
+    };
+  }
+
+  const summary: NonNullable<DesktopAgentRunReport["applied"]> = {
+    source: "mock-project-writer",
+    filesChanged: applied.filesChanged,
+    slideIds: applied.slideIds
+  };
+  if (applied.selectedVisualDirectionId) {
+    summary.selectedVisualDirectionId = applied.selectedVisualDirectionId;
+  }
+  return summary;
+}
+
+function summarizeCliRunForAgentReport(result: CliRunResult | undefined): DesktopAgentRunReportCliResult | undefined {
+  if (!result) {
+    return undefined;
+  }
+
+  const json = asRecord(result.json);
+  const summary: DesktopAgentRunReportCliResult = {
+    ok: result.ok,
+    exitCode: result.exitCode,
+    artifactPaths: collectExportArtifacts(json)
+  };
+  if (typeof json?.status === "string") {
+    summary.status = json.status;
+  }
+  if (json && Object.prototype.hasOwnProperty.call(json, "summary")) {
+    summary.summary = json.summary;
+  }
+  return summary;
+}
+
+function sourceWritePathsForReport(writes: readonly AgentSourceWrite[] | undefined): string[] {
+  return writes?.map((write) => write.path) ?? [];
+}
+
+function safeAgentRunReportId(runId: string): string {
+  const safeId = runId.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 96);
+  return safeId.length > 0 && safeId !== "." && safeId !== ".." ? safeId : "run";
 }
 
 function uniqueStrings(values: readonly string[]): string[] {

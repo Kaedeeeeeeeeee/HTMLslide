@@ -108,7 +108,7 @@ function renderChecklist(metadata) {
 
 ## Manual Acceptance Script
 
-For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is only acceptable for BYOK when no test key is available; record that explicitly.
+For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is only acceptable for BYOK when no test key is available, or for real Claude/Codex/Gemini validation when the candidate makes no direct headless-support claim; record that explicitly.
 
 ### 1. Clean macOS User Account
 
@@ -157,21 +157,29 @@ For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is 
 - Evidence:
 - Notes:
 
-### 7. Export PDF And Deckpkg
+### 7. Validate Real Claude/Codex/Gemini Claim
+
+- [ ] Review docs and release notes for any Claude Code, Codex, or Gemini CLI claim beyond detection/manual validation.
+- [ ] If direct support is claimed, record the real tool, version, authentication evidence, sanitized prompt/command, source-write manifest, check/export result, and diff-review evidence.
+- [ ] If direct support is not claimed, mark N/A and confirm docs/release notes keep these adapters detection/manual-validation only.
+- Evidence:
+- Notes:
+
+### 8. Export PDF And Deckpkg
 
 - [ ] Export PDF and deckpkg from the created deck.
 - [ ] Confirm PDF page count, deckpkg openability, notes, and thumbnails.
 - Evidence:
 - Notes:
 
-### 8. Present On External Monitor
+### 9. Present On External Monitor
 
 - [ ] Present on HDMI, USB-C, or AirPlay external display.
 - [ ] Confirm speaker screen, audience window, next/previous navigation, overlays, timer, and screen sync.
 - Evidence:
 - Notes:
 
-### 9. Reopen Project
+### 10. Reopen Project
 
 - [ ] Quit and relaunch HTMLslide.
 - [ ] Reopen the project from Recent or Open Folder.
@@ -179,21 +187,21 @@ For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is 
 - Evidence:
 - Notes:
 
-### 10. Revert An Agent Run
+### 11. Revert An Agent Run
 
 - [ ] Revert the latest mock, BYOK, or fake external-agent run.
 - [ ] Confirm changed source files return to the checkpoint state.
 - Evidence:
 - Notes:
 
-### 11. Uninstall CLI
+### 12. Uninstall CLI
 
 - [ ] Uninstall the HTMLslide-managed CLI shim from Settings.
 - [ ] Confirm htmlslide doctor no longer resolves through the removed shim path.
 - Evidence:
 - Notes:
 
-### 12. Delete App And Check System Files
+### 13. Delete App And Check System Files
 
 - [ ] Delete the app.
 - [ ] Confirm no unexpected files remain outside the expected user data, chosen workspace, and intentionally installed artifacts.

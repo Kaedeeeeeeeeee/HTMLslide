@@ -2303,12 +2303,13 @@ Presenter next slide latency: < 100ms
 4. Create deck using mock/local provider.
 5. Create deck using BYOK provider if key available.
 6. Connect fake external agent.
-7. Export PDF/deckpkg.
-8. Present on external monitor.
-9. Reopen project.
-10. Revert an agent run.
-11. Uninstall CLI.
-12. Delete App and ensure no unexpected system files remain.
+7. Validate real Claude/Codex/Gemini claim or record explicit no-claim N/A.
+8. Export PDF/deckpkg.
+9. Present on external monitor.
+10. Reopen project.
+11. Revert an agent run.
+12. Uninstall CLI.
+13. Delete App and ensure no unexpected system files remain.
 ```
 
 ---

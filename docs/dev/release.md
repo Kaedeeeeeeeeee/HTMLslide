@@ -63,7 +63,7 @@ Before calling an alpha build public, generate an acceptance checklist and recor
 pnpm rc:checklist -- --channel alpha --ci-run-url <ci-url> --package-run-url <alpha-package-url> --artifact-url <dmg-url>
 ```
 
-The generated Markdown file under `dist/acceptance/` is intentionally ignored by git. Attach or paste the completed checklist into the release candidate notes. It records the mandatory manual script from Phase 19.16: clean macOS account, DMG install, first launch, mock/local deck creation, BYOK when available, fake external agent, PDF/deckpkg export, external-monitor presentation, reopen, agent-run revert, CLI uninstall, and post-delete file cleanup.
+The generated Markdown file under `dist/acceptance/` is intentionally ignored by git. Attach or paste the completed checklist into the release candidate notes. It records the mandatory manual script from Phase 19.16: clean macOS account, DMG install, first launch, mock/local deck creation, BYOK when available, fake external agent, real Claude/Codex/Gemini claim validation or an explicit no-claim N/A, PDF/deckpkg export, external-monitor presentation, reopen, agent-run revert, CLI uninstall, and post-delete file cleanup.
 
 The Alpha Package and Release macOS workflows also generate a prefilled RC checklist in their uploaded artifact bundle. Treat that file as a run-bound evidence template, not completed acceptance, until a tester fills in the manual results.
 

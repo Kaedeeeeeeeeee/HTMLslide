@@ -18,6 +18,7 @@ import {
 import { useState, type FormEvent, type ReactNode } from "react";
 import {
   formatRedactedKeyStatus,
+  isExternalAgentRunnableByHtmlslide,
   selectedExternalAgentStatus,
   type AiEngineSettingsDraft,
   type AiEngineSettings,
@@ -285,9 +286,10 @@ function RecentProjects({
   const [draft, setDraft] = useState<NewDeckDraft>(() => createDefaultNewDeckDraft());
   const [folderEdited, setFolderEdited] = useState(false);
   const selectedExternalStatus = selectedExternalAgentStatus(aiEngineSettings, externalAgentStatuses);
+  const selectedExternalRunnable = isExternalAgentRunnableByHtmlslide(selectedExternalStatus);
   const validationMessage = validateNewDeckDraft(draft, {
     hasApiKey: aiEngineSettings.apiKey.hasKey,
-    selectedExternalReady: selectedExternalStatus.status === "ready"
+    selectedExternalReady: selectedExternalRunnable
   });
   const newDeckStatusId = "new-deck-status";
   const busy = operationStatus.kind === "running" && operationStatus.message === "Creating deck";
@@ -296,7 +298,8 @@ function RecentProjects({
   const engineOptions = buildNewDeckEngineOptions({
     apiKeyStatus: formatRedactedKeyStatus(aiEngineSettings),
     hasApiKey: aiEngineSettings.apiKey.hasKey,
-    selectedExternalStatus
+    selectedExternalStatus,
+    selectedExternalRunnable
   });
   const selectedEngine = engineOptions.find((engine) => engine.id === draft.generationMode) ?? engineOptions[0]!;
 
@@ -785,7 +788,7 @@ function validateNewDeckDraft(
   if (draft.generationMode === "external-agent") {
     return options.selectedExternalReady
       ? undefined
-      : "Configure and refresh a ready coding agent in AI Engines before using this path.";
+      : "Configure a ready Generic command in AI Engines before using Coding Agent generation.";
   }
 
   if (draft.outputs.length === 0) {
@@ -798,11 +801,13 @@ function validateNewDeckDraft(
 function buildNewDeckEngineOptions({
   apiKeyStatus,
   hasApiKey,
-  selectedExternalStatus
+  selectedExternalStatus,
+  selectedExternalRunnable
 }: {
   apiKeyStatus: string;
   hasApiKey: boolean;
   selectedExternalStatus: ExternalAgentStatus;
+  selectedExternalRunnable: boolean;
 }): Array<{
   id: NewDeckGenerationMode;
   label: string;
@@ -837,16 +842,19 @@ function buildNewDeckEngineOptions({
       id: "external-agent",
       label: "Coding Agent",
       description: "Use the selected Claude Code, Codex CLI, Gemini CLI, or compatible command.",
-      detail:
-        selectedExternalStatus.status === "ready"
-          ? `${selectedExternalStatus.label} is ready for New Deck and existing workspace runs.`
-          : `${selectedExternalStatus.label} is ${selectedExternalStatus.status.replace("-", " ")}. Refresh or configure it in AI Engines.`,
+      detail: externalAgentDeckCreationDetail(selectedExternalStatus, selectedExternalRunnable),
       icon: <Code2 />,
-      status: selectedExternalStatus.status.replace("-", " "),
-      tone: selectedExternalStatus.status === "ready"
+      status: selectedExternalRunnable
+        ? "ready"
+        : selectedExternalStatus.status === "ready"
+          ? "manual validation"
+          : selectedExternalStatus.status.replace("-", " "),
+      tone: selectedExternalRunnable
         ? "success"
         : selectedExternalStatus.status === "not-authenticated"
           ? "warning"
+          : selectedExternalStatus.status === "ready"
+            ? "warning"
           : selectedExternalStatus.status === "unavailable"
             ? "danger"
             : "neutral"
@@ -861,4 +869,19 @@ function buildNewDeckEngineOptions({
       tone: "info"
     }
   ];
+}
+
+function externalAgentDeckCreationDetail(
+  selectedExternalStatus: ExternalAgentStatus,
+  selectedExternalRunnable: boolean
+): string {
+  if (selectedExternalRunnable) {
+    return `${selectedExternalStatus.label} is ready for New Deck and existing workspace runs.`;
+  }
+
+  if (selectedExternalStatus.status === "ready") {
+    return `${selectedExternalStatus.label} is detected for manual validation. Configure Generic command mode before HTMLslide can run external generation.`;
+  }
+
+  return `${selectedExternalStatus.label} is ${selectedExternalStatus.status.replace("-", " ")}. Refresh or configure it in AI Engines.`;
 }

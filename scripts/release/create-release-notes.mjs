@@ -175,7 +175,7 @@ ${commitLines}
 
 - CI workflow: required.
 - Release macOS workflow: required for signed/notarized artifacts.
-- Manual RC acceptance: required for clean account install, BYOK when available, fake external agent, external monitor presenter test, reopen, revert, CLI uninstall, and cleanup evidence.
+- Manual RC acceptance: required for clean account install, BYOK when available, fake external agent, real Claude/Codex/Gemini claim validation or explicit no-claim N/A, external monitor presenter test, reopen, revert, CLI uninstall, and cleanup evidence.
 
 ## Known Limitations
 

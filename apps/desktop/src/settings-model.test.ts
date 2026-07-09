@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildExternalAgentReadiness,
   buildAiEngineSettingsUpdate,
   createDefaultAiEngineSettings,
   createDefaultExternalAgentStatuses,
   formatRedactedKeyStatus,
+  isExternalAgentRunnableByHtmlslide,
   normalizeAiEngineSettings,
   selectedExternalAgentStatus
 } from "./settings-model";
@@ -181,5 +183,57 @@ describe("AI engine settings model", () => {
     });
     expect(status.capabilities.headlessRun).toBe(true);
     expect(status.capabilities.readDiff).toBe(true);
+  });
+
+  it("builds readiness guidance for a configured Generic command", () => {
+    const settings = buildAiEngineSettingsUpdate(
+      createDefaultAiEngineSettings(),
+      {
+        customCommand: "agent --project {{projectPath}} --prompt-file {{promptFile}} --writes {{writeManifest}}",
+        externalAgentId: "generic",
+        mode: "external-agent",
+        model: "gpt-5-mini",
+        provider: "openai"
+      },
+      "2026-07-09T00:12:00.000Z"
+    );
+    const status = selectedExternalAgentStatus(settings, createDefaultExternalAgentStatuses());
+    const readiness = buildExternalAgentReadiness(status);
+
+    expect(readiness.title).toBe("Ready for HTMLslide runs");
+    expect(readiness.detail).toContain("check, export, and show the diff review");
+    expect(readiness.nextStep).toContain("review reported source writes");
+    expect(isExternalAgentRunnableByHtmlslide(status)).toBe(true);
+    expect(readiness.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "HTMLslide run", tone: "success", value: "Enabled" }),
+        expect.objectContaining({ label: "Diff review", tone: "success", value: "Enabled" })
+      ])
+    );
+  });
+
+  it("keeps detected Codex readiness scoped to manual validation until templates exist", () => {
+    const status = {
+      ...createDefaultExternalAgentStatuses().find((item) => item.id === "codex-cli")!,
+      authenticated: true,
+      checkedAt: "2026-07-09T00:13:00.000Z",
+      installed: true,
+      status: "ready" as const,
+      summary: "Detected and authenticated",
+      version: "codex 1.2.3"
+    };
+    const readiness = buildExternalAgentReadiness(status);
+
+    expect(isExternalAgentRunnableByHtmlslide(status)).toBe(false);
+    expect(readiness.title).toBe("Detected for manual validation");
+    expect(readiness.detail).toContain("direct headless deck editing is not enabled");
+    expect(readiness.nextStep).toContain("configure Generic command mode");
+    expect(readiness.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "Auth", tone: "success", value: "Authenticated" }),
+        expect.objectContaining({ label: "HTMLslide run", tone: "warning", value: "Detection only" }),
+        expect.objectContaining({ label: "Diff review", tone: "neutral", value: "Not enabled" })
+      ])
+    );
   });
 });

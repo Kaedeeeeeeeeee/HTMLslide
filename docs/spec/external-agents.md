@@ -43,6 +43,11 @@ After the command exits, HTMLslide reads the write manifest, validates reported 
 
 Claude Code, Codex CLI, and Gemini CLI are detection-only until their headless command templates are explicitly defined and tested. Gemini CLI detection checks installation by default; authentication must be validated manually or through a future explicit non-interactive check because supported auth modes include interactive sign-in, `GEMINI_API_KEY`, and Vertex AI environment configuration.
 
+The desktop AI Engines settings surface must keep this boundary visible. Its connection guide should show command, version,
+install/auth status, whether HTMLslide headless run and diff review are enabled, and the next remediation step. In the
+current alpha, only a saved Generic command can be marked ready for HTMLslide headless runs; Claude Code, Codex CLI, and
+Gemini CLI detection must remain manual-validation evidence until their tested templates exist.
+
 ## Project Boundary
 
 External agents may edit source areas described by the project-structure spec, but they must not report writes outside the project root. Runs provide a write manifest, and adapter code rejects any reported write whose resolved path escapes the project, including symlink escapes after the command completes.

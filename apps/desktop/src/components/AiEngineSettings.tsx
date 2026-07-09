@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import {
   aiEngineModes,
   apiKeyProviders,
+  buildExternalAgentReadiness,
   externalAgentOptions,
   formatRedactedKeyStatus,
   selectedExternalAgentStatus,
@@ -13,6 +14,7 @@ import {
   type AiEngineSettingsDraft,
   type ApiKeyProvider,
   type ExternalAgentId,
+  type ExternalAgentReadiness,
   type ExternalAgentStatus
 } from "../settings-model";
 import type { OperationStatus } from "../model";
@@ -72,6 +74,7 @@ export function AiEngineSettingsPanel({
     [externalAgentId, settings, statuses]
   );
   const keyStatus = formatRedactedKeyStatus(settings);
+  const externalAgentReadiness = useMemo(() => buildExternalAgentReadiness(selectedStatus), [selectedStatus]);
 
   const save = (clearKey = false): void => {
     onSaveSettings({
@@ -227,6 +230,8 @@ export function AiEngineSettingsPanel({
             })}
           </div>
 
+          <ExternalAgentReadinessPanel readiness={externalAgentReadiness} />
+
           <label className="settings-field">
             <span>Generic command</span>
             <input
@@ -254,6 +259,28 @@ export function AiEngineSettingsPanel({
           </div>
         </section>
       </div>
+    </section>
+  );
+}
+
+function ExternalAgentReadinessPanel({ readiness }: { readiness: ExternalAgentReadiness }): ReactNode {
+  return (
+    <section className="external-agent-readiness" aria-label="External agent connection guide">
+      <div className="external-agent-readiness__summary">
+        <strong>{readiness.title}</strong>
+        <span>{readiness.detail}</span>
+      </div>
+      <dl className="external-agent-readiness__items">
+        {readiness.items.map((item) => (
+          <div key={item.label}>
+            <dt>{item.label}</dt>
+            <dd>
+              <StatusPill tone={item.tone}>{item.value}</StatusPill>
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <p>{readiness.nextStep}</p>
     </section>
   );
 }

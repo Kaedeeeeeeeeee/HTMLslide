@@ -979,6 +979,70 @@ svg {
   width: 16px;
 }
 
+.external-agent-readiness {
+  background: var(--hs-surface);
+  border: 1px solid var(--hs-line);
+  border-radius: var(--hs-radius-sm);
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+}
+
+.external-agent-readiness__summary {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.external-agent-readiness__summary strong,
+.external-agent-readiness__summary span {
+  display: block;
+}
+
+.external-agent-readiness__summary strong {
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.external-agent-readiness__summary span,
+.external-agent-readiness p {
+  color: var(--hs-text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.external-agent-readiness__items {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+.external-agent-readiness__items div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.external-agent-readiness__items dt {
+  color: var(--hs-text-muted);
+  font-size: 10px;
+}
+
+.external-agent-readiness__items dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.external-agent-readiness__items .hs-status-pill {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .project-card {
   background: var(--hs-surface-raised);
   border: 1px solid var(--hs-line);

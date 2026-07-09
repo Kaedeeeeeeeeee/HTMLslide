@@ -149,12 +149,13 @@ The generated file lives under `dist/acceptance/` and is ignored by git. Complet
 4. Create a deck with the mock/local provider.
 5. Validate and create a deck with a BYOK provider when a test key is available.
 6. Connect a fake external agent.
-7. Export PDF and deckpkg.
-8. Present on an external monitor.
-9. Reopen the project.
-10. Revert an agent run.
-11. Uninstall the CLI shim.
-12. Delete the app and confirm no unexpected system files remain.
+7. Record real Claude/Codex/Gemini evidence before claiming direct support, or mark N/A and confirm docs/release notes make no direct support claim.
+8. Export PDF and deckpkg.
+9. Present on an external monitor.
+10. Reopen the project.
+11. Revert an agent run.
+12. Uninstall the CLI shim.
+13. Delete the app and confirm no unexpected system files remain.
 
 ## Contribution Expectations
 

@@ -233,4 +233,34 @@ test.describe("HTMLslide desktop accessibility smoke", () => {
     await expectNoFrameworkOverlay(page);
     expect(browserErrors).toEqual([]);
   });
+
+  test("covers AI Engines external agent readiness semantics", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-a11y-"));
+    electronApp = await launchDesktopApp(tempRoot);
+
+    const page = await electronApp.firstWindow();
+    const browserErrors = collectBrowserErrors(page);
+    await page.waitForLoadState("domcontentloaded");
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "AI Engines", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "AI Engines", exact: true })).toBeVisible();
+    await page.locator(".ai-settings__modes").getByRole("button", { name: /Coding Agent/ }).click();
+    await page.locator(".external-agent-list").getByRole("button", { name: /Generic command/ }).click();
+    const connectionGuide = page.getByRole("region", { name: "External agent connection guide" });
+    await expect(connectionGuide).toContainText("Command template required");
+    await expect(connectionGuide).toContainText("{{writeManifest}}");
+    await page.getByLabel("Generic command").fill(
+      "agent --project {{projectPath}} --prompt-file {{promptFile}} --writes {{writeManifest}}"
+    );
+    await page.getByRole("button", { name: "Save Selection", exact: true }).click();
+    await expect(connectionGuide).toContainText("Ready for HTMLslide runs");
+    await expect(connectionGuide).toContainText("HTMLslide run");
+    await expect(connectionGuide).toContainText("Diff review");
+    await expectNoAccessibilityViolations(page, "AI Engines external agent readiness");
+
+    await expectNoFrameworkOverlay(page);
+    expect(browserErrors).toEqual([]);
+  });
 });

@@ -32,6 +32,19 @@ export type ExternalAgentStatus = Pick<
   summary: string;
 };
 
+export interface ExternalAgentReadinessItem {
+  label: string;
+  value: string;
+  tone: "danger" | "neutral" | "success" | "warning";
+}
+
+export interface ExternalAgentReadiness {
+  title: string;
+  detail: string;
+  nextStep: string;
+  items: ExternalAgentReadinessItem[];
+}
+
 export interface AiEngineSettings {
   version: 1;
   mode: AiEngineMode;
@@ -274,6 +287,69 @@ export function selectedExternalAgentStatus(
   );
 }
 
+export function isExternalAgentRunnableByHtmlslide(status: ExternalAgentStatus): boolean {
+  return (
+    status.id === "generic" &&
+    status.status === "ready" &&
+    status.capabilities.headlessRun === true &&
+    status.capabilities.readDiff === true
+  );
+}
+
+export function buildExternalAgentReadiness(status: ExternalAgentStatus): ExternalAgentReadiness {
+  const htmlslideHeadlessEnabled = isExternalAgentRunnableByHtmlslide(status);
+  const title = readinessTitle(status, htmlslideHeadlessEnabled);
+  const detail = readinessDetail(status, htmlslideHeadlessEnabled);
+  const nextStep = readinessNextStep(status, htmlslideHeadlessEnabled);
+  const authenticationValue = status.capabilities.detectAuthenticated
+    ? status.authenticated
+      ? "Authenticated"
+      : "Not authenticated"
+    : "Manual validation";
+
+  return {
+    detail,
+    items: [
+      {
+        label: "Command",
+        tone: status.command ? "neutral" : "warning",
+        value: status.command || "Not configured"
+      },
+      {
+        label: "Version",
+        tone: status.version ? "neutral" : status.installed ? "warning" : "neutral",
+        value: status.version ?? (status.installed ? "Unknown" : "Not installed")
+      },
+      {
+        label: "Install",
+        tone: status.installed ? "success" : "neutral",
+        value: status.installed ? "Detected" : "Not detected"
+      },
+      {
+        label: "Auth",
+        tone: status.capabilities.detectAuthenticated
+          ? status.authenticated
+            ? "success"
+            : "warning"
+          : "warning",
+        value: authenticationValue
+      },
+      {
+        label: "HTMLslide run",
+        tone: htmlslideHeadlessEnabled ? "success" : "warning",
+        value: htmlslideHeadlessEnabled ? "Enabled" : "Detection only"
+      },
+      {
+        label: "Diff review",
+        tone: htmlslideHeadlessEnabled ? "success" : "neutral",
+        value: htmlslideHeadlessEnabled ? "Enabled" : "Not enabled"
+      }
+    ],
+    nextStep,
+    title
+  };
+}
+
 function normalizeMode(value: unknown): AiEngineMode {
   return value === "htmlslide-agent" || value === "external-agent" || value === "no-ai" ? value : "no-ai";
 }
@@ -320,6 +396,70 @@ function normalizeBaseUrl(value: unknown, provider: ApiKeyProvider): string | un
 
 function normalizeCustomCommand(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function readinessTitle(status: ExternalAgentStatus, htmlslideHeadlessEnabled: boolean): string {
+  if (htmlslideHeadlessEnabled) {
+    return "Ready for HTMLslide runs";
+  }
+
+  if (status.status === "ready") {
+    return "Detected for manual validation";
+  }
+
+  if (status.status === "not-installed") {
+    return "Install required";
+  }
+
+  if (status.status === "not-authenticated") {
+    return "Login required";
+  }
+
+  return status.id === "generic" ? "Command template required" : "Manual validation required";
+}
+
+function readinessDetail(status: ExternalAgentStatus, htmlslideHeadlessEnabled: boolean): string {
+  if (htmlslideHeadlessEnabled) {
+    return "HTMLslide can run this Generic command from an opened local project, then check, export, and show the diff review.";
+  }
+
+  if (status.id !== "generic") {
+    if (status.status === "ready") {
+      return `${status.label} is detected and authenticated, but direct headless deck editing is not enabled until command templates are defined and tested.`;
+    }
+
+    if (status.status === "not-installed") {
+      return `${status.label} was not found on PATH.`;
+    }
+
+    if (status.status === "not-authenticated") {
+      return `${status.label} is installed but the account is not ready for non-interactive use.`;
+    }
+
+    return `${status.label} detection cannot prove a release-ready headless editing path yet.`;
+  }
+
+  return "Save a project-scoped Generic command template before using Coding Agent generation.";
+}
+
+function readinessNextStep(status: ExternalAgentStatus, htmlslideHeadlessEnabled: boolean): string {
+  if (htmlslideHeadlessEnabled) {
+    return "Run it from an opened workspace or the New Deck wizard and review reported source writes before export.";
+  }
+
+  if (status.id === "generic") {
+    return "Use placeholders such as {{projectPath}}, {{promptFile}}, and {{writeManifest}} so HTMLslide can validate the run.";
+  }
+
+  if (status.status === "not-installed") {
+    return `Install ${status.label}, reopen HTMLslide if PATH changed, then refresh status.`;
+  }
+
+  if (status.status === "not-authenticated") {
+    return `Log in with the ${status.command} CLI, then refresh status.`;
+  }
+
+  return "For alpha automation, configure Generic command mode until this adapter has a tested headless template.";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

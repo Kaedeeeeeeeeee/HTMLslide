@@ -138,6 +138,19 @@ describe("macOS alpha packaging contract", () => {
     expect(workflow).toContain("name: htmlslide-unsigned-alpha-${{ github.run_number }}");
   });
 
+  it("keeps the RC checklist explicit about real external-agent claims", async () => {
+    const checklistScript = await readText("scripts/release/create-rc-acceptance.mjs");
+    const publicTestingDocs = await readText("docs/testing.md");
+    const releaseNotesScript = await readText("scripts/release/create-release-notes.mjs");
+
+    expect(checklistScript).toContain("Validate Real Claude/Codex/Gemini Claim");
+    expect(checklistScript).toContain("detection/manual validation");
+    expect(checklistScript).toContain("sanitized prompt/command");
+    expect(checklistScript).toContain("source-write manifest");
+    expect(publicTestingDocs).toContain("real Claude/Codex/Gemini claim validation or explicit no-claim N/A");
+    expect(releaseNotesScript).toContain("real Claude/Codex/Gemini claim validation or explicit no-claim N/A");
+  });
+
   it("keeps the signed release workflow gated, notarized, and release-publishing", async () => {
     const workflow = await readText(".github/workflows/release-macos.yml");
 

@@ -6,7 +6,7 @@ import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createRequire } from "node:module";
-import { access, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, chmod, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -299,6 +299,27 @@ function requireArg(args, name) {
 `,
     "utf8"
   );
+}
+
+async function writeReadyCodexCli(commandPath: string): Promise<void> {
+  await writeFile(
+    commandPath,
+    `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args.includes("--version")) {
+  console.log("codex 9.9.9");
+  process.exit(0);
+}
+if (args[0] === "auth" && args[1] === "status") {
+  console.log("authenticated");
+  process.exit(0);
+}
+console.error("unexpected codex e2e invocation: " + args.join(" "));
+process.exit(1);
+`,
+    "utf8"
+  );
+  await chmod(commandPath, 0o755);
 }
 
 test.describe("HTMLslide desktop smoke", () => {
@@ -836,8 +857,14 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(page.getByRole("heading", { name: "AI Engines", exact: true })).toBeVisible();
     await page.locator(".ai-settings__modes").getByRole("button", { name: /Coding Agent/ }).click();
     await page.locator(".external-agent-list").getByRole("button", { name: /Generic command/ }).click();
+    const connectionGuide = page.getByRole("region", { name: "External agent connection guide" });
+    await expect(connectionGuide).toContainText("Command template required");
+    await expect(connectionGuide).toContainText("{{writeManifest}}");
     await page.getByLabel("Generic command").fill(commandTemplate);
     await page.getByRole("button", { name: "Save Selection", exact: true }).click();
+    await expect(connectionGuide).toContainText("Ready for HTMLslide runs");
+    await expect(connectionGuide).toContainText("HTMLslide run");
+    await expect(connectionGuide).toContainText("Diff review");
 
     const settingsPath = path.join(userDataDir, "ai-engine-settings.json");
     await expect.poll(async () => readFile(settingsPath, "utf8").catch(() => ""), { timeout: 30_000 })
@@ -896,6 +923,67 @@ test.describe("HTMLslide desktop smoke", () => {
     const revertedSlide = await readFile(path.join(projectPath, "slides", "001-title.html"), "utf8");
     expect(revertedSlide).toContain("Generic Agent Demo");
     expect(revertedSlide).not.toContain("Edited by Generic E2E");
+
+    await expectNoFrameworkOverlay(page);
+    expect(browserErrors).toEqual([]);
+  });
+
+  test("keeps detected Codex CLI scoped to manual validation in the new deck wizard", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
+    const homeDir = path.join(tempRoot, "home");
+    const userDataDir = path.join(tempRoot, "user-data");
+    const workspaceDir = path.join(tempRoot, "workspace");
+    const binDir = path.join(tempRoot, "bin");
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(userDataDir, { recursive: true });
+    await mkdir(workspaceDir, { recursive: true });
+    await mkdir(binDir, { recursive: true });
+    await writeReadyCodexCli(path.join(binDir, "codex"));
+
+    electronApp = await electron.launch({
+      executablePath: electronExecutable,
+      args: [electronMain],
+      env: {
+        ...process.env,
+        ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+        HOME: homeDir,
+        HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir,
+        HTMLSLIDE_USER_DATA_DIR: userDataDir,
+        PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`
+      }
+    });
+
+    const page = await electronApp.firstWindow();
+    const browserErrors = collectBrowserErrors(page);
+    await page.waitForLoadState("domcontentloaded");
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "AI Engines", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "AI Engines", exact: true })).toBeVisible();
+    await page.locator(".ai-settings__modes").getByRole("button", { name: /Coding Agent/ }).click();
+    await page.getByRole("button", { name: "Refresh Status", exact: true }).click();
+    await expect(page.getByRole("status", { name: "AI engine operation status" })).toContainText(
+      "External agent status refreshed",
+      { timeout: 30_000 }
+    );
+    await page.locator(".external-agent-list").getByRole("button", { name: /Codex CLI/ }).click();
+    const connectionGuide = page.getByRole("region", { name: "External agent connection guide" });
+    await expect(connectionGuide).toContainText("Detected for manual validation");
+    await expect(connectionGuide).toContainText("direct headless deck editing is not enabled");
+
+    await page.getByRole("button", { name: "Recent", exact: true }).click();
+    await page.locator(".library-main").getByRole("button", { name: "New Deck", exact: true }).first().click();
+    const newDeckPanel = page.locator(".new-deck-panel");
+    await expect(newDeckPanel).toBeVisible();
+    await newDeckPanel.getByLabel("Deck title").fill("Codex Manual Validation Demo");
+    await newDeckPanel.getByLabel("Brief").fill("This should not run through Codex until a tested template exists.");
+    await newDeckPanel.getByRole("button", { name: /Coding Agent/ }).click();
+    await expect(newDeckPanel.getByText("Codex CLI is detected for manual validation.")).toBeVisible();
+    await expect(newDeckPanel.getByRole("alert")).toHaveText(
+      "Configure a ready Generic command in AI Engines before using Coding Agent generation."
+    );
+    await expect(newDeckPanel.getByRole("button", { name: "Create & Generate", exact: true })).toBeDisabled();
 
     await expectNoFrameworkOverlay(page);
     expect(browserErrors).toEqual([]);

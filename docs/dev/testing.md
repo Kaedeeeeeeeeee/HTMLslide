@@ -86,6 +86,8 @@ The compiler fallback thumbnail path currently uses PNG goldens under `packages/
 
 The compiler golden test decodes PNG pixels and compares fallback thumbnails against `packages/compiler/test/goldens/`. On failure it writes `before.png`, `after.png`, and `diff.png` under `dist/visual-regression/compiler/`; CI and the alpha package workflow upload that directory as a failed-run artifact when present.
 
+Compiler regression fixtures cover the Phase 19.5 deck families under `packages/test-fixtures/decks/`: `minimal-deck`, `text-heavy-deck`, `data-chart-deck`, `image-heavy-deck`, `notes-deck`, and `multi-theme-deck`. `golden-export-basic` remains the deep artifact contract fixture for deckpkg contents, manifest mapping, exported URL rewriting, and notes sidecar equality.
+
 ## Manual Release Smoke
 
 Each release candidate should be tested once on a clean macOS user account:

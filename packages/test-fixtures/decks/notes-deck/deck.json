@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "0.1.0",
+  "appVersion": "0.1.0",
+  "id": "compiler_notes_deck",
+  "title": "Notes Deck",
+  "language": "en-US",
+  "aspectRatio": "16:9",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "slides": [
+    {
+      "id": "001-with-notes",
+      "title": "Opening Cue",
+      "source": "slides/001-with-notes.html",
+      "notes": "notes/001-with-notes.md",
+      "durationSec": 45,
+      "kind": "title",
+      "status": "ready"
+    },
+    {
+      "id": "002-without-notes",
+      "title": "No Notes Slide",
+      "source": "slides/002-without-notes.html",
+      "durationSec": 90,
+      "kind": "content",
+      "status": "ready"
+    }
+  ],
+  "export": {
+    "pdf": true,
+    "html": true,
+    "deckpkg": true,
+    "thumbnails": true,
+    "speakerNotes": true
+  }
+}

@@ -1,0 +1,33 @@
+.slide {
+  background: #f8fafc;
+  color: #111827;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+.kpi-grid {
+  display: grid;
+  gap: 28px;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.kpi-grid article {
+  border-left: 8px solid #0f766e;
+  padding: 24px;
+}
+
+.kpi-grid strong {
+  display: block;
+  font-size: 72px;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+td,
+th {
+  border-bottom: 2px solid #cbd5e1;
+  padding: 18px;
+  text-align: left;
+}

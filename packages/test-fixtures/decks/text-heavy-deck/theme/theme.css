@@ -1,0 +1,9 @@
+.slide {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+.columns {
+  display: grid;
+  gap: 40px;
+  grid-template-columns: 1fr 1fr;
+}

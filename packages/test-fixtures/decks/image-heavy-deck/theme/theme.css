@@ -1,0 +1,15 @@
+.image-slide {
+  background: #ffffff;
+  color: #111827;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+.image-slide--pattern {
+  background-image: url("../assets/pattern.svg");
+}
+
+.image-slide img {
+  height: 220px;
+  margin-right: 24px;
+  width: 320px;
+}

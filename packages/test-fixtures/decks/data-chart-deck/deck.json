@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "0.1.0",
+  "appVersion": "0.1.0",
+  "id": "compiler_data_chart_deck",
+  "title": "Data Chart Deck",
+  "language": "en-US",
+  "aspectRatio": "16:9",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "safeArea": {
+    "top": 72,
+    "right": 96,
+    "bottom": 72,
+    "left": 96
+  },
+  "theme": {
+    "css": "theme/theme.css"
+  },
+  "slides": [
+    {
+      "id": "001-chart",
+      "title": "KPI Snapshot",
+      "source": "slides/001-chart.html",
+      "notes": "notes/001-chart.md",
+      "durationSec": 70,
+      "kind": "data",
+      "status": "ready"
+    },
+    {
+      "id": "002-table",
+      "title": "Quarter Table",
+      "source": "slides/002-table.html",
+      "notes": "notes/002-table.md",
+      "durationSec": 80,
+      "kind": "data",
+      "status": "ready"
+    }
+  ],
+  "export": {
+    "pdf": true,
+    "html": true,
+    "deckpkg": true,
+    "thumbnails": true,
+    "speakerNotes": true
+  }
+}

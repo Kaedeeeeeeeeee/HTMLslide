@@ -1,0 +1,29 @@
+:root {
+  --deck-accent: #4f46e5;
+}
+
+.theme-slide {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  padding: 96px;
+}
+
+.theme-slide--light {
+  background: #f9fafb;
+  color: #111827;
+}
+
+.theme-slide--dark {
+  background: #111827;
+  color: #f9fafb;
+}
+
+.theme-slide--report {
+  background: #f8fafc url("../assets/theme-pattern.svg") right bottom / 240px 240px no-repeat;
+  color: #111827;
+}
+
+.theme-slide h1 {
+  border-bottom: 12px solid var(--deck-accent);
+  font-size: 86px;
+  margin: 0 0 36px;
+}

@@ -1,0 +1,7 @@
+{
+  "quarters": [
+    { "quarter": "Q1", "pdf": 82, "png": 88, "deckpkg": 90 },
+    { "quarter": "Q2", "pdf": 94, "png": 96, "deckpkg": 97 },
+    { "quarter": "Q3", "pdf": 88, "png": 91, "deckpkg": 92 }
+  ]
+}

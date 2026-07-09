@@ -1,0 +1,58 @@
+{
+  "schemaVersion": "0.1.0",
+  "appVersion": "0.1.0",
+  "id": "compiler_multi_theme_deck",
+  "title": "Multi Theme Deck",
+  "language": "en-US",
+  "aspectRatio": "16:9",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "safeArea": {
+    "top": 72,
+    "right": 96,
+    "bottom": 72,
+    "left": 96
+  },
+  "theme": {
+    "css": "theme/theme.css",
+    "tokens": "theme/tokens.json"
+  },
+  "slides": [
+    {
+      "id": "001-light",
+      "title": "Light System",
+      "source": "slides/001-light.html",
+      "notes": "notes/001-light.md",
+      "durationSec": 60,
+      "kind": "content",
+      "status": "ready"
+    },
+    {
+      "id": "002-dark",
+      "title": "Dark System",
+      "source": "slides/002-dark.html",
+      "notes": "notes/002-dark.md",
+      "durationSec": 60,
+      "kind": "content",
+      "status": "ready"
+    },
+    {
+      "id": "003-report",
+      "title": "Report System",
+      "source": "slides/003-report.html",
+      "notes": "notes/003-report.md",
+      "durationSec": 75,
+      "kind": "data",
+      "status": "ready"
+    }
+  ],
+  "export": {
+    "pdf": true,
+    "html": true,
+    "deckpkg": true,
+    "thumbnails": true,
+    "speakerNotes": true
+  }
+}

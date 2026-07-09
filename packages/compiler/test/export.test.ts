@@ -31,16 +31,36 @@ type DeckJson = {
   }>;
 };
 
+type CompilerRegressionFixture = {
+  name: string;
+  expectedSlideCount: number;
+};
+
 const testDir = path.dirname(fileURLToPath(import.meta.url));
-const goldenFixturePath = path.resolve(testDir, "../../test-fixtures/decks/golden-export-basic");
-const goldenOutputPath = path.resolve(testDir, "goldens/golden-export-basic");
+const fixtureRootPath = path.resolve(testDir, "../../test-fixtures/decks");
+const goldenOutputRootPath = path.resolve(testDir, "goldens");
+const basicFixtureName = "golden-export-basic";
 const visualDiffOutputPath = path.resolve(testDir, "../../../dist/visual-regression/compiler");
 const fallbackThumbnailDiffThreshold = 0;
+const compilerRegressionFixtures = [
+  { name: "minimal-deck", expectedSlideCount: 1 },
+  { name: "text-heavy-deck", expectedSlideCount: 2 },
+  { name: "data-chart-deck", expectedSlideCount: 2 },
+  { name: "image-heavy-deck", expectedSlideCount: 2 },
+  { name: "notes-deck", expectedSlideCount: 2 },
+  { name: "multi-theme-deck", expectedSlideCount: 3 }
+] satisfies CompilerRegressionFixture[];
+const visualGoldenFixtures = [
+  { name: basicFixtureName, expectedSlideCount: 2 },
+  ...compilerRegressionFixtures
+] satisfies CompilerRegressionFixture[];
 
-const copyGoldenFixture = async (): Promise<{ root: string; projectPath: string; project: CompilerProjectInput }> => {
+const copyCompilerFixture = async (
+  fixtureName: string
+): Promise<{ root: string; projectPath: string; project: CompilerProjectInput }> => {
   const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-export-"));
-  const projectPath = path.join(root, "golden-export-basic");
-  await cp(goldenFixturePath, projectPath, { recursive: true });
+  const projectPath = path.join(root, fixtureName);
+  await cp(path.join(fixtureRootPath, fixtureName), projectPath, { recursive: true });
   return {
     root,
     projectPath,
@@ -87,21 +107,22 @@ const artifactHashes = async (project: CompilerProjectInput) => {
   expect(exported.artifacts.html).toBeTruthy();
   expect(exported.artifacts.deckpkg).toBeTruthy();
   expect(exported.artifacts.notes).toBeTruthy();
-  expect(exported.artifacts.thumbnails).toHaveLength(2);
+  expect(exported.artifacts.thumbnails).toHaveLength(project.slides.length);
 
   return {
     pdf: sha256(await readFile(exported.artifacts.pdf!)),
     html: sha256(await readFile(exported.artifacts.html!, "utf8")),
     deckpkg: sha256(await readFile(exported.artifacts.deckpkg!)),
     notes: sha256(await readFile(exported.artifacts.notes!, "utf8")),
-    firstThumbnail: sha256(await readFile(exported.artifacts.thumbnails![0]!)),
-    secondThumbnail: sha256(await readFile(exported.artifacts.thumbnails![1]!))
+    thumbnails: await Promise.all((exported.artifacts.thumbnails ?? []).map(async (thumbnailPath) =>
+      sha256(await readFile(thumbnailPath))
+    ))
   };
 };
 
 describe("exportDeck", () => {
   it("writes verifiable HTML, PDF, notes, thumbnails, and deckpkg artifacts", async () => {
-    const { root, projectPath, project } = await copyGoldenFixture();
+    const { root, projectPath, project } = await copyCompilerFixture(basicFixtureName);
     try {
       const exported = await exportDeck(project);
 
@@ -225,19 +246,76 @@ describe("exportDeck", () => {
     });
   });
 
-  it("matches golden fallback thumbnail PNGs", async () => {
-    const { root, project } = await copyGoldenFixture();
+  it.each(compilerRegressionFixtures)("exports compiler regression fixture $name", async ({ name, expectedSlideCount }) => {
+    const { root, project, projectPath } = await copyCompilerFixture(name);
+    try {
+      const exported = await exportDeck(project);
+      expect(exported.verification).toEqual({
+        expectedPageCount: expectedSlideCount,
+        pdfPageCount: expectedSlideCount,
+        pdfPageCountMatches: true
+      });
+      expect(exported.artifacts.pdf).toBeTruthy();
+      expect(exported.artifacts.html).toBeTruthy();
+      expect(exported.artifacts.deckpkg).toBeTruthy();
+      expect(exported.artifacts.notes).toBeTruthy();
+      expect(exported.artifacts.thumbnails).toHaveLength(expectedSlideCount);
+      expect(exported.artifacts.thumbnailCache).toHaveLength(expectedSlideCount);
+      expect(await readPdfPageCount(exported.artifacts.pdf!)).toBe(expectedSlideCount);
+
+      const notes = JSON.parse(await readFile(exported.artifacts.notes!, "utf8"));
+      expect(notes.slideCount).toBe(expectedSlideCount);
+      expect(notes.slides.map((slide: { pdfPage: number }) => slide.pdfPage)).toEqual(
+        Array.from({ length: expectedSlideCount }, (_value, index) => index + 1)
+      );
+      expect(notes.slides.map((slide: { id: string; notesPath: string | null; hasNotes: boolean }) => ({
+        hasNotes: slide.hasNotes,
+        id: slide.id,
+        notesPath: slide.notesPath
+      }))).toEqual(project.slides.map((slide) => ({
+        hasNotes: slide.notesPath !== undefined,
+        id: slide.id,
+        notesPath: slide.notesPath ?? null
+      })));
+
+      const deckpkg = await JSZip.loadAsync(await readFile(exported.artifacts.deckpkg!));
+      const manifest = JSON.parse(await zipText(deckpkg, "manifest.json"));
+      expect(manifest.slideCount).toBe(expectedSlideCount);
+      expect(manifest.pageCount).toBe(expectedSlideCount);
+      expect(manifest.slides.map((slide: { id: string }) => slide.id)).toEqual(
+        project.slides.map((slide) => slide.id)
+      );
+      expect(manifest.slides.map((slide: { id: string; notes: string | null }) => ({
+        id: slide.id,
+        notes: slide.notes
+      }))).toEqual(project.slides.map((slide) => ({
+        id: slide.id,
+        notes: slide.notesPath ?? null
+      })));
+
+      for (const slide of project.slides) {
+        const thumbnailPath = path.join(projectPath, "exports", "thumbnails", `${slide.id}.png`);
+        expect(readPngSize(await readFile(thumbnailPath))).toEqual({ width: 960, height: 540 });
+        expect(readPngSize(await zipBytes(deckpkg, `thumbnails/${slide.id}.png`))).toEqual({ width: 960, height: 540 });
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(visualGoldenFixtures)("matches golden fallback thumbnail PNGs for $name", async ({ name }) => {
+    const { root, project } = await copyCompilerFixture(name);
     try {
       await rm(visualDiffOutputPath, { recursive: true, force: true });
       const exported = await exportDeck(project);
-      expect(exported.artifacts.thumbnails).toHaveLength(2);
+      expect(exported.artifacts.thumbnails).toHaveLength(project.slides.length);
 
       for (const thumbnailPath of exported.artifacts.thumbnails ?? []) {
         const result = await comparePngWithGolden({
           actualPath: thumbnailPath,
-          goldenPath: path.join(goldenOutputPath, "thumbnails", path.basename(thumbnailPath)),
+          goldenPath: path.join(goldenOutputRootPath, name, "thumbnails", path.basename(thumbnailPath)),
           artifactDir: visualDiffOutputPath,
-          artifactName: path.basename(thumbnailPath, ".png"),
+          artifactName: `${name}-${path.basename(thumbnailPath, ".png")}`,
           maxDiffRatio: fallbackThumbnailDiffThreshold
         });
         expect({
@@ -256,8 +334,8 @@ describe("exportDeck", () => {
     try {
       const artifactDir = path.join(root, "artifacts");
       const result = await comparePngWithGolden({
-        actualPath: path.join(goldenOutputPath, "thumbnails", "001-title.png"),
-        goldenPath: path.join(goldenOutputPath, "thumbnails", "002-artifacts.png"),
+        actualPath: path.join(goldenOutputRootPath, basicFixtureName, "thumbnails", "001-title.png"),
+        goldenPath: path.join(goldenOutputRootPath, basicFixtureName, "thumbnails", "002-artifacts.png"),
         artifactDir,
         artifactName: "thumbnail-mismatch",
         maxDiffRatio: 0
@@ -273,8 +351,8 @@ describe("exportDeck", () => {
     }
   });
 
-  it("is deterministic across repeated exports of the same project", async () => {
-    const { root, project } = await copyGoldenFixture();
+  it.each(visualGoldenFixtures)("is deterministic across repeated exports of $name", async ({ name }) => {
+    const { root, project } = await copyCompilerFixture(name);
     try {
       const first = await artifactHashes(project);
       const second = await artifactHashes(project);

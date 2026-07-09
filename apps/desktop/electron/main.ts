@@ -75,6 +75,7 @@ const configuredWorkspacePath = (): string =>
 const e2eCredentialStore = process.env.HTMLSLIDE_E2E_CREDENTIAL_STORE === "memory"
   ? createMemoryCredentialStore()
   : undefined;
+const forceE2eRehearsalPresenter = process.env.HTMLSLIDE_E2E_FORCE_REHEARSAL_PRESENTER === "1";
 
 function createMemoryCredentialStore(): DesktopCredentialStore {
   const entries = new Map<string, string>();
@@ -679,7 +680,15 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle("htmlslide:load-presenter-deck", async (_event, projectPath: string) =>
-    loadDesktopPresenterDeck(projectPath, { cliRuntime })
+    forceE2eRehearsalPresenter
+      ? {
+          ok: false,
+          source: "missing",
+          origin: "project-export",
+          projectPath,
+          error: "E2E forced rehearsal presenter fallback."
+        }
+      : loadDesktopPresenterDeck(projectPath, { cliRuntime })
   );
 
   ipcMain.handle("htmlslide:load-presenter-deckpkg", async (_event, deckpkgPath: string) =>

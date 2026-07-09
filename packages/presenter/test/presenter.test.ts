@@ -31,7 +31,8 @@ import {
   createRehearsalPresenterDeck,
   getPresenterKeyboardAction as getSessionKeyboardAction,
   getPresenterSessionView as getSessionPresenterView,
-  parseDurationLabel
+  parseDurationLabel,
+  PRESENTER_KEYBOARD_CONTROLS
 } from "../src/session";
 
 const ZIP_DATE = new Date("2000-01-01T00:00:00.000Z");
@@ -288,6 +289,50 @@ describe("@htmlslide/presenter session helpers", () => {
       expect(getCurrentSlide(deckPackage, state).id).toBe("001-title");
     });
   });
+
+  it("keeps every documented keyboard shortcut mapped to a supported action", async () => {
+    await withFixtureDeckPackage(async (deckpkgPath) => {
+      const deckPackage = await readDeckPackage(deckpkgPath);
+      let state = createPresenterSession(deckPackage, { nowMs: 0 });
+
+      for (const control of PRESENTER_KEYBOARD_CONTROLS) {
+        for (const key of control.keys) {
+          expect(getSessionKeyboardAction({ key })).toBe(control.action);
+          expect(getPresenterKeyboardAction(key)).toBe(control.action);
+        }
+      }
+
+      expect(getSessionKeyboardAction({ key: "Spacebar" })).toBe("next");
+      expect(getSessionKeyboardAction({ key: "Esc" })).toBe("exit");
+      expect(getSessionKeyboardAction({ key: "Unknown" })).toBeUndefined();
+
+      state = applyPresenterKeyboardAction(deckPackage, state, "next");
+      expect(getPresenterSessionView(deckPackage, state, 1_000).currentSlide.id).toBe("002-plan");
+
+      state = applyPresenterKeyboardAction(deckPackage, state, "previous");
+      expect(getPresenterSessionView(deckPackage, state, 2_000).currentSlide.id).toBe("001-title");
+
+      state = applyPresenterKeyboardAction(deckPackage, state, "toggle-white-screen");
+      expect(getPresenterSessionView(deckPackage, state, 3_000).screen).toBe("white");
+      state = applyPresenterKeyboardAction(deckPackage, state, "toggle-white-screen");
+      expect(getPresenterSessionView(deckPackage, state, 4_000).screen).toBe("normal");
+
+      state = applyPresenterKeyboardAction(deckPackage, state, "toggle-black-screen");
+      expect(getPresenterSessionView(deckPackage, state, 5_000).screen).toBe("black");
+      state = applyPresenterKeyboardAction(deckPackage, state, "toggle-black-screen");
+      expect(getPresenterSessionView(deckPackage, state, 6_000).screen).toBe("normal");
+
+      state = applyPresenterKeyboardAction(deckPackage, state, "decrease-notes-font-size");
+      expect(getPresenterSessionView(deckPackage, state, 7_000).notesFontSizePx).toBe(20);
+      state = applyPresenterKeyboardAction(deckPackage, state, "increase-notes-font-size");
+      expect(getPresenterSessionView(deckPackage, state, 8_000).notesFontSizePx).toBe(22);
+
+      const unchangedByFullscreen = applyPresenterKeyboardAction(deckPackage, state, "fullscreen");
+      const unchangedByExit = applyPresenterKeyboardAction(deckPackage, state, "exit");
+      expect(unchangedByFullscreen).toBe(state);
+      expect(unchangedByExit).toBe(state);
+    });
+  });
 });
 
 describe("@htmlslide/presenter rehearsal deck helpers", () => {
@@ -354,5 +399,57 @@ describe("@htmlslide/presenter rehearsal deck helpers", () => {
     expect(view.timerStatus).toBe("paused");
     expect(view.elapsedMs).toBe(7_000);
     expect(view.remainingMs).toBe(23_000);
+  });
+
+  it("starts single-screen rehearsal mode from a chosen slide with notes and timer bounds", () => {
+    const deck = createRehearsalPresenterDeck({
+      title: "Single Screen Rehearsal",
+      notesFontSizePx: 18,
+      timer: false,
+      slides: [
+        {
+          id: "intro",
+          title: "Intro",
+          duration: "0:10",
+          notesMarkdown: "Open in single-screen rehearsal."
+        },
+        {
+          id: "demo",
+          title: "Demo",
+          duration: "0:20",
+          notesMarkdown: "Walk through the local preview."
+        }
+      ]
+    });
+
+    let state = createSessionPresenterSession(deck, {
+      initialSlideId: "demo",
+      nowMs: 1_000
+    });
+    let view = getSessionPresenterView(deck, state, 6_000);
+
+    expect(deck.settings.timer).toBe(false);
+    expect(view.mode).toBe("rehearsal");
+    expect(view.timerStatus).toBe("paused");
+    expect(view.currentSlide.id).toBe("demo");
+    expect(view.currentSlide.notesMarkdown).toBe("Walk through the local preview.");
+    expect(view.previousSlide?.id).toBe("intro");
+    expect(view.nextSlide).toBeNull();
+    expect(view.totalDurationMs).toBe(30_000);
+    expect(view.elapsedMs).toBe(0);
+    expect(view.remainingMs).toBe(30_000);
+    expect(view.notesFontSizePx).toBe(18);
+
+    state = applySessionKeyboardAction(deck, state, "previous");
+    state = applySessionKeyboardAction(deck, state, "pause-resume-timer", { nowMs: 6_000 });
+    view = getSessionPresenterView(deck, state, 11_000);
+
+    expect(view.currentSlide.id).toBe("intro");
+    expect(view.timerStatus).toBe("running");
+    expect(view.elapsedMs).toBe(5_000);
+    expect(view.remainingMs).toBe(25_000);
+
+    state = applySessionKeyboardAction(deck, state, "next");
+    expect(getSessionPresenterView(deck, state, 12_000).currentSlide.id).toBe("demo");
   });
 });

@@ -546,6 +546,7 @@ test.describe("HTMLslide desktop smoke", () => {
     const presenter = page.getByLabel("Presenter rehearsal mode");
     const currentSlideHeading = presenter.locator(".presenter-current .hs-panel-header h2");
     const screenCover = presenter.locator(".presenter-screen-cover");
+    const presenterNotes = presenter.locator(".presenter-notes");
     await expect(presenter).toBeVisible();
     await expect(presenter.getByText("Deck Package Presenter / Rehearsal Mode")).toBeVisible();
     await expect(presenter.getByText("1 / 2")).toBeVisible();
@@ -577,6 +578,24 @@ test.describe("HTMLslide desktop smoke", () => {
 
     await page.keyboard.press("T");
     await expect(presenter.getByText("paused")).toBeVisible();
+    await page.keyboard.press("T");
+    await expect(presenter.getByText("running")).toBeVisible();
+
+    await page.keyboard.press("Space");
+    await expect(presenter.getByText("2 / 2")).toBeVisible();
+    await expect(currentSlideHeading).toHaveText("Project structure");
+
+    await presenter.getByLabel("Jump to slide").selectOption("0");
+    await expect(presenter.getByText("1 / 2")).toBeVisible();
+    await expect(currentSlideHeading).toHaveText("HTML as source");
+
+    const initialNotesFontSize = await presenterNotes.evaluate((element) => window.getComputedStyle(element).fontSize);
+    await page.keyboard.press("+");
+    await expect.poll(
+      async () => presenterNotes.evaluate((element) => window.getComputedStyle(element).fontSize)
+    ).not.toBe(initialNotesFontSize);
+    await page.keyboard.press("-");
+    await expect(presenterNotes).toHaveCSS("font-size", initialNotesFontSize);
 
     await page.keyboard.press("B");
     await expect(screenCover).toHaveText("Black screen");
@@ -601,6 +620,71 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(presenter).toBeHidden();
     await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible();
 
+    await expectNoFrameworkOverlay(page);
+    expect(browserErrors).toEqual([]);
+  });
+
+  test("opens single-screen rehearsal presenter when deckpkg is unavailable", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
+    const homeDir = path.join(tempRoot, "home");
+    const userDataDir = path.join(tempRoot, "user-data");
+    const workspaceDir = path.join(tempRoot, "workspace");
+    const projectPath = path.join(tempRoot, "valid-full");
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(userDataDir, { recursive: true });
+    await mkdir(workspaceDir, { recursive: true });
+    await cp(sampleProjectPath, projectPath, { recursive: true });
+
+    electronApp = await electron.launch({
+      executablePath: electronExecutable,
+      args: [electronMain],
+      env: {
+        ...process.env,
+        ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+        HOME: homeDir,
+        HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir,
+        HTMLSLIDE_E2E_FORCE_REHEARSAL_PRESENTER: "1",
+        HTMLSLIDE_E2E_OPEN_PROJECT_PATH: projectPath,
+        HTMLSLIDE_USER_DATA_DIR: userDataDir
+      }
+    });
+
+    const page = await electronApp.firstWindow();
+    const browserErrors = collectBrowserErrors(page);
+    await page.waitForLoadState("domcontentloaded");
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await page.locator(".library-main").getByRole("button", { name: "Open Folder", exact: true }).first().click();
+    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible({
+      timeout: 30_000
+    });
+
+    await page.locator(".workspace-toolbar").getByRole("button", { name: "Present", exact: true }).click();
+    const presenter = page.getByLabel("Presenter rehearsal mode");
+    const currentSlideHeading = presenter.locator(".presenter-current .hs-panel-header h2");
+    await expect(presenter).toBeVisible({ timeout: 30_000 });
+    await expect(presenter.getByText("Windowed Presenter / Rehearsal Mode")).toBeVisible();
+    await expect(presenter.getByText("1 / 2")).toBeVisible();
+    await expect(currentSlideHeading).toHaveText("HTML as source");
+    await expect(presenter.locator(".presenter-notes").getByText("今天我们把 HTML 作为源码")).toBeVisible();
+    await expect(presenter.getByLabel("Presenter progress")).toBeVisible();
+
+    await presenter.getByRole("button", { name: "Next slide", exact: true }).click();
+    await expect(presenter.getByText("2 / 2")).toBeVisible();
+    await expect(currentSlideHeading).toHaveText("Project structure");
+    await expect(presenter.locator(".presenter-notes").getByText("Project folders stay readable")).toBeVisible();
+
+    await presenter.getByRole("button", { name: "Previous slide", exact: true }).click();
+    await expect(presenter.getByText("1 / 2")).toBeVisible();
+    await expect(currentSlideHeading).toHaveText("HTML as source");
+
+    await presenter.getByRole("button", { name: "Pause timer", exact: true }).click();
+    await expect(presenter.getByText("paused")).toBeVisible();
+    await presenter.getByRole("button", { name: "Resume timer", exact: true }).click();
+    await expect(presenter.getByText("running")).toBeVisible();
+
+    await presenter.locator(".presenter-current").click();
+    await page.keyboard.press("Escape");
+    await expect(presenter).toBeHidden();
     await expectNoFrameworkOverlay(page);
     expect(browserErrors).toEqual([]);
   });

@@ -49,6 +49,10 @@ describe("release evidence scripts", () => {
     expect(checklist).toContain("| CI run | https://github.test/ci |");
     expect(checklist).toContain("| Package workflow run | https://github.test/package |");
     expect(checklist).toContain("| DMG / artifact URL | https://example.test/htmlslide-alpha.dmg |");
+    expect(checklist).toContain("pnpm docs:build");
+    expect(checklist).toContain("pnpm version:check");
+    expect(checklist).toContain("pnpm security:check");
+    expect(checklist).toContain("pnpm e2e:desktop:a11y");
     expect(checklist).toContain("Validate Real Claude/Codex/Gemini Claim");
     expect(checklist).toContain("If direct support is not claimed, mark N/A");
     expect(checklist).toContain("htmlslide agent validate-provider");

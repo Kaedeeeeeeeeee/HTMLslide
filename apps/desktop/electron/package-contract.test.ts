@@ -157,6 +157,9 @@ describe("macOS alpha packaging contract", () => {
 
   it("keeps the signed release workflow gated, notarized, and release-publishing", async () => {
     const workflow = await readText(".github/workflows/release-macos.yml");
+    const installDependenciesIndex = workflow.indexOf("run: pnpm install --frozen-lockfile");
+    const installChromiumIndex = workflow.indexOf("run: pnpm exec playwright install chromium");
+    const testIndex = workflow.indexOf("run: pnpm test");
 
     expect(workflow).toContain("runs-on: macos-latest");
     expect(workflow).toContain("fetch-depth: 0");
@@ -165,8 +168,12 @@ describe("macOS alpha packaging contract", () => {
     expect(workflow).toContain("version:check");
     expect(workflow).toContain("pnpm docs:build");
     expect(workflow).toContain("pnpm version:check");
+    expect(installChromiumIndex).toBeGreaterThan(installDependenciesIndex);
+    expect(testIndex).toBeGreaterThan(installChromiumIndex);
     expect(workflow).toContain("package:release:macos");
     expect(workflow).toContain("release:notes");
+    expect(workflow).toContain("release_tag:");
+    expect(workflow).toContain("WORKFLOW_RELEASE_TAG: ${{ github.event.inputs.release_tag || '' }}");
     expect(workflow).toContain("APPLE_DEVELOPER_ID_APPLICATION");
     expect(workflow).toContain("APPLE_DEVELOPER_ID_CERTIFICATE_BASE64");
     expect(workflow).toContain("APPLE_APP_SPECIFIC_PASSWORD");
@@ -182,6 +189,7 @@ describe("macOS alpha packaging contract", () => {
     expect(workflow).toContain("HTMLslide-release-rc-acceptance.md");
     expect(workflow).toContain("signed-notarized");
     expect(workflow).toContain("release-artifacts/RELEASE_NOTES.md");
+    expect(workflow).toContain("release_tag=\"manual-${GITHUB_RUN_NUMBER}\"");
     expect(workflow).toContain("gh release create \"$tag\" --title \"HTMLslide $tag\" --notes-file release-artifacts/RELEASE_NOTES.md");
     expect(workflow).toContain("gh release edit \"$tag\" --title \"HTMLslide $tag\" --notes-file release-artifacts/RELEASE_NOTES.md");
     expect(workflow).toContain("name: htmlslide-signed-notarized-${{ github.run_number }}");

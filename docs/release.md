@@ -12,6 +12,7 @@ A production release uses the `Release macOS` GitHub Actions workflow and `pnpm 
 
 The signed workflow writes `signed-notarized` DMG and manifest artifacts, uploads them as workflow artifacts, and attaches them to the matching GitHub Release when run from a `v*` tag.
 Tag releases generate `RELEASE_NOTES.md` from git history with `pnpm release:notes` and use that file as the GitHub Release body.
+Manual signed workflow runs can pass a `release_tag` input for RC checklist metadata. If omitted, the checklist uses `manual-<run_number>` so the artifact evidence still points to a concrete run.
 
 ## GitHub Pages docs
 

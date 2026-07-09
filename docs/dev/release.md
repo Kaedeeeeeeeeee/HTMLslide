@@ -99,8 +99,9 @@ The release script uses `build/package/release-macos.json` and writes:
 - `dist/release/HTMLslide-<version>-signed-notarized-<arch>.dmg`
 - `dist/release/HTMLslide-<version>-signed-notarized-<arch>.json`
 
-The release workflow also writes `release-artifacts/RELEASE_NOTES.md` for tag builds and uses it as the GitHub Release body. Run the same generator locally when preparing a candidate:
 The release manifest uses the same per-artifact filename, byte size, and SHA-256 metadata as alpha builds.
+Manual `workflow_dispatch` runs can pass the optional `release_tag` input to label the uploaded RC checklist. Tag-triggered runs always use the pushed tag. Manual runs without an input use `manual-<run_number>` so checklist metadata remains run-bound instead of `TODO`.
+The release workflow also writes `release-artifacts/RELEASE_NOTES.md` for tag builds and uses it as the GitHub Release body. Run the same generator locally when preparing a candidate:
 
 ```bash
 pnpm release:notes -- --tag vX.Y.Z --output dist/release/RELEASE_NOTES.md

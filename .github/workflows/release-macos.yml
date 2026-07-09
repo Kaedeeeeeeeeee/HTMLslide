@@ -2,6 +2,11 @@ name: Release macOS
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional release tag or RC label for acceptance checklist metadata."
+        required: false
+        type: string
   push:
     tags:
       - "v*"
@@ -87,6 +92,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install chromium
 
       - name: Check public docs
         run: pnpm docs:check
@@ -207,6 +215,8 @@ jobs:
 
       - name: Collect release artifacts
         shell: bash
+        env:
+          WORKFLOW_RELEASE_TAG: ${{ github.event.inputs.release_tag || '' }}
         run: |
           set -euo pipefail
 
@@ -224,9 +234,12 @@ jobs:
           done
 
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          release_tag="TODO"
+          release_tag="$WORKFLOW_RELEASE_TAG"
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             release_tag="${GITHUB_REF_NAME}"
+          fi
+          if [[ -z "$release_tag" ]]; then
+            release_tag="manual-${GITHUB_RUN_NUMBER}"
           fi
           pnpm rc:checklist -- \
             --channel release \

@@ -103,12 +103,16 @@ export function renderChecklist(metadata) {
 ## Automated Gates
 
 - [ ] pnpm docs:check
+- [ ] pnpm docs:build
+- [ ] pnpm version:check
 - [ ] pnpm lint
 - [ ] pnpm typecheck
 - [ ] pnpm test
 - [ ] pnpm perf:smoke
+- [ ] pnpm security:check
 - [ ] pnpm build
 - [ ] pnpm e2e:desktop
+- [ ] pnpm e2e:desktop:a11y
 - [ ] Package workflow completed for this commit/tag.
 - [ ] Package smoke completed against the exact artifact under test.${automatedReleaseGate}
 

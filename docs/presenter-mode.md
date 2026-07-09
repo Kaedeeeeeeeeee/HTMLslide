@@ -16,4 +16,4 @@ Physical dual-screen behavior still needs manual validation for each release can
 
 ## deckpkg
 
-Standalone `.deckpkg` files can open directly into Presenter Mode. Package-only visual rendering remains an area to harden before claiming final presentation parity.
+Standalone `.deckpkg` files can open directly into Presenter Mode. Package-only sessions render validated PNG thumbnails in Presenter and Audience windows; full package HTML/PDF page rendering still needs hardening before claiming final presentation parity.

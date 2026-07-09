@@ -511,22 +511,25 @@ function PresenterMode({
   );
   const currentSlidePreview = findSlidePreview(slides, view.currentSlide.id);
   const nextSlidePreview = view.nextSlide ? findSlidePreview(slides, view.nextSlide.id) : undefined;
+  const currentSlideSourceHtml = currentSlidePreview?.html?.trim() ? currentSlidePreview.html : undefined;
   const audiencePayload = useMemo<DesktopAudienceSlidePayload>(() => ({
     accent: currentSlidePreview?.accent,
     deckTitle: deck.title,
+    imageDataUrl: currentSlideSourceHtml ? undefined : view.currentSlide.thumbnail.dataUrl,
     screen: view.screen,
     section: currentSlidePreview?.section,
     slideCount: view.slideCount,
     slideId: view.currentSlide.id,
     slideNumber: view.slideNumber,
     slideTitle: view.currentSlide.title,
-    sourceHtml: currentSlidePreview?.html
+    sourceHtml: currentSlideSourceHtml
   }), [
     currentSlidePreview?.accent,
-    currentSlidePreview?.html,
     currentSlidePreview?.section,
+    currentSlideSourceHtml,
     deck.title,
     view.currentSlide.id,
+    view.currentSlide.thumbnail.dataUrl,
     view.currentSlide.title,
     view.screen,
     view.slideCount,
@@ -963,6 +966,8 @@ function PresenterSlidePreview({
 }): ReactNode {
   const sourceHtml = slide?.html?.trim() ? slide.html : undefined;
   const hasSourcePreview = variant === "current" && sourceHtml !== undefined;
+  const thumbnailDataUrl = presenterSlide.thumbnail.dataUrl;
+  const hasImagePreview = !hasSourcePreview && thumbnailDataUrl !== undefined;
   const accent = slide?.accent ?? "#7da2ff";
 
   return (
@@ -970,7 +975,11 @@ function PresenterSlidePreview({
       aria-label={`${presenterSlide.title} presenter preview`}
       className={[
         "presenter-slide-preview",
-        hasSourcePreview ? "slide-canvas slide-canvas--source" : "presenter-slide-preview--fallback",
+        hasSourcePreview
+          ? "slide-canvas slide-canvas--source"
+          : hasImagePreview
+            ? "presenter-slide-preview--visual"
+            : "presenter-slide-preview--fallback",
         variant === "next" ? "presenter-slide-preview--next" : ""
       ].filter(Boolean).join(" ")}
       style={{ "--slide-accent": accent } as CSSProperties}
@@ -979,6 +988,12 @@ function PresenterSlidePreview({
         <div
           className="slide-fragment-preview"
           dangerouslySetInnerHTML={{ __html: sourceHtml ?? "" }}
+        />
+      ) : hasImagePreview ? (
+        <img
+          alt={`${presenterSlide.title} visual preview`}
+          className="presenter-slide-preview__image"
+          src={thumbnailDataUrl}
         />
       ) : (
         <>

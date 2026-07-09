@@ -104,6 +104,7 @@ type DesktopAudienceSlidePayload = {
   slideCount: number;
   screen: "normal" | "black" | "white";
   sourceHtml?: string;
+  imageDataUrl?: string;
   section?: string;
   accent?: string;
 };
@@ -298,6 +299,7 @@ function audienceSlideDataUrl(payload: DesktopAudienceSlidePayload): string {
 
 function audienceSlideHtml(payload: DesktopAudienceSlidePayload): string {
   const safeSourceHtml = payload.sourceHtml ? sanitizeAudienceSlideHtml(payload.sourceHtml) : "";
+  const safeImageDataUrl = safeAudienceImageDataUrl(payload.imageDataUrl);
   const screenLabel = payload.screen === "black" ? "Black screen" : payload.screen === "white" ? "White screen" : "";
   return `<!doctype html>
 <html lang="en">
@@ -343,6 +345,17 @@ function audienceSlideHtml(payload: DesktopAudienceSlidePayload): string {
       width: 100%;
       height: 100%;
       margin: 0;
+    }
+    .audience-slide--image {
+      display: grid;
+      place-items: center;
+      background: #050505;
+    }
+    .audience-slide--image img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
     }
     .audience-fallback {
       height: 100%;
@@ -397,7 +410,11 @@ function audienceSlideHtml(payload: DesktopAudienceSlidePayload): string {
 </head>
 <body>
   <main class="audience-stage" aria-label="HTMLslide audience window">
-    ${safeSourceHtml ? `<div class="audience-slide">${safeSourceHtml}</div>` : audienceFallbackHtml(payload)}
+    ${safeSourceHtml
+      ? `<div class="audience-slide">${safeSourceHtml}</div>`
+      : safeImageDataUrl
+        ? `<div class="audience-slide audience-slide--image"><img src="${safeImageDataUrl}" alt="${escapeHtml(payload.slideTitle)}" /></div>`
+        : audienceFallbackHtml(payload)}
     <div class="audience-cover">${escapeHtml(screenLabel)}</div>
     <div class="audience-meta">${payload.slideNumber} / ${payload.slideCount}</div>
   </main>
@@ -418,6 +435,13 @@ function sanitizeAudienceSlideHtml(value: string): string {
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/giu, "")
     .replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/giu, "")
     .replace(/javascript:/giu, "");
+}
+
+function safeAudienceImageDataUrl(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  return /^data:image\/png;base64,[a-z0-9+/=\s]+$/iu.test(value) ? value.replace(/\s+/gu, "") : undefined;
 }
 
 function escapeHtml(value: string): string {

@@ -28,6 +28,7 @@ export type PresenterThumbnail = {
   slideId: string;
   path: string;
   bytes: Uint8Array;
+  dataUrl?: string;
   size: DeckPackageViewport;
 };
 

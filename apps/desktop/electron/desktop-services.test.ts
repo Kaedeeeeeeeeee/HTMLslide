@@ -1984,6 +1984,7 @@ function requireArg(args, name) {
     expect(result.ok && result.deck.slides).toHaveLength(1);
     expect(result.ok && result.deck.slides[0]?.notesMarkdown).toContain("Speaker note body.");
     expect(result.ok && result.deck.slides[0]?.thumbnail.bytes.byteLength).toBe(0);
+    expect(result.ok && result.deck.slides[0]?.thumbnail.dataUrl).toMatch(/^data:image\/png;base64,/u);
   });
 
   it("returns a missing result for a standalone deck package path that does not exist", async () => {

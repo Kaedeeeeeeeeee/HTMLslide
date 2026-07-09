@@ -535,11 +535,25 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(currentSlideHeading).toHaveText("HTML as source");
     await expect(presenter.getByRole("heading", { name: "Speaker Notes" })).toBeVisible();
     await expect(presenter.getByLabel("Presenter target display")).toBeVisible();
+    await expect(presenter.locator(".presenter-current .presenter-slide-preview__image")).toBeVisible();
     await expect(presenter.locator(".presenter-notes").getByText("今天我们把 HTML 作为源码")).toBeVisible();
+
+    const audiencePromise = electronApp.waitForEvent("window");
+    await presenter.getByRole("button", { name: "Open audience", exact: true }).click();
+    const audiencePage = await audiencePromise;
+    await audiencePage.waitForLoadState("domcontentloaded");
+    await expect(audiencePage.locator(".audience-slide--image img")).toBeVisible();
+    await expect(audiencePage.locator(".audience-meta")).toHaveText("1 / 2");
+    await page.bringToFront();
 
     await page.keyboard.press("ArrowRight");
     await expect(presenter.getByText("2 / 2")).toBeVisible();
     await expect(currentSlideHeading).toHaveText("Project structure");
+    await expect(presenter.locator(".presenter-current .presenter-slide-preview__image")).toBeVisible();
+    await expect(audiencePage.locator(".audience-slide--image img")).toBeVisible();
+    await expect(audiencePage.locator(".audience-meta")).toHaveText("2 / 2");
+
+    await audiencePage.close();
 
     await presenter.locator(".presenter-current").click();
     await page.keyboard.press("Escape");

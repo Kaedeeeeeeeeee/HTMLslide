@@ -2445,10 +2445,18 @@ function presenterDeckFromPackage(deckPackage: PresenterDeckPackage): PresenterD
       ...slide,
       thumbnail: {
         ...slide.thumbnail,
-        bytes: new Uint8Array()
+        bytes: new Uint8Array(),
+        dataUrl: presenterThumbnailDataUrl(slide.thumbnail.bytes)
       }
     }))
   };
+}
+
+function presenterThumbnailDataUrl(bytes: Uint8Array): string | undefined {
+  if (bytes.byteLength === 0) {
+    return undefined;
+  }
+  return `data:image/png;base64,${Buffer.from(bytes).toString("base64")}`;
 }
 
 async function hasMissingSlideFiles(projectPath: string, manifest: DeckManifest): Promise<boolean> {

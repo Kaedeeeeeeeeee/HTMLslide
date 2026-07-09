@@ -47,7 +47,7 @@ These gates are expected before each alpha candidate:
 | QA panel shows issues | Electron E2E covers failing check display. |
 | PDF page count is correct | Compiler tests cover PDF export metadata and page count. |
 | PNG thumbnails are produced | Compiler tests and export fixtures cover deterministic thumbnails. |
-| `deckpkg` can open | Presenter tests, Electron E2E, and package smoke cover package opening. |
+| `deckpkg` can open | Presenter tests, Electron E2E, and package smoke cover package opening through direct launch arguments, Electron `open-file` handling, and macOS LaunchServices `open -a` against the packaged app. |
 | Rehearsal mode works | Presenter tests and Electron E2E cover single-screen rehearsal. |
 | Fake external adapter automation | Agent adapter tests, desktop service tests, and Electron E2E cover saving a Generic command, running it from New Deck and opened-workspace paths, applying reported source writes, check/export gating, diff review, and checkpoint revert. |
 | Unit, CLI, compiler, Electron, and packaging tests pass | Covered by local commands and CI workflows. |
@@ -63,7 +63,7 @@ These items require human evidence for the exact artifact before an alpha build 
 | Real BYOK provider | At least one real provider account with `htmlslide agent validate-provider --json` evidence, test prompt, generated deck, check/export result, and secret-safety review. |
 | Real Claude, Codex, or Gemini claim | Detection plus a manually validated real integration path before support is claimed. |
 | Physical dual-screen presenter | HDMI, USB-C, or AirPlay presentation with speaker screen, audience window, navigation, timer, and sync evidence. |
-| Finder/LaunchServices deckpkg open | User-level double-click or `open` behavior against the installed app. |
+| Finder default deckpkg ownership | User-level double-click behavior against the installed app, confirming the temporary or release install is the default handler on the tester machine. |
 | Post-delete cleanup | Notes showing no unexpected files outside user data, chosen workspace, and intentionally installed CLI/skills artifacts. |
 
 Generate the evidence template with:

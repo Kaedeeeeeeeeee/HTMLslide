@@ -371,18 +371,89 @@ async function launchAppWithDeckPackage(appPath, smokeRoot) {
     ].filter(Boolean).join("\n"));
   }
 
-  const expectedDeckpkgPath = await realpath(deckpkgPath);
-  const actualDeckpkgPath = await realpath(String(marker.deckpkgPath));
-  const actualExpectedDeckpkgPath = await realpath(String(marker.expectedDeckpkgPath));
-  if (
-    marker.kind !== "deckpkg-open" ||
-    actualDeckpkgPath !== expectedDeckpkgPath ||
-    actualExpectedDeckpkgPath !== expectedDeckpkgPath ||
-    marker.title !== "Valid Full Deck" ||
-    marker.slideCount !== 2
-  ) {
-    fail(`Packaged deckpkg smoke marker did not match the expected deck: ${JSON.stringify(marker)}`);
+  await assertDeckPackageSmokeMarker(marker, deckpkgPath, "Packaged deckpkg argument");
+  return deckpkgPath;
+}
+
+async function openDeckPackageWithLaunchServices(appPath, deckpkgPath, smokeRoot) {
+  const smokeReadyFile = path.join(smokeRoot, "deckpkg-launchservices-open", "ready.json");
+  const smokeHome = path.join(smokeRoot, "deckpkg-launchservices-home");
+  const smokeWorkspace = path.join(smokeRoot, "deckpkg-launchservices-workspace");
+  const smokeUserData = path.join(smokeRoot, "deckpkg-launchservices-user-data");
+
+  await Promise.all([
+    mkdir(path.dirname(smokeReadyFile), { recursive: true }),
+    mkdir(smokeHome, { recursive: true }),
+    mkdir(smokeWorkspace, { recursive: true }),
+    mkdir(smokeUserData, { recursive: true })
+  ]);
+
+  const launchEnv = {
+    ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+    HOME: smokeHome,
+    HTMLSLIDE_CLI_TARGET_DIR: path.join(smokeRoot, "deckpkg-launchservices-first-run-bin"),
+    HTMLSLIDE_DEFAULT_WORKSPACE: smokeWorkspace,
+    HTMLSLIDE_HOME: path.join(smokeRoot, "deckpkg-launchservices-first-run-home"),
+    HTMLSLIDE_SMOKE_EXPECT_OPEN_DECKPKG_PATH: deckpkgPath,
+    HTMLSLIDE_SMOKE_QUIT_AFTER_READY: "1",
+    HTMLSLIDE_SMOKE_READY_FILE: smokeReadyFile,
+    HTMLSLIDE_USER_DATA_DIR: smokeUserData
+  };
+
+  const args = [
+    "-W",
+    "-n",
+    "-a",
+    appPath,
+    ...Object.entries(launchEnv).flatMap(([key, value]) => ["--env", `${key}=${value}`]),
+    deckpkgPath
+  ];
+
+  const child = spawn("open", args, {
+    cwd: path.dirname(appPath),
+    env: {
+      ...process.env,
+      ...launchEnv
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout?.on("data", (chunk) => {
+    stdout += String(chunk);
+  });
+  child.stderr?.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+
+  const exitCode = await new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      resolve("timeout");
+    }, 30_000);
+
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      resolve(error);
+    });
+
+    child.once("exit", (code, signal) => {
+      clearTimeout(timer);
+      resolve(signal ? `signal:${signal}` : code ?? 1);
+    });
+  });
+
+  const marker = existsSync(smokeReadyFile) ? JSON.parse(await readFile(smokeReadyFile, "utf8")) : undefined;
+  if (exitCode !== 0 || marker?.status !== "passed") {
+    fail([
+      `Packaged app did not open a deckpkg through LaunchServices successfully: ${String(exitCode)}`,
+      marker ? `Smoke marker: ${JSON.stringify(marker)}` : "",
+      stdout ? `stdout:\n${stdout}` : "",
+      stderr ? `stderr:\n${stderr}` : ""
+    ].filter(Boolean).join("\n"));
   }
+
+  await assertDeckPackageSmokeMarker(marker, deckpkgPath, "LaunchServices deckpkg open");
 }
 
 async function smokeFirstRunCliProvisioning(appPath, targetDir, htmlslideHome) {
@@ -448,6 +519,21 @@ function readJsonOutput(result, label) {
     return JSON.parse(result.stdout);
   } catch {
     fail(`${label} did not print valid JSON.\n${result.stdout}\n${result.stderr}`);
+  }
+}
+
+async function assertDeckPackageSmokeMarker(marker, deckpkgPath, label) {
+  const expectedDeckpkgPath = await realpath(deckpkgPath);
+  const actualDeckpkgPath = await realpath(String(marker.deckpkgPath));
+  const actualExpectedDeckpkgPath = await realpath(String(marker.expectedDeckpkgPath));
+  if (
+    marker.kind !== "deckpkg-open" ||
+    actualDeckpkgPath !== expectedDeckpkgPath ||
+    actualExpectedDeckpkgPath !== expectedDeckpkgPath ||
+    marker.title !== "Valid Full Deck" ||
+    marker.slideCount !== 2
+  ) {
+    fail(`${label} smoke marker did not match the expected deck: ${JSON.stringify(marker)}`);
   }
 }
 
@@ -594,7 +680,8 @@ async function main() {
     assertDeckPackageDocumentType(installedAppPath);
     const firstRunState = await launchAppOnce(installedAppPath, smokeRoot);
     const movedAppPath = await smokeMovedAppCliRepair(installedAppPath, smokeRoot, firstRunState);
-    await launchAppWithDeckPackage(movedAppPath, smokeRoot);
+    const deckpkgPath = await launchAppWithDeckPackage(movedAppPath, smokeRoot);
+    await openDeckPackageWithLaunchServices(movedAppPath, deckpkgPath, smokeRoot);
     await smokeCliShim(movedAppPath, smokeRoot);
 
     process.stdout.write("Alpha package smoke passed.\n");

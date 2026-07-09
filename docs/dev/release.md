@@ -53,7 +53,7 @@ After packaging, run the package smoke:
 pnpm smoke:package:alpha
 ```
 
-The smoke extracts the ZIP, verifies it contains `HTMLslide.app`, checks the `.deckpkg` document type and packaged CLI runtime, installs a temporary shim from the ZIP app, verifies `htmlslide doctor --json`, verifies packaged MCP diagnostics with `htmlslide mcp --list-tools --json` and project-scoped `htmlslide mcp --status --json`, and uninstalls it. It then mounts the DMG, copies `HTMLslide.app` into a temporary install directory, verifies the packaged app declares `.deckpkg` as an owned macOS document type, launches the packaged app with isolated user data, verifies packaged first-run CLI provisioning and official skill installation into isolated target directories, moves the app to a second temporary install location, relaunches it to repair the recorded app path used by the CLI shim, exports a fixture deck through the packaged CLI, launches the packaged app with that `.deckpkg` as a direct file argument, waits for the renderer to confirm presenter mode opened the expected deck, installs a temporary HTMLslide-managed CLI shim, verifies `htmlslide doctor --json` and packaged MCP diagnostics through that shim, and uninstalls it. It never writes to real `/Applications` or the user's real `~/.htmlslide`.
+The smoke extracts the ZIP, verifies it contains `HTMLslide.app`, checks the `.deckpkg` document type and packaged CLI runtime, installs a temporary shim from the ZIP app, verifies `htmlslide doctor --json`, verifies packaged MCP diagnostics with `htmlslide mcp --list-tools --json` and project-scoped `htmlslide mcp --status --json`, and uninstalls it. It then mounts the DMG, copies `HTMLslide.app` into a temporary install directory, verifies the packaged app declares `.deckpkg` as an owned macOS document type, launches the packaged app with isolated user data, verifies packaged first-run CLI provisioning and official skill installation into isolated target directories, moves the app to a second temporary install location, relaunches it to repair the recorded app path used by the CLI shim, exports a fixture deck through the packaged CLI, launches the packaged app with that `.deckpkg` as a direct file argument, waits for the renderer to confirm presenter mode opened the expected deck, opens the same `.deckpkg` through macOS LaunchServices with `open -a` against the temporary installed app, installs a temporary HTMLslide-managed CLI shim, verifies `htmlslide doctor --json` and packaged MCP diagnostics through that shim, and uninstalls it. It never writes to real `/Applications` or the user's real `~/.htmlslide`, and it does not change the tester's default Finder handler for `.deckpkg`.
 
 ## Alpha Checklist
 
@@ -78,7 +78,7 @@ Also verify:
 - Outline, visual directions, and full deck generation work.
 - Checks find `text-overflow`, missing asset, and missing notes issues.
 - PDF page count and PNG thumbnails match the deck.
-- deckpkg opens from a direct file argument in both Electron E2E and packaged-app smoke, from a macOS `open-file` event in Electron E2E, and from Finder/LaunchServices in a manual test.
+- deckpkg opens from a direct file argument in both Electron E2E and packaged-app smoke, from a macOS `open-file` event in Electron E2E, through LaunchServices `open -a` in packaged-app smoke, and through Finder default double-click in a manual test.
 - Rehearsal mode works.
 - Audience window opens and syncs in Electron E2E; physical dual-screen presenter placement has been manually tested.
 - Fake external agent automation passes.

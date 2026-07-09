@@ -21,6 +21,7 @@ Required root package contract:
 - `packageManager` pinned to a pnpm version.
 - `pnpm-lock.yaml` committed.
 - `docs:check`, `docs:build`, `version:check`, `lint`, `typecheck`, `test`, `perf:smoke`, `security:check`, `build`, and `e2e:desktop` scripts in `package.json`.
+- `test:visual:browser` for focused browser-rendered full-slide screenshot regression.
 - `package:alpha`, `smoke:package:alpha`, `package:release:macos`, `rc:checklist`, and `release:notes` scripts before macOS packaging is enabled.
 
 ## Test Layers
@@ -31,6 +32,7 @@ Use deterministic fixtures and avoid real provider credentials in automated test
 - Schema tests: valid minimal deck, valid full deck, missing slide source, duplicate slide id, invalid viewport, invalid safe area, unsupported schema version.
 - CLI E2E tests: `htmlslide new`, `htmlslide check --json`, `htmlslide export --pdf --deckpkg`, `htmlslide mcp --list-tools --json`, `htmlslide mcp <project> --status --json`, `htmlslide agent validate-provider --json` with fake fetch and fake environment variables, MCP stdio client smoke, `htmlslide package`, `htmlslide doctor`.
 - Compiler regression tests: golden decks for minimal, text-heavy, data chart, image-heavy, notes, and multi-theme decks, including byte-exact fallback thumbnail PNG baselines for deterministic compiler output.
+- Browser visual regression tests: `browser-visual-deck` exports the shared renderer HTML, captures full-slide Chromium screenshots for deterministic vector-only slides, and compares them against browser screenshot goldens.
 - Linter tests: `linter-text-overflow`, `linter-safe-area`, `linter-contrast`, `linter-remote-font`, `linter-missing-notes`, and `linter-valid-clean` fixtures.
 - Agent tests: use mock model providers, fake BYOK provider factories, injected fake fetch implementations, and fake external commands. Source-write tests must verify accepted source roots, parser shapes, duplicate rejection, traversal denial, artifact/private-runtime denial, and no partial writes after validation failure. OpenAI-compatible provider tests must verify model validation requests, Chat Completions structured-output request bodies, `sourceWrites` schemas for build/repair, token-usage mapping, abort-signal forwarding, malformed output rejection, missing source-write rejection, and API-key/error-message sanitization. Anthropic provider tests must verify model validation headers, forced Messages API tool request bodies, `tool_use.input` parsing, usage mapping, abort-signal forwarding, malformed or missing tool-use rejection, missing source-write rejection, unsafe source-write rejection, and API-key/error-message sanitization. CLI provider-validation tests must verify OpenAI-compatible/compatible validation routing, missing env handling, required compatible base URL handling, nonzero failed-validation exit codes, and no API-key values in stdout or returned JSON. BYOK desktop tests must verify Keychain-gated credential loading, compatible base URL metadata, default OpenAI/OpenAI-compatible/Anthropic adapter wiring through injected fake fetch, no secret leakage in logs/results, provider `sourceWrites` application, sanitized `.htmlslide/reports/agent-run-<runId>.json` output, checkpoint diffs, and check/export gating without real provider credentials. Generic command runs must verify project-local prompt/manifest handling, source-write boundaries, checkpoint diffs, and check/export gating. CI must not require real Claude Code, Codex, Gemini, or provider login.
 - MCP tests: verify CLI discovery/status, stdio server startup, tool listing, path boundary enforcement, schema-valid reports, and artifact creation.
@@ -98,11 +100,23 @@ Golden deck output should include PNG comparisons and PDF metadata checks. Start
 - Small thumbnails: at most 0.5 percent diff.
 - Full slide screenshots: at most 0.2 percent diff.
 
-The compiler fallback thumbnail path currently uses PNG goldens under `packages/compiler/test/goldens/` because those PNGs are deterministic and generated without browser screenshots. Fallback thumbnails must have zero pixel diff against their goldens. Browser-rendered slide screenshots should use the percentage thresholds above.
+The compiler fallback thumbnail path currently uses PNG goldens under `packages/compiler/test/goldens/` because those PNGs are deterministic and generated without browser screenshots. Fallback thumbnails must have zero pixel diff against their goldens. Browser-rendered slide screenshots use Chromium through Playwright, avoid font-dependent visible content in `browser-visual-deck`, and must stay under the full-slide screenshot threshold above.
 
 The compiler golden test decodes PNG pixels and compares fallback thumbnails against `packages/compiler/test/goldens/`. On failure it writes `before.png`, `after.png`, and `diff.png` under `dist/visual-regression/compiler/`; CI and the alpha package workflow upload that directory as a failed-run artifact when present.
 
-Compiler regression fixtures cover the Phase 19.5 deck families under `packages/test-fixtures/decks/`: `minimal-deck`, `text-heavy-deck`, `data-chart-deck`, `image-heavy-deck`, `notes-deck`, and `multi-theme-deck`. `golden-export-basic` remains the deep artifact contract fixture for deckpkg contents, manifest mapping, exported URL rewriting, and notes sidecar equality.
+Browser visual regression tests write `before.png`, `after.png`, and `diff.png` under `dist/visual-regression/renderer/` on failures. Refresh browser baselines intentionally with:
+
+```bash
+HTMLSLIDE_UPDATE_BROWSER_GOLDENS=1 pnpm test -- packages/compiler/test/browser-visual-regression.test.ts
+```
+
+Focused browser visual reruns use:
+
+```bash
+pnpm test:visual:browser
+```
+
+Compiler regression fixtures cover the Phase 19.5 deck families under `packages/test-fixtures/decks/`: `minimal-deck`, `text-heavy-deck`, `data-chart-deck`, `image-heavy-deck`, `notes-deck`, and `multi-theme-deck`. `browser-visual-deck` covers Phase 19.6 browser-rendered full-slide screenshot regression. `golden-export-basic` remains the deep artifact contract fixture for deckpkg contents, manifest mapping, exported URL rewriting, and notes sidecar equality.
 
 ## Manual Release Smoke
 

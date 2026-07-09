@@ -16,6 +16,7 @@
     "typecheck": "tsc -b --pretty false && pnpm --filter @htmlslide/desktop typecheck",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:visual:browser": "vitest run packages/compiler/test/browser-visual-regression.test.ts",
     "test:watch": "vitest",
     "perf:smoke": "tsx scripts/perf/performance-smoke.ts",
     "security:secrets": "node scripts/security/scan-secrets.mjs",
@@ -37,6 +38,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.32.0",
+    "@playwright/test": "^1.61.1",
     "@types/node": "^24.0.10",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",

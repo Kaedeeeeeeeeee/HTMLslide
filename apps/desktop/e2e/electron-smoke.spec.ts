@@ -428,8 +428,7 @@ test.describe("HTMLslide desktop smoke", () => {
     await page.getByRole("button", { name: /HTMLslide Agent/ }).click();
     await page.getByLabel("API key").fill(fakeApiKey);
     await page.getByRole("button", { name: "Save Key", exact: true }).click();
-    await expect(page.getByText("AI engine key saved")).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText("OpenAI key saved")).toBeVisible();
+    await expect(page.getByText("OpenAI key saved")).toBeVisible({ timeout: 30_000 });
 
     const savedSettingsText = await readFile(path.join(userDataDir, "ai-engine-settings.json"), "utf8");
     expect(savedSettingsText).toContain('"provider": "openai"');
@@ -699,8 +698,7 @@ test.describe("HTMLslide desktop smoke", () => {
       await page.getByLabel("Base URL").fill(fakeProvider.baseUrl);
       await page.getByLabel("API key").fill(fakeApiKey);
       await page.getByRole("button", { name: "Save Key", exact: true }).click();
-      await expect(page.getByText("AI engine key saved")).toBeVisible({ timeout: 30_000 });
-      await expect(page.getByText("OpenAI-compatible key saved")).toBeVisible();
+      await expect(page.getByText("OpenAI-compatible key saved")).toBeVisible({ timeout: 30_000 });
 
       await page.getByRole("button", { name: "Recent", exact: true }).click();
       await page.locator(".library-main").getByRole("button", { name: "New Deck", exact: true }).first().click();

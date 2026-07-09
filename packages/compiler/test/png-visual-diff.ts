@@ -20,8 +20,9 @@ type DecodedPng = {
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-// The current compiler fallback emits non-interlaced 8-bit RGBA PNGs with filter 0.
-// Browser screenshots can move to a full PNG decoder when that renderer path lands.
+// The compiler fallback emits non-interlaced 8-bit RGBA PNGs with filter 0.
+// Browser screenshots commonly use PNG row filters, so the decoder supports the
+// standard non-interlaced 8-bit RGB/RGBA forms used by Playwright screenshots.
 
 const safeArtifactName = (value: string): string => value.replace(/[^a-z0-9._-]+/giu, "-").replace(/^-|-$/gu, "") || "png-diff";
 
@@ -80,25 +81,72 @@ const decodeRgbaPng = (bytes: Buffer): DecodedPng => {
     throw new Error("PNG is missing a valid IHDR chunk.");
   }
 
-  if (bitDepth !== 8 || colorType !== 6 || compressionMethod !== 0 || filterMethod !== 0 || interlaceMethod !== 0) {
-    throw new Error("Only non-interlaced 8-bit RGBA PNGs are supported for visual regression.");
+  if (bitDepth !== 8 || ![2, 6].includes(colorType) || compressionMethod !== 0 || filterMethod !== 0 || interlaceMethod !== 0) {
+    throw new Error("Only non-interlaced 8-bit RGB/RGBA PNGs are supported for visual regression.");
   }
 
   const raw = inflateSync(Buffer.concat(idatChunks));
-  const pixelStride = width * 4;
-  const rowStride = pixelStride + 1;
+  const bytesPerPixel = colorType === 6 ? 4 : 3;
+  const inputPixelStride = width * bytesPerPixel;
+  const rowStride = inputPixelStride + 1;
   if (raw.byteLength !== rowStride * height) {
     throw new Error("PNG decompressed byte length does not match IHDR dimensions.");
   }
 
-  const pixels = Buffer.alloc(pixelStride * height);
+  const decoded = Buffer.alloc(inputPixelStride * height);
   for (let y = 0; y < height; y += 1) {
     const rowStart = y * rowStride;
     const filterType = raw[rowStart] ?? -1;
-    if (filterType !== 0) {
-      throw new Error(`Unsupported PNG row filter ${filterType}; expected filter 0.`);
+    if (filterType < 0 || filterType > 4) {
+      throw new Error(`Unsupported PNG row filter ${filterType}.`);
     }
-    raw.copy(pixels, y * pixelStride, rowStart + 1, rowStart + 1 + pixelStride);
+
+    const inputStart = rowStart + 1;
+    const outputStart = y * inputPixelStride;
+    for (let index = 0; index < inputPixelStride; index += 1) {
+      const rawValue = raw[inputStart + index] ?? 0;
+      const left = index >= bytesPerPixel ? decoded[outputStart + index - bytesPerPixel] ?? 0 : 0;
+      const up = y > 0 ? decoded[outputStart - inputPixelStride + index] ?? 0 : 0;
+      const upLeft =
+        y > 0 && index >= bytesPerPixel
+          ? decoded[outputStart - inputPixelStride + index - bytesPerPixel] ?? 0
+          : 0;
+      let predictor = 0;
+
+      if (filterType === 1) {
+        predictor = left;
+      } else if (filterType === 2) {
+        predictor = up;
+      } else if (filterType === 3) {
+        predictor = Math.floor((left + up) / 2);
+      } else if (filterType === 4) {
+        const estimate = left + up - upLeft;
+        const leftDistance = Math.abs(estimate - left);
+        const upDistance = Math.abs(estimate - up);
+        const upLeftDistance = Math.abs(estimate - upLeft);
+        predictor = leftDistance <= upDistance && leftDistance <= upLeftDistance
+          ? left
+          : upDistance <= upLeftDistance
+            ? up
+            : upLeft;
+      }
+
+      decoded[outputStart + index] = (rawValue + predictor) & 0xff;
+    }
+  }
+
+  const pixels = Buffer.alloc(width * height * 4);
+  if (bytesPerPixel === 4) {
+    decoded.copy(pixels);
+  } else {
+    for (let index = 0; index < width * height; index += 1) {
+      const inputOffset = index * 3;
+      const outputOffset = index * 4;
+      pixels[outputOffset] = decoded[inputOffset] ?? 0;
+      pixels[outputOffset + 1] = decoded[inputOffset + 1] ?? 0;
+      pixels[outputOffset + 2] = decoded[inputOffset + 2] ?? 0;
+      pixels[outputOffset + 3] = 255;
+    }
   }
 
   return {

@@ -41,7 +41,7 @@ jobs:
           node <<'NODE'
           const fs = require('fs');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          const requiredScripts = ['docs:check', 'docs:build', 'version:check', 'lint', 'typecheck', 'test', 'perf:smoke', 'security:check', 'build', 'e2e:desktop'];
+          const requiredScripts = ['docs:check', 'docs:build', 'version:check', 'lint', 'typecheck', 'test', 'test:visual:browser', 'perf:smoke', 'security:check', 'build', 'e2e:desktop'];
           const missing = requiredScripts.filter((name) => !pkg.scripts || !pkg.scripts[name]);
 
           if (missing.length > 0) {
@@ -67,6 +67,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
 
       - name: Check public docs
         run: pnpm docs:check

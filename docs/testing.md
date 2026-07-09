@@ -9,6 +9,7 @@ pnpm version:check
 pnpm lint
 pnpm typecheck
 pnpm test
+pnpm test:visual:browser
 pnpm perf:smoke
 pnpm security:check
 pnpm build
@@ -31,6 +32,7 @@ pnpm package:release:macos
 ## Coverage expectations
 
 - Unit tests cover core, CLI, compiler, linter, agent, MCP, skills, and desktop services, including CLI MCP tool discovery, project harness status checks, and stdio client smoke coverage.
+- Visual regression tests compare deterministic fallback thumbnails and browser-rendered full-slide Chromium screenshots, writing `before`, `after`, and `diff` artifacts under `dist/visual-regression/` when they fail.
 - CLI tests cover BYOK provider validation with fake fetch and fake environment variables so `htmlslide agent validate-provider` remains deterministic and does not print API key values.
 - Desktop Electron E2E covers onboarding, project library, mock generation, checks, QA panel role semantics, export, presenter, deckpkg open, CLI setup, and official skills setup.
 - Docs check validates required public docs, GitHub issue template contracts, and the pull request template, including reproducible bug fields, diagnostics prompts, privacy confirmation, and private security reporting links.

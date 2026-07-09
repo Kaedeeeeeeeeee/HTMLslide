@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "0.1.0",
+  "id": "browser_visual_deck",
+  "title": "Browser Visual Deck",
+  "language": "en-US",
+  "aspectRatio": "16:9",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "safeArea": {
+    "top": 72,
+    "right": 96,
+    "bottom": 72,
+    "left": 96
+  },
+  "theme": {
+    "css": "theme/theme.css"
+  },
+  "slides": [
+    {
+      "id": "001-composition",
+      "title": "Deterministic Composition",
+      "source": "slides/001-composition.html",
+      "notes": "notes/001-composition.md",
+      "durationSec": 45,
+      "kind": "title",
+      "status": "ready"
+    },
+    {
+      "id": "002-chart",
+      "title": "Deterministic Chart",
+      "source": "slides/002-chart.html",
+      "notes": "notes/002-chart.md",
+      "durationSec": 60,
+      "kind": "data",
+      "status": "ready"
+    }
+  ],
+  "export": {
+    "pdf": true,
+    "html": true,
+    "deckpkg": true,
+    "thumbnails": true,
+    "speakerNotes": true
+  }
+}

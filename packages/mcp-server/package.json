@@ -7,7 +7,12 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "test": "vitest run --root ../.. --config vitest.config.ts packages/mcp-server",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@htmlslide/compiler": "workspace:*",
+    "@htmlslide/core": "workspace:*",
+    "@htmlslide/linter": "workspace:*"
   }
 }
-

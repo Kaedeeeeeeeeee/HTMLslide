@@ -5,6 +5,10 @@
     "rootDir": "src",
     "outDir": "dist"
   },
-  "include": ["src"]
+  "include": ["src"],
+  "references": [
+    { "path": "../compiler" },
+    { "path": "../core" },
+    { "path": "../linter" }
+  ]
 }
-

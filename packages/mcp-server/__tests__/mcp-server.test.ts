@@ -1,5 +1,23 @@
+import { cp, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { createAuditEntry, htmlslideTools, isProjectRelativePathSafe } from "../src/index";
+import { createAuditEntry, createHtmlslideMcpServer, htmlslideTools, isProjectRelativePathSafe } from "../src/index";
+
+const fixtureRoot = fileURLToPath(new URL("../../test-fixtures/decks/", import.meta.url));
+
+const withTempFixture = async <T>(fixtureName: string, callback: (projectPath: string) => Promise<T>): Promise<T> => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-mcp-"));
+  const projectPath = path.join(tempRoot, fixtureName);
+  await cp(path.join(fixtureRoot, fixtureName), projectPath, { recursive: true });
+
+  try {
+    return await callback(projectPath);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+};
 
 describe("HTMLslide MCP tool registry", () => {
   it("lists planned tools and deprecated aliases", () => {
@@ -14,6 +32,131 @@ describe("HTMLslide MCP tool registry", () => {
 
   it("marks destructive checkpoint revert as dangerous", () => {
     expect(htmlslideTools.find((tool) => tool.name === "checkpoint_revert")?.safety).toBe("dangerous");
+  });
+});
+
+describe("HTMLslide MCP in-process server", () => {
+  it("starts against a deck project and lists tools", async () => {
+    await withTempFixture("linter-valid-clean", async (projectPath) => {
+      const server = createHtmlslideMcpServer({ projectRoot: projectPath });
+      const started = await server.start();
+
+      expect(started).toMatchObject({
+        projectRoot: projectPath,
+        status: "started",
+        toolCount: htmlslideTools.length
+      });
+      expect(server.listTools().map((tool) => tool.name)).toEqual(htmlslideTools.map((tool) => tool.name));
+    });
+  });
+
+  it("runs read-only tools inside the project boundary", async () => {
+    await withTempFixture("linter-valid-clean", async (projectPath) => {
+      const server = createHtmlslideMcpServer({ projectRoot: projectPath });
+      const manifest = await server.callTool("project_get_manifest");
+      const slideList = await server.callTool("project_list_slides");
+      const slide = await server.callTool("slide_read", {
+        path: "slides/001-clean.html"
+      });
+
+      expect(manifest).toMatchObject({
+        deck: {
+          title: "Linter Valid Clean"
+        },
+        projectRoot: projectPath
+      });
+      expect(slideList).toMatchObject({
+        slides: [
+          {
+            id: "001-clean",
+            source: "slides/001-clean.html",
+            title: "Local QA Clean Slide"
+          }
+        ]
+      });
+      expect(slide).toMatchObject({
+        content: expect.stringContaining('data-slide-id="001-clean"'),
+        path: "slides/001-clean.html"
+      });
+    });
+  });
+
+  it("allows source writes and rejects write paths outside the tool scope", async () => {
+    await withTempFixture("linter-valid-clean", async (projectPath) => {
+      const server = createHtmlslideMcpServer({ projectRoot: projectPath });
+      const content = '<section class="slide" data-slide-id="001-clean"><h1>Edited by MCP</h1></section>\n';
+      const written = await server.callTool("slide_write", {
+        content,
+        path: "slides/001-clean.html"
+      });
+
+      expect(written).toMatchObject({
+        audit: {
+          action: "write",
+          targetPath: "slides/001-clean.html",
+          tool: "slide_write"
+        },
+        bytes: Buffer.byteLength(content, "utf8"),
+        path: "slides/001-clean.html"
+      });
+      await expect(readFile(path.join(projectPath, "slides", "001-clean.html"), "utf8")).resolves.toBe(content);
+      await expect(server.callTool("slide_write", {
+        content,
+        path: "../outside.html"
+      })).rejects.toThrow("Invalid project path");
+      await expect(server.callTool("slide_write", {
+        content,
+        path: "exports/001-clean.html"
+      })).rejects.toThrow("Invalid project path");
+    });
+  });
+
+  it("returns a schema-versioned check report", async () => {
+    await withTempFixture("linter-valid-clean", async (projectPath) => {
+      const server = createHtmlslideMcpServer({ projectRoot: projectPath });
+      const report = await server.callTool("check_deck");
+
+      expect(report).toMatchObject({
+        projectPath,
+        schemaVersion: "0.1.0",
+        status: "passed",
+        summary: {
+          errors: 0
+        }
+      });
+    });
+  });
+
+  it("creates a PDF artifact inside exports", async () => {
+    await withTempFixture("linter-valid-clean", async (projectPath) => {
+      const server = createHtmlslideMcpServer({ projectRoot: projectPath });
+      const exported = await server.callTool("export_pdf");
+
+      expect(exported).toMatchObject({
+        export: {
+          artifacts: {
+            pdf: path.join(projectPath, "exports", "linter-valid-clean.pdf")
+          }
+        },
+        pdf: path.join(projectPath, "exports", "linter-valid-clean.pdf"),
+        projectRoot: projectPath
+      });
+      const pdfStat = await stat(path.join(projectPath, "exports", "linter-valid-clean.pdf"));
+      expect(pdfStat.size).toBeGreaterThan(0);
+    });
+  });
+
+  it("denies invalid read paths before touching the filesystem", async () => {
+    await withTempFixture("linter-valid-clean", async (projectPath) => {
+      const server = createHtmlslideMcpServer({ projectRoot: projectPath });
+
+      await expect(server.callTool("slide_read", {
+        path: "/tmp/secret.html"
+      })).rejects.toThrow("Invalid project path");
+      await expect(server.callTool("notes_read", {
+        path: "slides/001-clean.html"
+      })).rejects.toThrow("Invalid project path");
+    });
   });
 });
 

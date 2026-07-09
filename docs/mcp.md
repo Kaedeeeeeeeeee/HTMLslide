@@ -2,6 +2,10 @@
 
 HTMLslide includes an MCP server package for alpha agent integrations.
 
+The current alpha package exposes an in-process server harness for local clients and tests. It can start against a
+deck project, list registered tools, read project metadata/slides, write scoped slide/notes/theme source files, run
+`check_deck` through the linter, and create `export_pdf` artifacts through the shared compiler path.
+
 ## Alpha boundary
 
 MCP tools must respect the selected project boundary. They must reject path traversal, absolute paths outside the deck project, invalid project roots, and unsafe artifact writes.

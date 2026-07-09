@@ -41,7 +41,7 @@ jobs:
           node <<'NODE'
           const fs = require('fs');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          const requiredScripts = ['docs:check', 'lint', 'typecheck', 'test', 'build', 'e2e:desktop'];
+          const requiredScripts = ['docs:check', 'lint', 'typecheck', 'test', 'perf:smoke', 'build', 'e2e:desktop'];
           const missing = requiredScripts.filter((name) => !pkg.scripts || !pkg.scripts[name]);
 
           if (missing.length > 0) {
@@ -79,6 +79,9 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      - name: Performance smoke
+        run: pnpm perf:smoke
 
       - name: Upload visual regression artifacts
         if: failure()

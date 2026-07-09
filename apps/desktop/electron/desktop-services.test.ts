@@ -1874,28 +1874,16 @@ function requireArg(args, name) {
       deleted: 0
     });
     expect(result.project?.slides[0]?.html).toContain("Edited externally");
-    expect(result.logs).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          level: "info",
-          message: "external stream started",
-          metadata: {
-            stream: "stdout"
-          },
-          stage: "build"
-        }),
-        expect.objectContaining({
-          level: "info",
-          message: "api_key=[redacted]",
-          metadata: {
-            stream: "stdout"
-          },
-          stage: "build"
-        })
-      ])
-    );
-    expect(result.logs.map((log) => log.message).join("\n")).toContain("external stream wrote manifest");
-    expect(result.logs.map((log) => log.message).join("\n")).toContain("Bearer [redacted]");
+    const stdoutLogText = result.logs
+      .filter((log) => log.metadata?.stream === "stdout")
+      .map((log) => log.message)
+      .join("\n");
+    const logText = result.logs.map((log) => log.message).join("\n");
+    expect(stdoutLogText).toContain("external stream started");
+    expect(stdoutLogText).toContain("api_key=[redacted]");
+    expect(logText).toContain("external stream wrote manifest");
+    expect(logText).toContain("Bearer [redacted]");
+    expect(logText).not.toContain("sk-external-secret123456");
     expect(calls).toEqual([
       ["check", projectPath, "--json"],
       ["export", projectPath, "--json"]

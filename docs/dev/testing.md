@@ -8,6 +8,7 @@ pnpm docs:check
 pnpm lint
 pnpm typecheck
 pnpm test
+pnpm perf:smoke
 pnpm build
 pnpm e2e:desktop
 ```
@@ -16,7 +17,7 @@ Required root package contract:
 
 - `packageManager` pinned to a pnpm version.
 - `pnpm-lock.yaml` committed.
-- `docs:check`, `lint`, `typecheck`, `test`, `build`, and `e2e:desktop` scripts in `package.json`.
+- `docs:check`, `lint`, `typecheck`, `test`, `perf:smoke`, `build`, and `e2e:desktop` scripts in `package.json`.
 - `package:alpha`, `smoke:package:alpha`, and `package:release:macos` scripts before macOS packaging is enabled.
 
 ## Test Layers
@@ -33,7 +34,17 @@ Use deterministic fixtures and avoid real provider credentials in automated test
 - Electron and presenter tests: cover onboarding, workspace choice, mock agent deck creation, preview, checks, export, rehearsal mode, settings, notes, next/previous navigation, timer, and keyboard shortcuts.
 - Packaging tests: unsigned CI build, signed/notarized release workflow contract, DMG/package smoke checks, first-run setup, official skill installation, CLI shim install/repair/uninstall, and `htmlslide doctor`.
 - Security tests: API keys absent from logs/project files/settings JSON, credential-store save/clear behavior through injected fakes, protected write-manifest boundaries including symlink escapes, MCP traversal denial, third-party skill warnings, remote asset detection, malformed deckpkg rejection.
-- Performance tests: track warm project open, single-slide render, 20-slide export, 20-slide check, and presenter next-slide latency.
+- Performance tests: `pnpm perf:smoke` generates a temporary 20-slide deck, warms and measures desktop project preview loading, reloads a preview after one slide change, exports a 20-slide PDF, checks the 20-slide deck, and measures presenter next-slide state latency. CI enforces broad guardrails to catch obvious regressions; the product targets in the plan remain alpha/RC baseline targets because real UI preview and PDF export timings depend on host hardware.
+
+## Performance Smoke
+
+Run the deterministic package-level performance smoke when touching project preview, compiler export, checker, presenter session, or desktop service paths:
+
+```bash
+pnpm perf:smoke
+```
+
+The smoke writes `dist/performance/performance-smoke.json` with elapsed times, plan targets, and CI guardrails. Use `HTMLSLIDE_PERF_KEEP=1 pnpm perf:smoke` to keep the generated 20-slide project for local inspection. The smoke approximates the plan's warm project open and single-slide preview targets through `loadProjectPreview`; full window paint timing and physical presenter display latency still belong in the release-candidate manual benchmark.
 
 ## Desktop E2E Smoke
 

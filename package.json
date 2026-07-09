@@ -17,6 +17,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "perf:smoke": "tsx scripts/perf/performance-smoke.ts",
     "docs:check": "node scripts/docs/check-public-alpha-docs.mjs",
     "e2e:desktop": "pnpm --filter @htmlslide/desktop e2e",
     "e2e:desktop:headed": "pnpm --filter @htmlslide/desktop e2e:headed",

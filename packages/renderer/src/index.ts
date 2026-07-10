@@ -30,6 +30,16 @@ export type BuildDeckHtmlOptions = {
   includeNotesPanel?: boolean;
 };
 
+export type BuildSlidePreviewDocumentInput = Omit<RenderDeck, "slides"> & {
+  slide: RenderSlide;
+};
+
+export const PREVIEW_CONTENT_SECURITY_POLICY =
+  "default-src 'none'; img-src data:; media-src data:; font-src data:; " +
+  "style-src 'unsafe-inline'; script-src 'none'; connect-src 'none'; " +
+  "object-src 'none'; frame-src 'none'; worker-src 'none'; " +
+  "form-action 'none'; base-uri 'none'";
+
 const escapeHtml = (value: string): string =>
   value
     .replaceAll("&", "&amp;")
@@ -139,6 +149,39 @@ body[data-htmlslide-mode="present"] .htmlslide-page[aria-current="true"] {
 `;
 };
 
+const previewRuntimeCss = (): string => `
+html,
+body {
+  width: var(--htmlslide-width);
+  height: var(--htmlslide-height);
+  min-width: var(--htmlslide-width);
+  min-height: var(--htmlslide-height);
+  overflow: hidden;
+  background: transparent;
+}
+body[data-htmlslide-preview="canonical"] .htmlslide-deck {
+  display: block;
+  width: var(--htmlslide-width);
+  height: var(--htmlslide-height);
+  padding: 0;
+  gap: 0;
+}
+body[data-htmlslide-preview="canonical"] .htmlslide-page {
+  width: var(--htmlslide-width);
+  height: var(--htmlslide-height);
+  margin: 0;
+  box-shadow: none;
+}
+body[data-htmlslide-preview="canonical"] .htmlslide-page[aria-current="true"] {
+  outline: none;
+}
+`;
+
+const buildSlideMarkup = (slide: RenderSlide, index: number): string =>
+  `<article class="htmlslide-page" data-slide-id="${escapeHtml(slide.id)}" data-slide-index="${index}" data-slide-title="${escapeHtml(slide.title)}" aria-current="${index === 0 ? "true" : "false"}" tabindex="-1">
+${slide.html}
+</article>`;
+
 const resolveBuildOptions = (modeOrOptions: RenderMode | BuildDeckHtmlOptions): Required<BuildDeckHtmlOptions> => {
   if (typeof modeOrOptions === "string") {
     return {
@@ -231,13 +274,7 @@ export const buildDeckHtml = (
   modeOrOptions: RenderMode | BuildDeckHtmlOptions = "preview"
 ): string => {
   const options = resolveBuildOptions(modeOrOptions);
-  const slideMarkup = deck.slides
-    .map(
-      (slide, index) => `<article class="htmlslide-page" data-slide-id="${escapeHtml(slide.id)}" data-slide-index="${index}" data-slide-title="${escapeHtml(slide.title)}" aria-current="${index === 0 ? "true" : "false"}" tabindex="-1">
-${slide.html}
-</article>`
-    )
-    .join("\n");
+  const slideMarkup = deck.slides.map(buildSlideMarkup).join("\n");
 
   const notesScript = JSON.stringify(
     deck.slides.map((slide) => ({
@@ -263,6 +300,42 @@ ${slideMarkup}
     <script type="application/json" id="htmlslide-notes">${notesScript}</script>
     ${options.includeNotesPanel ? buildNotesPanel(deck) : ""}
     ${options.includeRuntimeScript ? buildRuntimeScript() : ""}
+  </body>
+</html>`;
+};
+
+export const buildSlidePreviewDocument = ({
+  slide,
+  title,
+  language,
+  viewport,
+  safeArea,
+  themeCss
+}: BuildSlidePreviewDocumentInput): string => {
+  const previewDeck: RenderDeck = {
+    title,
+    language,
+    viewport,
+    safeArea,
+    themeCss,
+    slides: [slide]
+  };
+
+  return `<!doctype html>
+<html lang="${escapeHtml(language ?? "en")}">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="${PREVIEW_CONTENT_SECURITY_POLICY}" />
+    <meta name="viewport" content="width=${viewport.width}, height=${viewport.height}, initial-scale=1" />
+    <title>${escapeHtml(title)}</title>
+    <style>${baseRuntimeCss(previewDeck)}</style>
+    <style>${themeCss ?? ""}</style>
+    <style>${previewRuntimeCss()}</style>
+  </head>
+  <body data-htmlslide-mode="preview" data-htmlslide-preview="canonical" data-htmlslide-viewport-width="${viewport.width}" data-htmlslide-viewport-height="${viewport.height}">
+    <main class="htmlslide-deck" aria-label="${escapeHtml(title)}">
+${buildSlideMarkup(slide, 0)}
+    </main>
   </body>
 </html>`;
 };

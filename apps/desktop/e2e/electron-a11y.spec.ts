@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { _electron as electron, expect, test } from "@playwright/test";
 import type { ElectronApplication, Page } from "@playwright/test";
-import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -19,6 +19,8 @@ const electronExecutable = requireFromDesktop("electron") as string;
 type LaunchOptions = {
   forceRehearsalPresenter?: boolean;
   openProjectPath?: string;
+  previewDelayMs?: number;
+  previewDelaySlideId?: string;
 };
 
 async function expectNoFrameworkOverlay(page: Page): Promise<void> {
@@ -64,6 +66,11 @@ async function launchDesktopApp(tempRoot: string, options: LaunchOptions = {}): 
 
   if (options.openProjectPath) {
     env.HTMLSLIDE_E2E_OPEN_PROJECT_PATH = options.openProjectPath;
+  }
+
+  if (options.previewDelayMs && options.previewDelaySlideId) {
+    env.HTMLSLIDE_E2E_PREVIEW_DELAY_MS = String(options.previewDelayMs);
+    env.HTMLSLIDE_E2E_PREVIEW_DELAY_SLIDE_ID = options.previewDelaySlideId;
   }
 
   return electron.launch({
@@ -147,9 +154,15 @@ test.describe("HTMLslide desktop accessibility smoke", () => {
   test("covers QA panel semantics after a failing check", async () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-a11y-"));
     const projectPath = path.join(tempRoot, "linter-text-overflow");
+    const slidePath = path.join(projectPath, "slides", "001-overflow.html");
     await mkdir(path.dirname(projectPath), { recursive: true });
     await cp(textOverflowProjectPath, projectPath, { recursive: true });
-    electronApp = await launchDesktopApp(tempRoot, { openProjectPath: projectPath });
+    const originalSlideHtml = await readFile(slidePath, "utf8");
+    electronApp = await launchDesktopApp(tempRoot, {
+      openProjectPath: projectPath,
+      previewDelayMs: 500,
+      previewDelaySlideId: "001-overflow"
+    });
 
     const page = await electronApp.firstWindow();
     const browserErrors = collectBrowserErrors(page);
@@ -159,6 +172,14 @@ test.describe("HTMLslide desktop accessibility smoke", () => {
     await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Linter Text Overflow" })).toBeVisible({
       timeout: 30_000
     });
+    await expect(page.getByRole("status", { name: "Slide preview status" })).toBeVisible();
+    await expectNoAccessibilityViolations(page, "workspace slide preview loading");
+    const previewFrame = page.locator('iframe[title="Text Overflow Fixture slide preview"]');
+    await expect(previewFrame).toBeVisible({ timeout: 30_000 });
+    await expect(previewFrame).toHaveAttribute("sandbox", "");
+    await expect(previewFrame).toHaveAttribute("referrerpolicy", "no-referrer");
+    await expect(previewFrame).toHaveAttribute("tabindex", "-1");
+    await expectNoAccessibilityViolations(page, "workspace slide preview");
 
     await page.locator(".workspace-toolbar").getByRole("button", { name: "Check", exact: true }).click();
     const qaPanel = page.getByRole("region", { name: "QA Panel" });
@@ -167,7 +188,16 @@ test.describe("HTMLslide desktop accessibility smoke", () => {
     });
     await expect(qaPanel.getByRole("tablist", { name: "QA severity filter" })).toBeVisible();
     await expect(qaPanel.getByRole("list", { name: "QA issues" }).getByRole("listitem", { name: "text-overflow" })).toBeVisible();
-    await expectNoAccessibilityViolations(page, "QA panel", [".slide-fragment-preview"]);
+    await expectNoAccessibilityViolations(page, "QA panel");
+
+    await rm(slidePath, { force: true });
+    await page.locator(".workspace-toolbar").getByRole("button", { name: "Check", exact: true }).click();
+    const previewError = page.getByRole("alert", { name: "Slide preview error" });
+    await expect(previewError).toBeVisible({ timeout: 30_000 });
+    await expectNoAccessibilityViolations(page, "workspace slide preview error");
+    await writeFile(slidePath, originalSlideHtml, "utf8");
+    await previewError.getByRole("button", { name: "Retry preview" }).click();
+    await expect(previewFrame).toBeVisible({ timeout: 30_000 });
 
     await expectNoFrameworkOverlay(page);
     expect(browserErrors).toEqual([]);

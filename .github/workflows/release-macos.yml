@@ -120,6 +120,15 @@ jobs:
       - name: Security check
         run: pnpm security:check
 
+      - name: Upload visual regression artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: visual-regression-${{ github.job }}-${{ github.run_attempt }}
+          path: dist/visual-regression/**
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Build
         run: pnpm build
 
@@ -128,6 +137,15 @@ jobs:
 
       - name: Run desktop accessibility E2E
         run: pnpm e2e:desktop:a11y
+
+      - name: Upload desktop E2E artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-e2e-${{ github.job }}-${{ github.run_attempt }}
+          path: tmp/playwright/**
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Import Developer ID certificate
         shell: bash

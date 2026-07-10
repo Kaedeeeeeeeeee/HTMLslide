@@ -8,7 +8,13 @@ import {
   type FileCopyCheckpointDiff,
   type FileCopyCheckpointRevertResult
 } from "@htmlslide/agent";
-import { exportDeck, type CompilerProjectInput, type ExportOptions, type ExportResult } from "@htmlslide/compiler";
+import {
+  buildSlidePreviewDocument,
+  exportDeck,
+  type CompilerProjectInput,
+  type ExportOptions,
+  type ExportResult
+} from "@htmlslide/compiler";
 import { loadDeckProject, type LoadedDeckProject } from "@htmlslide/core";
 import { HTMLSLIDE_APP_VERSION } from "@htmlslide/core/version";
 import { checkProject, type CheckReport } from "@htmlslide/linter";
@@ -778,6 +784,24 @@ const renderProjectSlide = async (
   slideId: string,
   mode: RenderMode
 ): Promise<RenderSlideResult> => {
+  if (mode === "preview") {
+    const project = await loadDeckProject(projectRoot, { verifyFiles: false });
+    if (!project.deck.slides.some((slide) => slide.id === slideId)) {
+      throw new Error(`No slide found with id ${slideId}.`);
+    }
+    const preview = await buildSlidePreviewDocument(projectRoot, { slideId });
+    return {
+      projectRoot: preview.projectRoot,
+      mode,
+      slideId: preview.slideId,
+      title: preview.title,
+      source: preview.sourcePath,
+      notes: preview.notes,
+      viewport: preview.viewport,
+      html: preview.htmlDocument
+    };
+  }
+
   const { deck, sources } = await buildMcpRenderableDeck(projectRoot);
   const slide = deck.slides.find((candidate) => candidate.id === slideId);
   const source = sources.get(slideId);

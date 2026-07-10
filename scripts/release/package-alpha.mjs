@@ -239,7 +239,19 @@ async function copyWorkspaceRuntimePackage(appNodeModulesPath, packageName, pack
 }
 
 async function copyNpmRuntimePackage(appNodeModulesPath, packageName, requireContext) {
-  const packageRoot = path.dirname(requireContext.resolve(`${packageName}/package.json`));
+  let packageRoot;
+  try {
+    packageRoot = path.dirname(requireContext.resolve(`${packageName}/package.json`));
+  } catch {
+    let candidate = path.dirname(requireContext.resolve(packageName));
+    while (candidate !== path.dirname(candidate) && !existsSync(path.join(candidate, "package.json"))) {
+      candidate = path.dirname(candidate);
+    }
+    if (!existsSync(path.join(candidate, "package.json"))) {
+      fail(`Could not resolve package root for desktop runtime dependency ${packageName}.`);
+    }
+    packageRoot = candidate;
+  }
   const runtimePath = path.join(appNodeModulesPath, ...packageName.split("/"));
   await rm(runtimePath, { recursive: true, force: true });
   await mkdir(path.dirname(runtimePath), { recursive: true });
@@ -255,16 +267,23 @@ async function deployDesktopRuntime(appResourcesPath) {
   const compilerRequire = createRequire(path.join(root, "packages", "compiler", "package.json"));
   const coreRequire = createRequire(path.join(root, "packages", "core", "package.json"));
   const jszipRequire = createRequire(compilerRequire.resolve("jszip/package.json"));
+  const pdfLibRequire = createRequire(compilerRequire.resolve("pdf-lib/package.json"));
   const workspaceRuntimePackages = [
     ["@htmlslide/agent", path.join(root, "packages", "agent")],
     ["@htmlslide/agent-adapters", path.join(root, "packages", "agent-adapters")],
+    ["@htmlslide/compiler", path.join(root, "packages", "compiler")],
     ["@htmlslide/core", path.join(root, "packages", "core")],
     ["@htmlslide/presenter", path.join(root, "packages", "presenter")],
+    ["@htmlslide/renderer", path.join(root, "packages", "renderer")],
     ["@htmlslide/skills", path.join(root, "packages", "skills")]
   ];
   const npmRuntimePackages = [
     [compilerRequire, "jszip"],
+    [compilerRequire, "pdf-lib"],
     [coreRequire, "zod"],
+    [pdfLibRequire, "@pdf-lib/standard-fonts"],
+    [pdfLibRequire, "@pdf-lib/upng"],
+    [pdfLibRequire, "tslib"],
     [jszipRequire, "core-util-is"],
     [jszipRequire, "immediate"],
     [jszipRequire, "inherits"],

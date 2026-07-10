@@ -130,6 +130,20 @@ export type DesktopProjectPreview = {
   slides: SlideSummary[];
 };
 
+export type DesktopSlidePreviewDocument = {
+  projectRoot: string;
+  slideId: string;
+  title: string;
+  sourcePath: string;
+  notes: string;
+  sourceDigest: string;
+  viewport: {
+    width: number;
+    height: number;
+  };
+  htmlDocument: string;
+};
+
 export type DesktopCliResult = {
   ok: boolean;
   exitCode: number;
@@ -350,7 +364,6 @@ export type DesktopAudienceSlidePayload = {
   slideNumber: number;
   slideCount: number;
   screen: "normal" | "black" | "white";
-  sourceHtml?: string;
   sourceDocumentHtml?: string;
   imageDataUrl?: string;
   section?: string;
@@ -392,6 +405,7 @@ export type HtmlslideDesktopApi = {
   chooseWorkspace(): Promise<string | undefined>;
   openProjectDialog(): Promise<DesktopProjectPreview | undefined>;
   loadProject(projectPath: string): Promise<DesktopProjectPreview>;
+  loadSlidePreview(projectPath: string, slideId: string): Promise<DesktopSlidePreviewDocument>;
   createProject(request: NewDeckDraft & { workspacePath?: string }): Promise<DesktopCliResult>;
   checkProject(projectPath: string): Promise<DesktopCliResult>;
   exportProject(projectPath: string): Promise<DesktopCliResult>;

@@ -8,6 +8,7 @@ import {
   ExportManifestSchema,
   fingerprintEntriesDigest,
   fingerprintProjectFile,
+  readProjectFileSnapshot,
   sha256Hex,
   type ExportArtifactFingerprint,
   type ExportFileFingerprint
@@ -105,6 +106,20 @@ describe("export manifest", () => {
         "slides/b.html"
       ]);
       await expect(fingerprintProjectFile(root, "../outside.txt")).rejects.toThrow("Unsafe fingerprint path");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an oversized snapshot before reading file contents", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-export-snapshot-limit-"));
+    try {
+      await writeFile(path.join(root, "deck.json"), "oversized");
+
+      await expect(readProjectFileSnapshot(root, "deck.json", {
+        maxBytes: 4,
+        limitLabel: "Preview asset"
+      })).rejects.toThrow("Preview asset deck.json is 9 bytes; the read limit is 4 bytes");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

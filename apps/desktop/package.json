@@ -20,6 +20,7 @@
   "dependencies": {
     "@htmlslide/agent": "workspace:*",
     "@htmlslide/agent-adapters": "workspace:*",
+    "@htmlslide/compiler": "workspace:*",
     "@htmlslide/core": "workspace:*",
     "@htmlslide/presenter": "workspace:*",
     "@htmlslide/shared-ui": "workspace:*",

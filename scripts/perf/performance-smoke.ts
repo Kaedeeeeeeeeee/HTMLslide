@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import {
+  buildSlidePreviewDocument,
   exportDeck,
   type CompilerProjectInput
 } from "@htmlslide/compiler";
@@ -78,14 +79,15 @@ async function main(): Promise<void> {
       loadProjectPreview(projectPath)
     ));
 
+    await buildSlidePreviewDocument(projectPath, { slideId: slideId(1) });
     await writeSlide(projectPath, 1, "changed");
     const changedPreview = await measure("singleSlidePreviewAfterChange", "Reload preview after one typical slide file change.", () =>
-      loadProjectPreview(projectPath)
+      buildSlidePreviewDocument(projectPath, { slideId: slideId(1) })
     );
     metrics.push(changedPreview);
 
-    const preview = await loadProjectPreview(projectPath);
-    if (!preview.slides[0]?.html.includes("Revision changed")) {
+    const preview = await buildSlidePreviewDocument(projectPath, { slideId: slideId(1) });
+    if (!preview.htmlDocument.includes("Revision changed")) {
       throw new Error("Performance fixture preview did not include the changed slide source.");
     }
 

@@ -82,7 +82,8 @@ import type {
   DesktopAudienceSlidePayload,
   DesktopAudienceWindowRequest,
   DesktopAudienceWindowState,
-  DesktopPresenterDisplay
+  DesktopPresenterDisplay,
+  DesktopSlidePreviewDocument
 } from "../desktop-api";
 
 interface WorkspaceProps {
@@ -90,6 +91,7 @@ interface WorkspaceProps {
   commandValue: string;
   inspectorTab: InspectorTab;
   project: ProjectSummary;
+  previewRevision: number;
   qaFilter: QaFilter;
   qaIssues: QaIssue[];
   running: boolean;
@@ -114,6 +116,7 @@ interface WorkspaceProps {
   onSettingsOpen: () => void;
   onToolbarAction: (action: "generate" | "check" | "export" | "present") => void;
   onViewDiff?: () => void;
+  loadSlidePreview?: (projectPath: string, slideId: string) => Promise<DesktopSlidePreviewDocument>;
   loadPresenterDeck?: () => Promise<PresenterDeck | null>;
   listPresenterDisplays?: () => Promise<DesktopPresenterDisplay[]>;
   openAudienceWindow?: (request: DesktopAudienceWindowRequest) => Promise<DesktopAudienceWindowState>;
@@ -172,6 +175,12 @@ type InitialPresenterOpen = {
   deck: PresenterDeck;
 };
 
+type SlidePreviewLoadState =
+  | { status: "idle" }
+  | { status: "loading"; sourcePath?: string }
+  | { status: "ready"; preview: DesktopSlidePreviewDocument }
+  | { status: "error"; message: string; sourcePath?: string };
+
 const inspectorTabs: Array<{ id: InspectorTab; label: string }> = [
   { id: "outline", label: inspectorTabLabels.outline },
   { id: "design", label: inspectorTabLabels.design },
@@ -189,6 +198,7 @@ const filterTabs: Array<{ id: QaFilter; label: string }> = [
 
 const qaPanelHeadingId = "qa-panel-heading";
 const qaPanelStatusId = "qa-panel-status";
+const slidePreviewCacheLimit = 8;
 
 function domIdSegment(value: string): string {
   const normalized = value.trim().toLowerCase().replace(/[^a-z0-9_-]+/gu, "-").replace(/^-+|-+$/gu, "");
@@ -237,6 +247,7 @@ export function Workspace({
   onCommandSubmit,
   onInspectorTabChange,
   closeAudienceWindow,
+  loadSlidePreview,
   loadPresenterDeck,
   listPresenterDisplays,
   openAudienceWindow,
@@ -249,6 +260,7 @@ export function Workspace({
   onViewDiff,
   operationStatus,
   project,
+  previewRevision,
   qaFilter,
   qaIssues,
   running,
@@ -279,6 +291,86 @@ export function Workspace({
     agentRunEvents.length > 0
       ? buildAgentRunStages(agentRunEvents, agentRunLogs, stages)
       : buildRuntimeStages(stages, activeStageIndex, running);
+  const previewCacheRef = useRef(new Map<string, DesktopSlidePreviewDocument>());
+  const previewRequestIdRef = useRef(0);
+  const [previewRetryKey, setPreviewRetryKey] = useState(0);
+  const [slidePreviewState, setSlidePreviewState] = useState<SlidePreviewLoadState>({ status: "idle" });
+  const previewSnapshot = useMemo(
+    () => ({ projectId: project.id, projectPath: project.path, revision: previewRevision }),
+    [previewRevision, project.id, project.path, slides]
+  );
+  const previewSnapshotRef = useRef(previewSnapshot);
+  previewSnapshotRef.current = previewSnapshot;
+  const canLoadCompilerPreview = Boolean(
+    loadSlidePreview &&
+    project.path.length > 0 &&
+    !project.path.startsWith("~") &&
+    !project.path.toLowerCase().endsWith(".deckpkg") &&
+    currentSlide.id !== "empty-workspace"
+  );
+
+  useEffect(() => {
+    previewCacheRef.current.clear();
+    previewRequestIdRef.current += 1;
+    setSlidePreviewState({ status: "idle" });
+  }, [previewSnapshot]);
+
+  useEffect(() => {
+    const requestId = ++previewRequestIdRef.current;
+    if (!canLoadCompilerPreview || !loadSlidePreview) {
+      setSlidePreviewState({ status: "idle" });
+      return;
+    }
+
+    const cacheKey = `${project.path}:${currentSlide.id}`;
+    const cached = previewCacheRef.current.get(cacheKey);
+    if (cached) {
+      previewCacheRef.current.delete(cacheKey);
+      previewCacheRef.current.set(cacheKey, cached);
+      setSlidePreviewState({ status: "ready", preview: cached });
+      return;
+    }
+
+    setSlidePreviewState({ status: "loading", sourcePath: currentSlide.sourcePath });
+    loadSlidePreview(project.path, currentSlide.id)
+      .then((preview) => {
+        if (
+          requestId !== previewRequestIdRef.current ||
+          previewSnapshotRef.current !== previewSnapshot ||
+          preview.slideId !== currentSlide.id
+        ) {
+          return;
+        }
+        previewCacheRef.current.set(cacheKey, preview);
+        while (previewCacheRef.current.size > slidePreviewCacheLimit) {
+          const oldestCacheKey = previewCacheRef.current.keys().next().value;
+          if (!oldestCacheKey) {
+            break;
+          }
+          previewCacheRef.current.delete(oldestCacheKey);
+        }
+        setSlidePreviewState({ status: "ready", preview });
+      })
+      .catch((error: unknown) => {
+        if (requestId !== previewRequestIdRef.current || previewSnapshotRef.current !== previewSnapshot) {
+          return;
+        }
+        setSlidePreviewState({
+          status: "error",
+          message: error instanceof Error ? error.message : String(error),
+          sourcePath: currentSlide.sourcePath
+        });
+      });
+  }, [
+    canLoadCompilerPreview,
+    currentSlide.id,
+    currentSlide.sourcePath,
+    loadSlidePreview,
+    previewRetryKey,
+    previewSnapshot,
+    project.id,
+    project.path
+  ]);
   const rehearsalPresenterDeck = useMemo(
     () =>
       slides.length > 0
@@ -389,6 +481,9 @@ export function Workspace({
 
         <PreviewCanvas
           issueCount={selectedIssues.length}
+          onRetry={() => setPreviewRetryKey((current) => current + 1)}
+          previewState={slidePreviewState}
+          sample={project.path.startsWith("~")}
           slide={currentSlide}
         />
 
@@ -524,28 +619,21 @@ function PresenterMode({
   const currentSlidePreview = findSlidePreview(slides, view.currentSlide.id);
   const nextSlidePreview = view.nextSlide ? findSlidePreview(slides, view.nextSlide.id) : undefined;
   const currentSlideDocumentHtml = view.currentSlide.htmlDocument?.trim() ? view.currentSlide.htmlDocument : undefined;
-  const currentSlideSourceHtml = currentSlidePreview?.html?.trim()
-    ? currentSlidePreview.html
-    : view.currentSlide.html?.trim()
-      ? view.currentSlide.html
-      : undefined;
   const audiencePayload = useMemo<DesktopAudienceSlidePayload>(() => ({
     accent: currentSlidePreview?.accent,
     deckTitle: deck.title,
-    imageDataUrl: currentSlideDocumentHtml || currentSlideSourceHtml ? undefined : view.currentSlide.thumbnail.dataUrl,
+    imageDataUrl: currentSlideDocumentHtml ? undefined : view.currentSlide.thumbnail.dataUrl,
     screen: view.screen,
     section: currentSlidePreview?.section,
     slideCount: view.slideCount,
     slideId: view.currentSlide.id,
     slideNumber: view.slideNumber,
     slideTitle: view.currentSlide.title,
-    sourceDocumentHtml: currentSlideDocumentHtml,
-    sourceHtml: currentSlideDocumentHtml ? undefined : currentSlideSourceHtml
+    sourceDocumentHtml: currentSlideDocumentHtml
   }), [
     currentSlidePreview?.accent,
     currentSlidePreview?.section,
     currentSlideDocumentHtml,
-    currentSlideSourceHtml,
     deck.title,
     view.currentSlide.id,
     view.currentSlide.thumbnail.dataUrl,
@@ -985,15 +1073,9 @@ function PresenterSlidePreview({
   variant: "current" | "next";
 }): ReactNode {
   const documentHtml = presenterSlide.htmlDocument?.trim() ? presenterSlide.htmlDocument : undefined;
-  const sourceHtml = slide?.html?.trim()
-    ? slide.html
-    : presenterSlide.html?.trim()
-      ? presenterSlide.html
-      : undefined;
   const hasDocumentPreview = documentHtml !== undefined;
-  const hasSourcePreview = !hasDocumentPreview && variant === "current" && sourceHtml !== undefined;
   const thumbnailDataUrl = presenterSlide.thumbnail.dataUrl;
-  const hasImagePreview = !hasDocumentPreview && !hasSourcePreview && thumbnailDataUrl !== undefined;
+  const hasImagePreview = !hasDocumentPreview && thumbnailDataUrl !== undefined;
   const accent = slide?.accent ?? "#7da2ff";
 
   return (
@@ -1003,8 +1085,6 @@ function PresenterSlidePreview({
         "presenter-slide-preview",
         hasDocumentPreview
           ? "presenter-slide-preview--document"
-          : hasSourcePreview
-          ? "slide-canvas slide-canvas--source"
           : hasImagePreview
             ? "presenter-slide-preview--visual"
             : "presenter-slide-preview--fallback",
@@ -1015,14 +1095,10 @@ function PresenterSlidePreview({
       {hasDocumentPreview ? (
         <iframe
           className="presenter-slide-preview__frame"
+          referrerPolicy="no-referrer"
           sandbox=""
           srcDoc={documentHtml}
           title={`${presenterSlide.title} slide document`}
-        />
-      ) : hasSourcePreview ? (
-        <div
-          className="slide-fragment-preview"
-          dangerouslySetInnerHTML={{ __html: sourceHtml ?? "" }}
         />
       ) : hasImagePreview ? (
         <img
@@ -1278,18 +1354,26 @@ function Filmstrip({
 
 interface PreviewCanvasProps {
   issueCount: number;
+  onRetry: () => void;
+  previewState: SlidePreviewLoadState;
+  sample: boolean;
   slide: SlideSummary;
 }
 
-function PreviewCanvas({ issueCount, slide }: PreviewCanvasProps): ReactNode {
-  const hasSourcePreview = Boolean(slide.html && slide.html.trim().length > 0);
-
+function PreviewCanvas({ issueCount, onRetry, previewState, sample, slide }: PreviewCanvasProps): ReactNode {
   return (
-    <section className="preview-stage">
+    <section
+      aria-label="Slide preview"
+      className="preview-stage"
+    >
       <div className="preview-topbar">
         <div>
           <strong>{slide.number} / Review Canvas</strong>
-          <span>Fixed 16:9 preview, not an editor</span>
+          <span>
+            {previewState.status === "ready"
+              ? `${previewState.preview.viewport.width} x ${previewState.preview.viewport.height}`
+              : slide.sourcePath ?? "Sample preview"}
+          </span>
         </div>
         <div className="preview-actions">
           <StatusPill tone={slideStatusTone(slide.status)}>{slide.status.replace("-", " ")}</StatusPill>
@@ -1302,54 +1386,155 @@ function PreviewCanvas({ issueCount, slide }: PreviewCanvasProps): ReactNode {
       </div>
 
       <div className="slide-canvas-wrap">
-        <article
-          aria-label={`${slide.title} slide preview`}
-          className={hasSourcePreview ? "slide-canvas slide-canvas--source" : "slide-canvas"}
-          style={{ "--slide-accent": slide.accent } as CSSProperties}
-        >
-          {hasSourcePreview ? (
-            <div
-              className="slide-fragment-preview"
-              dangerouslySetInnerHTML={{ __html: slide.html ?? "" }}
-            />
-          ) : (
-            <>
-              <header>
-                <span>{slide.section}</span>
-                <strong>{slide.duration}</strong>
-              </header>
-              <section>
-                <h1>{slide.title}</h1>
-                <ul>
-                  {slide.bullets.map((bullet) => (
-                    <li key={bullet}>{bullet}</li>
-                  ))}
-                </ul>
-              </section>
-              <div className="slide-visual">
-                <div className="slide-visual__bars">
-                  <span />
-                  <span />
-                  <span />
-                </div>
-                <div className="slide-visual__card">
-                  <Clock3 />
-                  <strong>{issueCount} QA notes</strong>
-                  <small>Current slide filter</small>
-                </div>
-              </div>
-            </>
-          )}
-          {hasSourcePreview ? (
-            <div className="slide-source-status">
-              <Clock3 />
-              <strong>{issueCount} QA notes</strong>
-              <small>{slide.sourcePath}</small>
-            </div>
-          ) : null}
-        </article>
+        {previewState.status === "ready" ? (
+          <ScaledSlidePreview preview={previewState.preview} />
+        ) : previewState.status === "loading" ? (
+          <div
+            aria-label="Slide preview status"
+            aria-live="polite"
+            className="slide-preview-message"
+            role="status"
+          >
+            <Clock3 />
+            <strong>Building slide preview</strong>
+            <span>{previewState.sourcePath ?? slide.sourcePath ?? slide.title}</span>
+          </div>
+        ) : previewState.status === "error" ? (
+          <div
+            aria-label="Slide preview error"
+            className="slide-preview-message slide-preview-message--error"
+            role="alert"
+          >
+            <ShieldCheck />
+            <strong>Slide preview could not be built</strong>
+            <span>{previewState.sourcePath ?? slide.sourcePath ?? slide.title}</span>
+            <p>{previewState.message}</p>
+            <p>Check the source file, then retry this preview.</p>
+            <Button
+              icon={<RotateCcw />}
+              onClick={onRetry}
+              variant="secondary"
+            >
+              Retry preview
+            </Button>
+          </div>
+        ) : sample ? (
+          <SyntheticSamplePreview
+            issueCount={issueCount}
+            slide={slide}
+          />
+        ) : (
+          <article
+            aria-label={`${slide.title} metadata preview`}
+            className="slide-metadata-preview"
+            style={{ "--slide-accent": slide.accent } as CSSProperties}
+          >
+            <span>{slide.section}</span>
+            <h1>{slide.title}</h1>
+            <p>{slide.sourcePath ?? "No project source document is available for this slide."}</p>
+          </article>
+        )}
       </div>
     </section>
+  );
+}
+
+function ScaledSlidePreview({ preview }: { preview: DesktopSlidePreviewDocument }): ReactNode {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [scale, setScale] = useState(0);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+
+    const updateScale = (width: number, height: number): void => {
+      const nextScale = Math.min(width / preview.viewport.width, height / preview.viewport.height);
+      setScale(Number.isFinite(nextScale) && nextScale > 0 ? nextScale : 0);
+    };
+    updateScale(container.clientWidth, container.clientHeight);
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) {
+        updateScale(entry.contentRect.width, entry.contentRect.height);
+      }
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [preview.viewport.height, preview.viewport.width]);
+
+  return (
+    <div
+      className="slide-preview-document"
+      data-viewport-height={preview.viewport.height}
+      data-viewport-width={preview.viewport.width}
+      ref={containerRef}
+    >
+      {scale > 0 ? (
+        <div
+          className="slide-preview-document__fit"
+          style={{
+            height: preview.viewport.height * scale,
+            width: preview.viewport.width * scale
+          }}
+        >
+          <div
+            className="slide-preview-document__surface"
+            data-preview-scale={scale.toFixed(6)}
+            style={{
+              height: preview.viewport.height,
+              transform: `scale(${scale})`,
+              width: preview.viewport.width
+            }}
+          >
+            <iframe
+              className="slide-preview-document__frame"
+              referrerPolicy="no-referrer"
+              sandbox=""
+              srcDoc={preview.htmlDocument}
+              tabIndex={-1}
+              title={`${preview.title} slide preview`}
+            />
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SyntheticSamplePreview({ issueCount, slide }: { issueCount: number; slide: SlideSummary }): ReactNode {
+  return (
+        <article
+          aria-label={`${slide.title} slide preview`}
+          className="slide-canvas"
+          style={{ "--slide-accent": slide.accent } as CSSProperties}
+        >
+          <header>
+            <span>{slide.section}</span>
+            <strong>{slide.duration}</strong>
+          </header>
+          <section>
+            <h1>{slide.title}</h1>
+            <ul>
+              {slide.bullets.map((bullet) => (
+                <li key={bullet}>{bullet}</li>
+              ))}
+            </ul>
+          </section>
+          <div className="slide-visual">
+            <div className="slide-visual__bars">
+              <span />
+              <span />
+              <span />
+            </div>
+            <div className="slide-visual__card">
+              <Clock3 />
+              <strong>{issueCount} QA notes</strong>
+              <small>Current slide filter</small>
+            </div>
+          </div>
+        </article>
   );
 }
 

@@ -55,7 +55,7 @@ Run the deterministic package-level performance smoke when touching project prev
 pnpm perf:smoke
 ```
 
-The smoke writes `dist/performance/performance-smoke.json` with elapsed times, plan targets, and CI guardrails. Use `HTMLSLIDE_PERF_KEEP=1 pnpm perf:smoke` to keep the generated 20-slide project for local inspection. The smoke approximates the plan's warm project open and single-slide preview targets through `loadProjectPreview`; full window paint timing and physical presenter display latency still belong in the release-candidate manual benchmark.
+The smoke writes `dist/performance/performance-smoke.json` with elapsed times, plan targets, and CI guardrails. Use `HTMLSLIDE_PERF_KEEP=1 pnpm perf:smoke` to keep the generated 20-slide project for local inspection. The smoke measures warm project metadata loading through `loadProjectPreview` and changed-slide document generation through `buildSlidePreviewDocument`; full iframe paint timing and physical presenter display latency still belong in the release-candidate manual benchmark.
 
 ## Desktop E2E Smoke
 
@@ -87,7 +87,9 @@ pnpm e2e:desktop:a11y
 
 The gate builds `@htmlslide/desktop`, launches Electron through Playwright, and scans stable desktop chrome states with `@axe-core/playwright` restricted to WCAG 2.0/2.1 A and AA tags. It uses axe legacy mode because Electron does not support the blank aggregation page that the default Playwright integration opens. It pairs axe with explicit role/name/status assertions for onboarding setup progress, Project Library navigation, New Deck provider-key gating, QA Panel summary/tabs/issues, presenter rehearsal transport/progress controls, Settings CLI integration status, and official skills metadata inspection.
 
-The desktop accessibility gate intentionally excludes user-authored slide preview fragments such as `.slide-fragment-preview`. Slide content accessibility remains covered by linter fixtures, compiler/renderer tests, and project QA because generated or user-owned deck HTML can validly fail independently from the app shell.
+The desktop accessibility gate scans the canonical preview host, including its loading and error status semantics, but treats the sandboxed iframe document as untrusted project content outside the app-shell axe scan. Slide content accessibility remains covered by linter fixtures, compiler/renderer tests, and project QA because generated or user-owned deck HTML can validly fail independently from the app shell.
+
+Preview security coverage uses a hostile local fixture to verify that authored scripts and inline handlers cannot reach the privileged workspace, remote requests are denied, local project assets are inlined, and rapid filmstrip selection cannot display a stale response. The preview document is generated through the same renderer contract as export, while the compiler path remains read-only and does not acquire export locks or write artifacts.
 
 ## Packaging Verification
 

@@ -149,6 +149,49 @@ describe("HTMLslide MCP in-process server", () => {
     });
   });
 
+  it("returns the compiler canonical preview with CSP, theme, and inline assets", async () => {
+    await withTempFixture("golden-export-basic", async (projectPath) => {
+      const server = createHtmlslideMcpServer({ projectRoot: projectPath });
+      const renderedSlide = await server.callTool("render_slide", {
+        slideId: "002-artifacts"
+      });
+      const html = (renderedSlide as { html: string }).html;
+
+      expect(renderedSlide).toMatchObject({
+        mode: "preview",
+        projectRoot: projectPath,
+        slideId: "002-artifacts",
+        source: "slides/002-artifacts.html"
+      });
+      expect(html).toContain('http-equiv="Content-Security-Policy"');
+      expect(html).toContain("default-src 'none'");
+      expect(html).toContain("img-src data:");
+      expect(html).toContain("script-src 'none'");
+      expect(html).toContain("font-family: Inter");
+      expect(html).toContain("data:image/svg+xml;base64,");
+      expect(html).not.toContain("../assets/accent.svg");
+    });
+  });
+
+  it("keeps print and present slide rendering on the existing renderer path", async () => {
+    await withTempFixture("linter-valid-clean", async (projectPath) => {
+      const server = createHtmlslideMcpServer({ projectRoot: projectPath });
+      const printed = await server.callTool("render_slide", {
+        mode: "print",
+        slideId: "001-clean"
+      });
+      const presented = await server.callTool("render_slide", {
+        mode: "present",
+        slideId: "001-clean"
+      });
+
+      expect((printed as { html: string }).html).toContain('data-htmlslide-mode="print"');
+      expect((presented as { html: string }).html).toContain('data-htmlslide-mode="present"');
+      expect((printed as { html: string }).html).toContain("htmlslide-notes-panel");
+      expect((presented as { html: string }).html).toContain("htmlslide-notes-panel");
+    });
+  });
+
   it("allows source writes and rejects write paths outside the tool scope", async () => {
     await withTempFixture("linter-valid-clean", async (projectPath) => {
       const server = createHtmlslideMcpServer({ projectRoot: projectPath });

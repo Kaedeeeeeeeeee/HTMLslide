@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
   chooseWorkspace: () => ipcRenderer.invoke("htmlslide:choose-workspace"),
   openProjectDialog: () => ipcRenderer.invoke("htmlslide:open-project-dialog"),
   loadProject: (projectPath: string) => ipcRenderer.invoke("htmlslide:load-project", projectPath),
+  loadSlidePreview: (projectPath: string, slideId: string) =>
+    ipcRenderer.invoke("htmlslide:load-slide-preview", projectPath, slideId),
   createProject: (request: { title: string; folderName: string; templateId?: string; workspacePath?: string }) =>
     ipcRenderer.invoke("htmlslide:create-project", request),
   checkProject: (projectPath: string) => ipcRenderer.invoke("htmlslide:check-project", projectPath),

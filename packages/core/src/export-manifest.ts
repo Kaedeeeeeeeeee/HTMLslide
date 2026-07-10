@@ -151,14 +151,30 @@ export const fingerprintProjectFile = async (
 
 export const readProjectFileSnapshot = async (
   projectRoot: string,
-  projectPath: string
+  projectPath: string,
+  options: { maxBytes?: number; limitLabel?: string } = {}
 ): Promise<ExportFileSnapshot> => {
   if (!isSafeFingerprintPath(projectPath)) {
     throw new Error(`Unsafe fingerprint path: ${projectPath}`);
   }
+  if (options.maxBytes !== undefined && (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 0)) {
+    throw new Error(`Snapshot read limit must be a non-negative safe integer: ${String(options.maxBytes)}`);
+  }
   const { handle, fileInfo } = await openVerifiedProjectFile(projectRoot, projectPath);
   try {
+    if (options.maxBytes !== undefined && fileInfo.size > options.maxBytes) {
+      throw new Error(
+        `${options.limitLabel ?? "Project file"} ${projectPath} is ${fileInfo.size} bytes; ` +
+        `the read limit is ${options.maxBytes} bytes.`
+      );
+    }
     const bytes = await handle.readFile();
+    if (options.maxBytes !== undefined && bytes.byteLength > options.maxBytes) {
+      throw new Error(
+        `${options.limitLabel ?? "Project file"} ${projectPath} grew to ${bytes.byteLength} bytes while reading; ` +
+        `the read limit is ${options.maxBytes} bytes.`
+      );
+    }
     const finalHandleInfo = await handle.stat();
     assertSameFileSnapshot(projectPath, fileInfo, finalHandleInfo);
     const finalFile = await resolveRegularProjectFile(projectRoot, projectPath);

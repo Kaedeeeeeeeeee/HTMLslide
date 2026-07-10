@@ -71,6 +71,16 @@ describe("macOS alpha packaging contract", () => {
     expect(packageScript).toContain("notarized: notarization.notarized");
     expect(packageScript).toContain("artifactMetadata");
     expect(packageScript).toContain("buildArtifactMetadata(artifacts)");
+    const desktopRuntimeBlock = packageScript.slice(
+      packageScript.indexOf("const workspaceRuntimePackages"),
+      packageScript.indexOf("async function createDmg")
+    );
+    expect(desktopRuntimeBlock).toContain('"@htmlslide/compiler"');
+    expect(desktopRuntimeBlock).toContain('"@htmlslide/renderer"');
+    expect(desktopRuntimeBlock).toContain('[compilerRequire, "pdf-lib"]');
+    expect(desktopRuntimeBlock).toContain('[pdfLibRequire, "@pdf-lib/standard-fonts"]');
+    expect(desktopRuntimeBlock).toContain('[pdfLibRequire, "@pdf-lib/upng"]');
+    expect(desktopRuntimeBlock).toContain('[pdfLibRequire, "tslib"]');
   });
 
   it("keeps signed release artifact metadata explicit", async () => {

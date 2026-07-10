@@ -15,6 +15,7 @@ import {
   installDesktopOfficialSkills,
   listDesktopPresenterDisplays,
   loadProjectPreview,
+  loadSlidePreview,
   loadDesktopPresenterDeck,
   loadDesktopPresenterDeckPackage,
   markRecentProjectMissing,
@@ -91,6 +92,11 @@ const e2eCredentialStore = process.env.HTMLSLIDE_E2E_CREDENTIAL_STORE === "memor
   ? createMemoryCredentialStore()
   : undefined;
 const forceE2eRehearsalPresenter = process.env.HTMLSLIDE_E2E_FORCE_REHEARSAL_PRESENTER === "1";
+const e2ePreviewDelaySlideId = process.env.HTMLSLIDE_E2E_PREVIEW_DELAY_SLIDE_ID;
+const e2ePreviewDelayMs = Math.min(
+  5_000,
+  Math.max(0, Number.parseInt(process.env.HTMLSLIDE_E2E_PREVIEW_DELAY_MS ?? "0", 10) || 0)
+);
 
 function createMemoryCredentialStore(): DesktopCredentialStore {
   const entries = new Map<string, string>();
@@ -142,7 +148,6 @@ type DesktopAudienceSlidePayload = {
   slideNumber: number;
   slideCount: number;
   screen: "normal" | "black" | "white";
-  sourceHtml?: string;
   sourceDocumentHtml?: string;
   imageDataUrl?: string;
   section?: string;
@@ -302,7 +307,6 @@ function isAudienceSlidePayload(value: unknown): value is DesktopAudienceSlidePa
     Number.isInteger(payload.slideNumber) &&
     Number.isInteger(payload.slideCount) &&
     (payload.screen === "normal" || payload.screen === "black" || payload.screen === "white") &&
-    (payload.sourceHtml === undefined || typeof payload.sourceHtml === "string") &&
     (payload.sourceDocumentHtml === undefined || typeof payload.sourceDocumentHtml === "string") &&
     (payload.imageDataUrl === undefined || typeof payload.imageDataUrl === "string")
   );
@@ -421,7 +425,6 @@ function audienceSlideDataUrl(payload: DesktopAudienceSlidePayload): string {
 
 function audienceSlideHtml(payload: DesktopAudienceSlidePayload): string {
   const safeSourceDocumentHtml = payload.sourceDocumentHtml ?? "";
-  const safeSourceHtml = payload.sourceHtml ? sanitizeAudienceSlideHtml(payload.sourceHtml) : "";
   const safeImageDataUrl = safeAudienceImageDataUrl(payload.imageDataUrl);
   const screenLabel = payload.screen === "black" ? "Black screen" : payload.screen === "white" ? "White screen" : "";
   return `<!doctype html>
@@ -542,8 +545,6 @@ function audienceSlideHtml(payload: DesktopAudienceSlidePayload): string {
   <main class="audience-stage" aria-label="HTMLslide audience window">
     ${safeSourceDocumentHtml
       ? `<iframe class="audience-slide-frame" sandbox="" srcdoc="${escapeHtml(safeSourceDocumentHtml)}" title="${escapeHtml(payload.slideTitle)}"></iframe>`
-      : safeSourceHtml
-      ? `<div class="audience-slide">${safeSourceHtml}</div>`
       : safeImageDataUrl
         ? `<div class="audience-slide audience-slide--image"><img src="${safeImageDataUrl}" alt="${escapeHtml(payload.slideTitle)}" /></div>`
         : audienceFallbackHtml(payload)}
@@ -560,13 +561,6 @@ function audienceFallbackHtml(payload: DesktopAudienceSlidePayload): string {
   <h1>${escapeHtml(payload.slideTitle)}</h1>
   <p>${escapeHtml(payload.deckTitle)}</p>
 </section>`;
-}
-
-function sanitizeAudienceSlideHtml(value: string): string {
-  return value
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/giu, "")
-    .replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/giu, "")
-    .replace(/javascript:/giu, "");
 }
 
 function safeAudienceImageDataUrl(value: string | undefined): string | undefined {
@@ -738,6 +732,19 @@ function registerIpcHandlers(): void {
     const project = await summarizeDeckProject(projectPath);
     await upsertRecentProject(libraryPath(), project, configuredWorkspacePath());
     return loadProjectPreview(project.path);
+  });
+
+  ipcMain.handle("htmlslide:load-slide-preview", async (_event, projectPath: string, slideId: string) => {
+    if (typeof projectPath !== "string" || projectPath.trim().length === 0) {
+      throw new Error("Slide preview requires a project path.");
+    }
+    if (typeof slideId !== "string" || slideId.trim().length === 0) {
+      throw new Error("Slide preview requires a slide id.");
+    }
+    if (e2ePreviewDelayMs > 0 && slideId === e2ePreviewDelaySlideId) {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, e2ePreviewDelayMs));
+    }
+    return loadSlidePreview(projectPath, slideId);
   });
 
   ipcMain.handle("htmlslide:create-project", async (_event, request: DesktopCreateProjectRequest) => {

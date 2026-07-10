@@ -12,6 +12,7 @@ import {
   EXPORT_MANIFEST_FILE_NAME,
   EXPORT_MANIFEST_PROJECT_PATH,
   fingerprintBytes,
+  fingerprintEntriesDigest,
   fingerprintProjectFile,
   fingerprintProjectFiles,
   loadDeckProject,
@@ -24,7 +25,12 @@ import {
   type ExportManifest
 } from "@htmlslide/core";
 import { DECK_PACKAGE_SCHEMA_VERSION } from "@htmlslide/core/version";
-import { buildDeckHtml, type RenderDeck } from "@htmlslide/renderer";
+import {
+  buildDeckHtml,
+  buildSlidePreviewDocument as buildRendererSlidePreviewDocument,
+  PREVIEW_CONTENT_SECURITY_POLICY as RENDERER_PREVIEW_CONTENT_SECURITY_POLICY,
+  type RenderDeck
+} from "@htmlslide/renderer";
 
 export type CompilerSlideInput = {
   id: string;
@@ -87,6 +93,17 @@ export type ExportResult = {
     manifest: string;
   };
   verification: ExportVerification;
+};
+
+export type SlidePreviewDocument = {
+  projectRoot: string;
+  slideId: string;
+  sourcePath: string;
+  title: string;
+  viewport: CompilerProjectInput["viewport"];
+  notes: string;
+  htmlDocument: string;
+  sourceDigest: string;
 };
 
 export type NotesSidecarSlide = {
@@ -211,6 +228,10 @@ const PACKAGE_PRESENTER_SETTINGS_PATH = "presenter-settings.json";
 const PROJECT_TOP_LEVEL_DIRS = new Set(["assets", "slides", "notes", "theme", "skills", ".htmlslide"]);
 const PACKAGE_ASSET_TOP_LEVEL_DIRS = new Set(["assets", "slides", "theme"]);
 
+type UrlSerializationMode = "export" | "package" | "inline-preview";
+
+type ProjectUrlSerializer = (sourcePath: string, rawValue: string) => string;
+
 const slugFileName = (value: string): string =>
   value
     .toLowerCase()
@@ -239,15 +260,6 @@ const splitUrlSuffix = (value: string): { pathname: string; suffix: string } => 
     pathname: value.slice(0, suffixIndex),
     suffix: value.slice(suffixIndex)
   };
-};
-
-const toExportRelativeUrl = (sourcePath: string, rawValue: string): string => {
-  const target = resolveProjectRelativeUrl(sourcePath, rawValue);
-  if (!target) {
-    return rawValue;
-  }
-
-  return `../${target.projectRelativePath}${target.suffix}`;
 };
 
 const resolveProjectRelativeUrl = (
@@ -280,54 +292,48 @@ const resolveProjectRelativeUrl = (
   };
 };
 
-const rewriteSrcsetForExport = (sourcePath: string, rawValue: string): string =>
-  rawValue
-    .split(",")
-    .map((candidate) => {
-      const trimmed = candidate.trim();
-      if (trimmed.length === 0) {
-        return trimmed;
-      }
-      const [url, ...descriptor] = trimmed.split(/\s+/);
-      if (!url) {
-        return trimmed;
-      }
-      return [toExportRelativeUrl(sourcePath, url), ...descriptor].join(" ");
-    })
-    .join(", ");
-
-const rewriteHtmlUrlsForExport = (sourcePath: string, html: string): string =>
-  html
-    .replace(/\b(src|href|poster|srcset)\s*=\s*(["'])([^"']+)\2/gi, (match, attr: string, quote: string, value: string) => {
-      const rewrittenValue = attr.toLowerCase() === "srcset" ? rewriteSrcsetForExport(sourcePath, value) : toExportRelativeUrl(sourcePath, value);
-      return `${attr}=${quote}${rewrittenValue}${quote}`;
-    })
-    .replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (_match, quote: string, value: string) => {
-      const rewrittenValue = toExportRelativeUrl(sourcePath, value);
-      return `url(${quote}${rewrittenValue}${quote})`;
-    });
-
-const rewriteCssUrlsForExport = (sourcePath: string, css: string): string =>
-  css.replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (_match, quote: string, value: string) => {
-    const rewrittenValue = toExportRelativeUrl(sourcePath, value);
-    return `url(${quote}${rewrittenValue}${quote})`;
-  });
-
-const toPackageRelativeUrl = (sourcePath: string, rawValue: string, assetPaths: Set<string>): string => {
-  const target = resolveProjectRelativeUrl(sourcePath, rawValue);
-  if (!target) {
-    return rawValue;
-  }
-
-  const firstSegment = target.projectRelativePath.split("/")[0] ?? "";
-  if (PACKAGE_ASSET_TOP_LEVEL_DIRS.has(firstSegment)) {
-    assetPaths.add(target.projectRelativePath);
-  }
-
-  return `${target.projectRelativePath}${target.suffix}`;
+const fragmentFromUrlSuffix = (suffix: string): string => {
+  const fragmentIndex = suffix.indexOf("#");
+  return fragmentIndex >= 0 ? suffix.slice(fragmentIndex) : "";
 };
 
-const rewriteSrcsetForPackage = (sourcePath: string, rawValue: string, assetPaths: Set<string>): string =>
+const createProjectUrlSerializer = (input: {
+  mode: UrlSerializationMode;
+  assetPaths?: Set<string>;
+  inlineAssetUrls?: ReadonlyMap<string, string>;
+}): ProjectUrlSerializer =>
+  (sourcePath, rawValue) => {
+    const target = resolveProjectRelativeUrl(sourcePath, rawValue);
+    if (!target) {
+      return rawValue;
+    }
+
+    if (input.mode === "export") {
+      return `../${target.projectRelativePath}${target.suffix}`;
+    }
+
+    const firstSegment = target.projectRelativePath.split("/")[0] ?? "";
+    if (input.mode === "package") {
+      if (PACKAGE_ASSET_TOP_LEVEL_DIRS.has(firstSegment)) {
+        input.assetPaths?.add(target.projectRelativePath);
+      }
+      return `${target.projectRelativePath}${target.suffix}`;
+    }
+
+    if (!PACKAGE_ASSET_TOP_LEVEL_DIRS.has(firstSegment)) {
+      return rawValue;
+    }
+    const inlineAssetUrl = input.inlineAssetUrls?.get(target.projectRelativePath);
+    return inlineAssetUrl
+      ? `${inlineAssetUrl}${fragmentFromUrlSuffix(target.suffix)}`
+      : rawValue;
+  };
+
+const rewriteSrcsetUrls = (
+  sourcePath: string,
+  rawValue: string,
+  serializeUrl: ProjectUrlSerializer
+): string =>
   rawValue
     .split(",")
     .map((candidate) => {
@@ -339,43 +345,125 @@ const rewriteSrcsetForPackage = (sourcePath: string, rawValue: string, assetPath
       if (!url) {
         return trimmed;
       }
-      return [toPackageRelativeUrl(sourcePath, url, assetPaths), ...descriptor].join(" ");
+      return [serializeUrl(sourcePath, url), ...descriptor].join(" ");
     })
     .join(", ");
 
-const rewriteHtmlUrlsForPackage = (sourcePath: string, html: string, assetPaths: Set<string>): string =>
+const rewriteHtmlUrls = (
+  sourcePath: string,
+  html: string,
+  serializeUrl: ProjectUrlSerializer
+): string =>
   html
     .replace(/\b(src|href|poster|srcset)\s*=\s*(["'])([^"']+)\2/gi, (match, attr: string, quote: string, value: string) => {
       const rewrittenValue = attr.toLowerCase() === "srcset"
-        ? rewriteSrcsetForPackage(sourcePath, value, assetPaths)
-        : toPackageRelativeUrl(sourcePath, value, assetPaths);
+        ? rewriteSrcsetUrls(sourcePath, value, serializeUrl)
+        : serializeUrl(sourcePath, value);
       return `${attr}=${quote}${rewrittenValue}${quote}`;
     })
     .replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (_match, quote: string, value: string) => {
-      const rewrittenValue = toPackageRelativeUrl(sourcePath, value, assetPaths);
+      const rewrittenValue = serializeUrl(sourcePath, value);
       return `url(${quote}${rewrittenValue}${quote})`;
     });
 
-const rewriteCssUrlsForPackage = (sourcePath: string, css: string, assetPaths: Set<string>): string =>
+const rewriteCssUrls = (
+  sourcePath: string,
+  css: string,
+  serializeUrl: ProjectUrlSerializer
+): string =>
   css.replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (_match, quote: string, value: string) => {
-    const rewrittenValue = toPackageRelativeUrl(sourcePath, value, assetPaths);
+    const rewrittenValue = serializeUrl(sourcePath, value);
     return `url(${quote}${rewrittenValue}${quote})`;
   });
 
-const buildPreparedProject = async (
-  project: CompilerProjectInput,
+const mimeTypeForAssetPath = (assetPath: string): string => {
+  const extension = path.posix.extname(assetPath).slice(1).toLowerCase();
+  switch (extension) {
+    case "avif":
+      return "image/avif";
+    case "css":
+      return "text/css";
+    case "gif":
+      return "image/gif";
+    case "jpeg":
+    case "jpg":
+      return "image/jpeg";
+    case "json":
+      return "application/json";
+    case "m4a":
+      return "audio/mp4";
+    case "mov":
+      return "video/quicktime";
+    case "mp3":
+      return "audio/mpeg";
+    case "mp4":
+      return "video/mp4";
+    case "ogg":
+      return "audio/ogg";
+    case "otf":
+      return "font/otf";
+    case "png":
+      return "image/png";
+    case "svg":
+      return "image/svg+xml";
+    case "ttf":
+      return "font/ttf";
+    case "wav":
+      return "audio/wav";
+    case "webm":
+      return "video/webm";
+    case "webp":
+      return "image/webp";
+    case "woff":
+      return "font/woff";
+    case "woff2":
+      return "font/woff2";
+    default:
+      return "application/octet-stream";
+  }
+};
+
+const toDataUrl = (assetPath: string, bytes: Uint8Array): string =>
+  `data:${mimeTypeForAssetPath(assetPath)};base64,${Buffer.from(bytes).toString("base64")}`;
+
+const PREVIEW_MAX_INLINE_ASSET_BYTES = 32 * 1024 * 1024;
+const PREVIEW_MAX_INLINE_TOTAL_BYTES = 64 * 1024 * 1024;
+
+const createSourceFingerprintCollector = (
   initialFingerprints: readonly ExportFileFingerprint[] = []
-): Promise<PreparedProject> => {
-  const packageAssetPaths = new Set<string>();
+): {
+  add: (fingerprint: ExportFileFingerprint) => void;
+  sorted: () => ExportFileFingerprint[];
+} => {
   const sourceFingerprints = new Map<string, ExportFileFingerprint>();
-  const addSourceFingerprint = (fingerprint: ExportFileFingerprint): void => {
+  const add = (fingerprint: ExportFileFingerprint): void => {
     const existing = sourceFingerprints.get(fingerprint.path);
     if (existing && (existing.sha256 !== fingerprint.sha256 || existing.sizeBytes !== fingerprint.sizeBytes)) {
       throw new Error(`Project source changed between snapshot reads: ${fingerprint.path}`);
     }
     sourceFingerprints.set(fingerprint.path, fingerprint);
   };
-  initialFingerprints.forEach(addSourceFingerprint);
+  initialFingerprints.forEach(add);
+
+  return {
+    add,
+    sorted: () => [...sourceFingerprints.values()].sort((left, right) =>
+      compareFingerprintPaths(left.path, right.path)
+    )
+  };
+};
+
+const buildPreparedProject = async (
+  project: CompilerProjectInput,
+  initialFingerprints: readonly ExportFileFingerprint[] = []
+): Promise<PreparedProject> => {
+  const packageAssetPaths = new Set<string>();
+  const exportUrlSerializer = createProjectUrlSerializer({ mode: "export" });
+  const packageUrlSerializer = createProjectUrlSerializer({
+    mode: "package",
+    assetPaths: packageAssetPaths
+  });
+  const sourceFingerprints = createSourceFingerprintCollector(initialFingerprints);
   const themeSnapshot = project.themeCssPath
     ? await readProjectFileSnapshot(
         project.projectPath,
@@ -383,21 +471,21 @@ const buildPreparedProject = async (
       )
     : undefined;
   if (themeSnapshot) {
-    addSourceFingerprint(themeSnapshot.fingerprint);
+    sourceFingerprints.add(themeSnapshot.fingerprint);
   }
   if (project.themeTokensPath) {
     const tokensSnapshot = await readProjectFileSnapshot(
       project.projectPath,
       toFingerprintProjectPath(project.projectPath, project.themeTokensPath)
     );
-    addSourceFingerprint(tokensSnapshot.fingerprint);
+    sourceFingerprints.add(tokensSnapshot.fingerprint);
   }
   const rawThemeCss = themeSnapshot?.bytes.toString("utf8");
   const themeCss = project.themeCssPath
-    ? rewriteCssUrlsForExport(project.themeCssPath, rawThemeCss ?? "")
+    ? rewriteCssUrls(project.themeCssPath, rawThemeCss ?? "", exportUrlSerializer)
     : undefined;
   const packageThemeCss = project.themeCssPath
-    ? rewriteCssUrlsForPackage(project.themeCssPath, rawThemeCss ?? "", packageAssetPaths)
+    ? rewriteCssUrls(project.themeCssPath, rawThemeCss ?? "", packageUrlSerializer)
     : undefined;
 
   const slides: PreparedSlide[] = [];
@@ -406,7 +494,7 @@ const buildPreparedProject = async (
       project.projectPath,
       toFingerprintProjectPath(project.projectPath, slide.sourcePath)
     );
-    addSourceFingerprint(sourceSnapshot.fingerprint);
+    sourceFingerprints.add(sourceSnapshot.fingerprint);
     const notesSnapshot = slide.notesPath
       ? await readProjectFileSnapshot(
           project.projectPath,
@@ -414,7 +502,7 @@ const buildPreparedProject = async (
         )
       : undefined;
     if (notesSnapshot) {
-      addSourceFingerprint(notesSnapshot.fingerprint);
+      sourceFingerprints.add(notesSnapshot.fingerprint);
     }
     const sourceHtml = sourceSnapshot.bytes.toString("utf8");
     const notes = notesSnapshot?.bytes.toString("utf8") ?? "";
@@ -425,8 +513,8 @@ const buildPreparedProject = async (
       pdfPage: index + 1,
       durationSec: slide.durationSec ?? 60,
       sourceHtml,
-      exportHtml: rewriteHtmlUrlsForExport(slide.sourcePath, sourceHtml),
-      packageHtml: rewriteHtmlUrlsForPackage(slide.sourcePath, sourceHtml, packageAssetPaths),
+      exportHtml: rewriteHtmlUrls(slide.sourcePath, sourceHtml, exportUrlSerializer),
+      packageHtml: rewriteHtmlUrls(slide.sourcePath, sourceHtml, packageUrlSerializer),
       notes
     });
   }
@@ -437,7 +525,7 @@ const buildPreparedProject = async (
       throw new Error(`Unsafe package asset path: ${assetPath}`);
     }
     const assetSnapshot = await readProjectFileSnapshot(project.projectPath, assetPath);
-    addSourceFingerprint(assetSnapshot.fingerprint);
+    sourceFingerprints.add(assetSnapshot.fingerprint);
     packageAssets.push({ packagePath: assetPath, bytes: assetSnapshot.bytes });
   }
 
@@ -469,9 +557,7 @@ const buildPreparedProject = async (
       }))
     },
     packageAssets,
-    sourceFingerprints: [...sourceFingerprints.values()].sort((left, right) =>
-      compareFingerprintPaths(left.path, right.path)
-    ),
+    sourceFingerprints: sourceFingerprints.sorted(),
     slides
   };
 };
@@ -482,6 +568,141 @@ const buildStandaloneHtml = (renderable: RenderDeck): string =>
     includeRuntimeScript: true,
     includeNotesPanel: true
   })}\n`;
+
+export const buildSlidePreviewDocument = async (
+  inputPath: string,
+  options: { slideId: string }
+): Promise<SlidePreviewDocument> => {
+  const { project, deckFingerprint } = await loadCompilerProjectSnapshot(inputPath);
+  const requestedSlide = project.slides.find((slide) => slide.id === options.slideId);
+  if (!requestedSlide) {
+    throw new Error(`Unknown slide id "${options.slideId}" in ${project.projectPath}.`);
+  }
+
+  const sourceFingerprints = createSourceFingerprintCollector([deckFingerprint]);
+  const themeSnapshot = project.themeCssPath
+    ? await readProjectFileSnapshot(
+        project.projectPath,
+        toFingerprintProjectPath(project.projectPath, project.themeCssPath)
+      )
+    : undefined;
+  if (themeSnapshot) {
+    sourceFingerprints.add(themeSnapshot.fingerprint);
+  }
+  if (project.themeTokensPath) {
+    const tokensSnapshot = await readProjectFileSnapshot(
+      project.projectPath,
+      toFingerprintProjectPath(project.projectPath, project.themeTokensPath)
+    );
+    sourceFingerprints.add(tokensSnapshot.fingerprint);
+  }
+
+  const sourceSnapshot = await readProjectFileSnapshot(
+    project.projectPath,
+    toFingerprintProjectPath(project.projectPath, requestedSlide.sourcePath)
+  );
+  sourceFingerprints.add(sourceSnapshot.fingerprint);
+  const notesSnapshot = requestedSlide.notesPath
+    ? await readProjectFileSnapshot(
+        project.projectPath,
+        toFingerprintProjectPath(project.projectPath, requestedSlide.notesPath)
+      )
+    : undefined;
+  if (notesSnapshot) {
+    sourceFingerprints.add(notesSnapshot.fingerprint);
+  }
+
+  const sourceHtml = sourceSnapshot.bytes.toString("utf8");
+  const notes = notesSnapshot?.bytes.toString("utf8") ?? "";
+  const rawThemeCss = themeSnapshot?.bytes.toString("utf8") ?? "";
+  const previewAssetPaths = new Set<string>();
+  const previewAssetCollector = createProjectUrlSerializer({
+    mode: "package",
+    assetPaths: previewAssetPaths
+  });
+  if (project.themeCssPath) {
+    rewriteCssUrls(project.themeCssPath, rawThemeCss, previewAssetCollector);
+  }
+  rewriteHtmlUrls(requestedSlide.sourcePath, sourceHtml, previewAssetCollector);
+
+  const inlineAssetUrls = new Map<string, string>();
+  let totalInlineAssetBytes = 0;
+  for (const assetPath of [...previewAssetPaths].sort()) {
+    if (!isSafePackageAssetPath(assetPath)) {
+      throw new Error(`Unsafe preview asset path: ${assetPath}`);
+    }
+    const remainingInlineAssetBytes = PREVIEW_MAX_INLINE_TOTAL_BYTES - totalInlineAssetBytes;
+    const assetSnapshot = await readProjectFileSnapshot(project.projectPath, assetPath, {
+      maxBytes: Math.min(PREVIEW_MAX_INLINE_ASSET_BYTES, remainingInlineAssetBytes),
+      limitLabel: "Inline preview asset"
+    });
+    const assetBytes = assetSnapshot.bytes.byteLength;
+    if (assetBytes > PREVIEW_MAX_INLINE_ASSET_BYTES) {
+      throw new Error(
+        `Preview asset ${assetPath} is ${assetBytes} bytes; the inline preview limit is ${PREVIEW_MAX_INLINE_ASSET_BYTES} bytes.`
+      );
+    }
+    totalInlineAssetBytes += assetBytes;
+    if (totalInlineAssetBytes > PREVIEW_MAX_INLINE_TOTAL_BYTES) {
+      throw new Error(
+        `Preview assets total ${totalInlineAssetBytes} bytes; the inline preview limit is ${PREVIEW_MAX_INLINE_TOTAL_BYTES} bytes.`
+      );
+    }
+    sourceFingerprints.add(assetSnapshot.fingerprint);
+    inlineAssetUrls.set(assetPath, toDataUrl(assetPath, assetSnapshot.bytes));
+  }
+
+  const inlinePreviewUrlSerializer = createProjectUrlSerializer({
+    mode: "inline-preview",
+    inlineAssetUrls
+  });
+  const previewThemeCss = project.themeCssPath
+    ? rewriteCssUrls(project.themeCssPath, rawThemeCss, inlinePreviewUrlSerializer)
+    : undefined;
+  const previewSourceHtml = rewriteHtmlUrls(
+    requestedSlide.sourcePath,
+    sourceHtml,
+    inlinePreviewUrlSerializer
+  );
+  const snapshotFingerprints = sourceFingerprints.sorted();
+
+  const currentSourceFingerprints = await fingerprintProjectFiles(
+    project.projectPath,
+    snapshotFingerprints.map((entry) => entry.path)
+  );
+  const changedSources = changedFingerprintPaths(currentSourceFingerprints, snapshotFingerprints);
+  if (changedSources.length > 0) {
+    throw new Error(`Project sources changed during preview: ${changedSources.join(", ")}. Retry the preview.`);
+  }
+
+  const htmlDocument = buildRendererSlidePreviewDocument({
+    title: project.title,
+    language: project.language,
+    viewport: project.viewport,
+    safeArea: project.safeArea,
+    themeCss: previewThemeCss,
+    slide: {
+      id: requestedSlide.id,
+      title: requestedSlide.title,
+      html: previewSourceHtml,
+      notes
+    }
+  });
+  if (!htmlDocument.includes(RENDERER_PREVIEW_CONTENT_SECURITY_POLICY)) {
+    throw new Error("Renderer preview document is missing the required Content Security Policy.");
+  }
+
+  return {
+    projectRoot: project.projectPath,
+    slideId: requestedSlide.id,
+    sourcePath: requestedSlide.sourcePath,
+    title: requestedSlide.title,
+    viewport: project.viewport,
+    notes,
+    htmlDocument,
+    sourceDigest: fingerprintEntriesDigest(snapshotFingerprints)
+  };
+};
 
 export const buildNotesSidecar = async (project: CompilerProjectInput): Promise<NotesSidecar> => {
   const prepared = await buildPreparedProject(project);

@@ -49,6 +49,12 @@ The core loader accepts a project directory, a `deck.json` file path, or a path 
 
 Missing source files produce `missing-file` issues. Invalid manifests produce `schema-validation` issues.
 
+## Preview Loading
+
+Desktop and MCP previews use the compiler's read-only single-slide document builder. It snapshots the manifest and referenced source, resolves theme data, inlines supported local assets, and emits the selected slide through the shared renderer. Preview loading does not acquire the project export lock, create staging directories, or write `exports/` or `.htmlslide/`.
+
+The desktop app displays that complete document in an unprivileged iframe with scripts and network access denied. Project HTML is never inserted into the privileged React document. The iframe keeps the manifest viewport in CSS pixels; the desktop shell scales that fixed canvas to the available review area.
+
 ## App Project Library
 
 The desktop app keeps a local recent-project index at its Electron user-data `library.json` path. The index stores project metadata such as title, path, last-opened time, status, slide count, and optional thumbnail path. It does not store deck source content.

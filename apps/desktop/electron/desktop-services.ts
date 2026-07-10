@@ -37,6 +37,7 @@ import {
   type FetchLike,
   type ModelProvider
 } from "@htmlslide/agent";
+import { buildSlidePreviewDocument } from "@htmlslide/compiler";
 import { AGENT_RUN_REPORT_SCHEMA_VERSION } from "@htmlslide/core/version";
 import {
   DeckPackageValidationError,
@@ -93,13 +94,14 @@ export type DesktopSlidePreview = {
   bullets: string[];
   sourcePath: string;
   notesPath?: string;
-  html: string;
 };
 
 export type DesktopProjectPreview = {
   project: DesktopProjectRecord;
   slides: DesktopSlidePreview[];
 };
+
+export type DesktopSlidePreviewDocument = Awaited<ReturnType<typeof buildSlidePreviewDocument>>;
 
 export type DesktopCreateProjectRequest = {
   title: string;
@@ -1140,8 +1142,7 @@ export async function loadProjectPreview(projectPath: string): Promise<DesktopPr
         speakerNotes: notes.trim(),
         bullets: extractBullets(html, title),
         sourcePath,
-        notesPath,
-        html
+        notesPath
       };
     })
   );
@@ -1150,6 +1151,13 @@ export async function loadProjectPreview(projectPath: string): Promise<DesktopPr
     project,
     slides
   };
+}
+
+export async function loadSlidePreview(
+  projectPath: string,
+  slideId: string
+): Promise<DesktopSlidePreviewDocument> {
+  return buildSlidePreviewDocument(projectPath, { slideId });
 }
 
 export async function loadDesktopPresenterDeck(

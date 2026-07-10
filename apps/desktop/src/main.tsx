@@ -139,8 +139,7 @@ function presenterDeckToWorkspaceState(
         speakerNotes: slide.notesMarkdown,
         bullets: bulletsFromSpeakerNotes(slide.notesMarkdown, slide.title),
         sourcePath: slide.source,
-        notesPath: slide.notesPath ?? undefined,
-        html: slide.html
+        notesPath: slide.notesPath ?? undefined
       };
     })
   };
@@ -222,6 +221,7 @@ function App(): React.ReactNode {
   const [projectPreviews, setProjectPreviews] = useState<Record<string, DesktopProjectPreview>>({});
   const [selectedProjectId, setSelectedProjectId] = useState(sampleProjects[0]?.id ?? "demo-alpha");
   const [activeSlides, setActiveSlides] = useState<SlideSummary[]>(sampleSlides);
+  const [previewRevision, setPreviewRevision] = useState(0);
   const [selectedSlideId, setSelectedSlideId] = useState(sampleSlides[0]?.id ?? "");
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("qa");
   const [qaFilter, setQaFilter] = useState<QaFilter>("all");
@@ -1196,7 +1196,8 @@ function App(): React.ReactNode {
           message
         });
         updateCommandActionStatus("check", { kind: "failed", message });
-      });
+      })
+      .finally(() => setPreviewRevision((current) => current + 1));
   }, [activeProject, activeProjectIsDeckPackage, desktopApi, updateCommandActionStatus]);
 
   const runExport = useCallback((): void => {
@@ -1233,7 +1234,8 @@ function App(): React.ReactNode {
           message
         });
         updateCommandActionStatus("export", { kind: "failed", message });
-    });
+      })
+      .finally(() => setPreviewRevision((current) => current + 1));
   }, [activeProject, activeProjectIsDeckPackage, desktopApi, updateCommandActionStatus]);
 
   const loadPresenterDeck = useCallback(async (): Promise<PresenterDeck | null> => {
@@ -1545,12 +1547,14 @@ function App(): React.ReactNode {
       commandActionStatuses={commandActionStatuses}
       operationStatus={operationStatus}
       project={activeProject}
+      previewRevision={previewRevision}
       qaFilter={qaFilter}
       qaIssues={qaIssues}
       running={running}
       selectedSlideId={selectedSlideId}
       slides={activeSlides}
       stages={agentStages}
+      loadSlidePreview={desktopApi?.loadSlidePreview}
     />
   );
 }

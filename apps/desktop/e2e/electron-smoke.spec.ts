@@ -324,12 +324,18 @@ process.exit(1);
 
 test.describe("HTMLslide desktop smoke", () => {
   let electronApp: ElectronApplication | undefined;
+  let previewNetworkServer: Server | undefined;
   let tempRoot: string | undefined;
 
   test.afterEach(async () => {
     if (electronApp) {
       await electronApp.close().catch(() => undefined);
       electronApp = undefined;
+    }
+
+    if (previewNetworkServer) {
+      await closeServer(previewNetworkServer).catch(() => undefined);
+      previewNetworkServer = undefined;
     }
 
     if (tempRoot) {
@@ -411,7 +417,9 @@ test.describe("HTMLslide desktop smoke", () => {
       timeout: 30_000
     });
     await expect(page.getByRole("heading", { name: "Slides" })).toBeVisible();
-    await expect(page.getByLabel(/slide preview/).first()).toBeVisible();
+    const slidePreview = page.getByRole("region", { name: "Slide preview" });
+    await expect(slidePreview).toBeVisible();
+    await expect(slidePreview.locator("iframe")).toBeVisible({ timeout: 30_000 });
 
     const manifest = JSON.parse(await readFile(path.join(workspaceDir, "investor-update", "deck.json"), "utf8")) as {
       title?: string;
@@ -1029,14 +1037,22 @@ test.describe("HTMLslide desktop smoke", () => {
       timeout: 30_000
     });
     await expect(page.getByRole("heading", { name: "Slides" })).toBeVisible();
-    await expect(page.getByLabel("HTML as source slide preview")).toBeVisible();
-    await expect(page.getByText("PDF and deckpkg remain deterministic artifacts.")).toBeVisible();
+    const initialPreviewFrame = page.locator('iframe[title="HTML as source slide preview"]');
+    await expect(initialPreviewFrame).toBeVisible();
+    await expect(page.frameLocator('iframe[title="HTML as source slide preview"]').getByText(
+      "PDF and deckpkg remain deterministic artifacts."
+    )).toBeVisible();
     await expectNoFrameworkOverlay(page);
 
     await page.getByRole("button", { name: "Generate", exact: true }).click();
 
     await expect(page.getByText("Mock agent completed check and export")).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByRole("heading", { name: "Mock HTMLslide Deck" })).toBeVisible();
+    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Mock HTMLslide Deck" })).toBeVisible();
+    await expect(page.locator('iframe[title="HTMLslide mock deck slide preview"]')).toBeVisible({ timeout: 30_000 });
+    await expect(page.frameLocator('iframe[title="HTMLslide mock deck slide preview"]').getByRole(
+      "heading",
+      { name: "Mock HTMLslide Deck" }
+    )).toBeVisible();
     await expect(page.getByRole("button", { name: /Reviewable outputs/ })).toBeVisible();
     await expect(page.getByText("generate: Mock generation complete")).toBeVisible();
     await expect(page.getByText(/check: Check passed/)).toBeVisible();
@@ -1067,10 +1083,157 @@ test.describe("HTMLslide desktop smoke", () => {
     await page.getByRole("button", { name: "Revert changes", exact: true }).click();
     await expect(page.getByText("Checkpoint reverted")).toBeVisible({ timeout: 30_000 });
     await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible();
-    await expect(page.getByLabel("HTML as source slide preview")).toBeVisible();
+    await expect(page.locator('iframe[title="HTML as source slide preview"]')).toBeVisible({ timeout: 30_000 });
 
     await expectNoFrameworkOverlay(page);
     expect(browserErrors).toEqual([]);
+  });
+
+  test("isolates lazy slide previews, ignores stale selection, fits the manifest viewport, and keeps errors in the canvas", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
+    const homeDir = path.join(tempRoot, "home");
+    const userDataDir = path.join(tempRoot, "user-data");
+    const workspaceDir = path.join(tempRoot, "workspace");
+    const projectPath = path.join(tempRoot, "preview-security");
+    const firstSlidePath = path.join(projectPath, "slides", "001-title.html");
+    const secondSlidePath = path.join(projectPath, "slides", "002-structure.html");
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(userDataDir, { recursive: true });
+    await mkdir(workspaceDir, { recursive: true });
+    await cp(sampleProjectPath, projectPath, { recursive: true });
+    const firstSlideHtml = await readFile(firstSlidePath, "utf8");
+    const hostileNetworkRequests: string[] = [];
+    previewNetworkServer = createServer((request, response) => {
+      hostileNetworkRequests.push(request.url ?? "/");
+      response.writeHead(204);
+      response.end();
+    });
+    await new Promise<void>((resolve, reject) => {
+      previewNetworkServer?.once("error", reject);
+      previewNetworkServer?.listen(0, "127.0.0.1", () => {
+        previewNetworkServer?.off("error", reject);
+        resolve();
+      });
+    });
+    const previewNetworkAddress = previewNetworkServer.address() as AddressInfo;
+    const previewNetworkOrigin = `http://127.0.0.1:${previewNetworkAddress.port}`;
+    const secondSlideHtml = await readFile(secondSlidePath, "utf8");
+    await writeFile(
+      secondSlidePath,
+      `${secondSlideHtml}
+<meta http-equiv="refresh" content="0;url=${previewNetworkOrigin}/refresh" />
+<link rel="stylesheet" href="${previewNetworkOrigin}/style.css" />
+<img src="${previewNetworkOrigin}/image.png" onerror="parent.document.body.dataset.previewIsolationSentinel='escaped'" alt="" />
+<script>
+document.body.dataset.hostilePreview = "executed";
+try { parent.document.body.dataset.previewIsolationSentinel = "escaped"; } catch {}
+fetch("${previewNetworkOrigin}/fetch");
+</script>
+`,
+      "utf8"
+    );
+
+    electronApp = await electron.launch({
+      executablePath: electronExecutable,
+      args: [electronMain],
+      env: {
+        ...process.env,
+        ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+        HOME: homeDir,
+        HTMLSLIDE_USER_DATA_DIR: userDataDir,
+        HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir,
+        HTMLSLIDE_E2E_OPEN_PROJECT_PATH: projectPath,
+        HTMLSLIDE_E2E_PREVIEW_DELAY_MS: "800",
+        HTMLSLIDE_E2E_PREVIEW_DELAY_SLIDE_ID: "001-title"
+      }
+    });
+
+    const page = await electronApp.firstWindow();
+    await page.waitForLoadState("domcontentloaded");
+    await page.evaluate(() => {
+      document.body.dataset.previewIsolationSentinel = "safe";
+    });
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await page.locator(".library-main").getByRole("button", { name: "Open Folder", exact: true }).first().click();
+    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible({
+      timeout: 30_000
+    });
+    await expect(page.getByRole("status", { name: "Slide preview status" })).toContainText("slides/001-title.html");
+
+    const filmstrip = page.locator(".filmstrip-list");
+    await filmstrip.getByRole("button", { name: /Project structure/ }).click();
+    const secondFrame = page.locator('iframe[title="Project structure slide preview"]');
+    const secondFrameContent = page.frameLocator('iframe[title="Project structure slide preview"]');
+    await expect(secondFrame).toBeVisible({ timeout: 30_000 });
+    await expect(secondFrame).toHaveAttribute("sandbox", "");
+    await expect(secondFrame).toHaveAttribute("referrerpolicy", "no-referrer");
+    await expect(secondFrame).not.toHaveAttribute("allow", /.+/u);
+    await expect.poll(() => secondFrame.evaluate((frame) => getComputedStyle(frame).pointerEvents)).toBe("none");
+    await expect(secondFrameContent.locator('meta[http-equiv="Content-Security-Policy"]')).toHaveAttribute(
+      "content",
+      /default-src 'none'.*script-src 'none'/u
+    );
+    await expect(secondFrameContent.locator("body")).not.toHaveAttribute("data-hostile-preview", "executed");
+    await expect(secondFrameContent.getByRole("heading", { name: "Project structure" })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.body.dataset.previewIsolationSentinel)).toBe("safe");
+
+    await page.waitForTimeout(900);
+    expect(hostileNetworkRequests).toEqual([]);
+    await expect(secondFrame).toBeVisible();
+    await expect(page.locator('iframe[title="HTML as source slide preview"]')).toHaveCount(0);
+
+    await filmstrip.getByRole("button", { name: /HTML as source/ }).click();
+    await expect(page.getByRole("status", { name: "Slide preview status" })).toContainText("slides/001-title.html");
+    await filmstrip.getByRole("button", { name: /Project structure/ }).click();
+    await expect(secondFrame).toBeVisible();
+    await page.waitForTimeout(900);
+    await expect(secondFrame).toBeVisible();
+    await expect(page.locator('iframe[title="HTML as source slide preview"]')).toHaveCount(0);
+
+    const externallyUpdatedSecondSlide = `${await readFile(secondSlidePath, "utf8")}
+<p>External preview revision</p>
+`;
+    await writeFile(secondSlidePath, externallyUpdatedSecondSlide, "utf8");
+    await page.locator(".workspace-toolbar").getByRole("button", { name: "Check", exact: true }).click();
+    await expect(secondFrameContent.getByText("External preview revision")).toBeVisible({ timeout: 30_000 });
+
+    const previewDocument = page.locator(".slide-preview-document");
+    const initialScale = await page.locator(".slide-preview-document__surface").getAttribute("data-preview-scale");
+    expect(Number(initialScale)).toBeGreaterThan(0);
+    const fitMetrics = await previewDocument.evaluate((container) => {
+      const fit = container.querySelector<HTMLElement>(".slide-preview-document__fit");
+      const containerRect = container.getBoundingClientRect();
+      const fitRect = fit?.getBoundingClientRect();
+      return {
+        containerHeight: containerRect.height,
+        containerWidth: containerRect.width,
+        fitHeight: fitRect?.height ?? 0,
+        fitWidth: fitRect?.width ?? 0
+      };
+    });
+    expect(fitMetrics.fitWidth).toBeLessThanOrEqual(fitMetrics.containerWidth + 1);
+    expect(fitMetrics.fitHeight).toBeLessThanOrEqual(fitMetrics.containerHeight + 1);
+    await previewDocument.evaluate((container) => {
+      (container as HTMLElement).style.width = "420px";
+    });
+    await expect.poll(async () => Number(
+      await page.locator(".slide-preview-document__surface").getAttribute("data-preview-scale")
+    )).toBeLessThan(Number(initialScale));
+
+    await rm(firstSlidePath, { force: true });
+    await filmstrip.getByRole("button", { name: /HTML as source/ }).click();
+    await expect(page.getByRole("status", { name: "Slide preview status" })).toContainText("slides/001-title.html");
+    const previewError = page.getByRole("alert", { name: "Slide preview error" });
+    await expect(previewError).toContainText("Slide preview could not be built", { timeout: 30_000 });
+    await expect(previewError).toContainText("slides/001-title.html");
+    await expect(previewError).toContainText("Check the source file, then retry this preview.");
+    const retryPreview = previewError.getByRole("button", { name: "Retry preview" });
+    await expect(retryPreview).toBeVisible();
+    await writeFile(firstSlidePath, firstSlideHtml, "utf8");
+    await retryPreview.click();
+    await expect(page.locator('iframe[title="HTML as source slide preview"]')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("heading", { name: "Slides" })).toBeVisible();
+    await expectNoFrameworkOverlay(page);
   });
 
   test("checks, exports, and presents an opened deck", async () => {

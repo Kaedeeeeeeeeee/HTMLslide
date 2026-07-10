@@ -161,6 +161,15 @@ jobs:
       - name: Run desktop Electron E2E
         run: pnpm e2e:desktop
 
+      - name: Upload desktop Electron E2E artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-e2e-${{ github.job }}-${{ github.run_attempt }}
+          path: tmp/playwright/**
+          if-no-files-found: ignore
+          retention-days: 14
+
   desktop-a11y:
     name: Desktop Accessibility E2E
     runs-on: macos-26
@@ -217,6 +226,15 @@ jobs:
 
       - name: Run desktop accessibility E2E
         run: pnpm e2e:desktop:a11y
+
+      - name: Upload desktop accessibility artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-a11y-${{ github.job }}-${{ github.run_attempt }}
+          path: tmp/playwright/**
+          if-no-files-found: ignore
+          retention-days: 14
 
   security:
     name: Security scan

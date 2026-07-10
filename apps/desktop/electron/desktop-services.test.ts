@@ -16,6 +16,7 @@ import {
   loadDesktopPresenterDeck,
   loadDesktopPresenterDeckPackage,
   loadProjectPreview,
+  loadSlidePreview,
   markRecentProjectMissing,
   readDesktopLibrary,
   removeRecentProject,
@@ -537,7 +538,35 @@ describe("desktop services", () => {
       speakerNotes: "# Notes\n\nSpeaker note body.",
       status: "ready"
     });
-    expect(preview.slides[0]?.html).toContain("data-slide-id=\"001-title\"");
+    expect(preview.slides[0]).not.toHaveProperty("html");
+  });
+
+  it("builds an isolated compiler document for one slide without exposing raw HTML in project metadata", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    await writeFile(
+      path.join(projectPath, "slides", "001-title.html"),
+      `<section class="slide" data-slide-id="001-title"><h1>Hostile title</h1><script>parent.document.body.dataset.previewEscaped = "true"</script></section>\n`
+    );
+
+    const [projectPreview, slidePreview] = await Promise.all([
+      loadProjectPreview(projectPath),
+      loadSlidePreview(projectPath, "001-title")
+    ]);
+
+    expect(projectPreview.slides[0]).not.toHaveProperty("html");
+    expect(slidePreview).toMatchObject({
+      notes: "# Notes\n\nSpeaker note body.\n",
+      projectRoot: projectPath,
+      slideId: "001-title",
+      sourcePath: "slides/001-title.html",
+      title: "Title",
+      viewport: { height: 1080, width: 1920 }
+    });
+    expect(slidePreview.sourceDigest).toMatch(/^[a-f0-9]{64}$/u);
+    expect(slidePreview.htmlDocument).toContain('http-equiv="Content-Security-Policy"');
+    expect(slidePreview.htmlDocument).toContain("script-src 'none'");
+    expect(slidePreview.htmlDocument).toContain("previewEscaped");
   });
 
   it("rejects project-relative paths that escape the deck folder", async () => {
@@ -919,7 +948,11 @@ describe("desktop services", () => {
       slideCount: 3
     });
     expect(result.project?.slides.map((slide) => slide.id)).toEqual(["001-title", "002-workflow", "003-review"]);
-    expect(result.project?.slides[2]?.html).toContain('data-slide-id="003-review"');
+    expect(result.project?.slides[2]).toMatchObject({
+      id: "003-review",
+      sourcePath: "slides/003-review.html"
+    });
+    expect(result.project?.slides[2]).not.toHaveProperty("html");
     expect(result.summary).toMatchObject({
       checkErrors: 0,
       checkStatus: "passed",
@@ -1919,7 +1952,11 @@ function requireArg(args, name) {
       added: 0,
       deleted: 0
     });
-    expect(result.project?.slides[0]?.html).toContain("Edited externally");
+    expect(result.project?.slides[0]).toMatchObject({
+      id: "001-title",
+      sourcePath: "slides/001-title.html"
+    });
+    expect(result.project?.slides[0]).not.toHaveProperty("html");
     const stdoutLogText = result.logs
       .filter((log) => log.metadata?.stream === "stdout")
       .map((log) => log.message)

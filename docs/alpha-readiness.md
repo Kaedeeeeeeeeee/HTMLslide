@@ -23,6 +23,7 @@ These gates are expected before each alpha candidate:
 | Code quality | Lint, typecheck, unit tests, compiler regression, CLI tests, and desktop service tests pass. | `pnpm lint`, `pnpm typecheck`, `pnpm test` |
 | Performance guardrails | Preview, PDF export, checker, and presenter state smoke metrics stay under guardrails. | `pnpm perf:smoke` |
 | Security baseline | Source secret scan and high-severity dependency audit pass. | `pnpm security:check` |
+| Canonical preview isolation | Desktop preview uses the shared renderer in a sandboxed, scriptless iframe with deny-by-default CSP, inline local assets, dynamic manifest-viewport scaling, and hostile-content coverage. | `pnpm test`, `pnpm e2e:desktop`, `CI` |
 | Desktop UX smoke | New Deck, Project Library, QA, export, presenter, CLI integration, and official skills flows pass in Electron. | `pnpm e2e:desktop` |
 | Desktop accessibility smoke | First-run, Project Library, New Deck gating, QA Panel, presenter, Settings, and official skills chrome pass WCAG A/AA axe checks plus role semantics. | `pnpm e2e:desktop:a11y`, `CI` |
 | Alpha package | Unsigned DMG/ZIP/manifest plus artifact SHA-256 metadata and a prefilled RC acceptance template are created and smoked from the packaged app, packaged CLI, and packaged MCP diagnostics. | `pnpm verify:package:alpha`, `Alpha Package` |
@@ -49,7 +50,8 @@ These gates are expected before each alpha candidate:
 | Check finds missing asset | Linter fixtures and Electron QA panel E2E cover missing asset issues. |
 | Check finds missing notes | Linter fixtures and Electron QA panel E2E cover missing notes issues. |
 | QA panel shows issues | Electron E2E covers failing check display. |
-| App shell accessibility | Desktop accessibility E2E covers onboarding, Project Library, New Deck gating, QA Panel, presenter rehearsal, Settings, and official skills chrome while excluding user-authored slide fragments. |
+| App shell accessibility | Desktop accessibility E2E covers onboarding, Project Library, New Deck gating, canonical preview host states, QA Panel, presenter rehearsal, Settings, and official skills chrome. The sandboxed user-authored preview document is validated separately. |
+| Canonical slide preview | Compiler/renderer tests cover deterministic single-slide documents, fixed manifest viewports, theme and local-asset parity, read-only generation, deny-by-default CSP, and removal of runtime scripts/notes. Electron E2E covers selection, scaling, stale-response handling, error recovery, and hostile authored content. |
 | PDF page count is correct | Compiler tests cover PDF export metadata and page count. |
 | PNG thumbnails are produced | Compiler tests and export fixtures cover deterministic thumbnails. |
 | Export integrity metadata is enforced | Core/compiler/linter tests cover deterministic SHA-256 metadata, lock and staging cleanup, partial exports, legacy missing-manifest fallback, artifact edits, and invalid or truncated manifests failing closed. |

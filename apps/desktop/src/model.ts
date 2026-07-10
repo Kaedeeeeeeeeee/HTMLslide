@@ -67,7 +67,6 @@ export interface SlideSummary {
   bullets: string[];
   sourcePath?: string;
   notesPath?: string;
-  html?: string;
 }
 
 export interface QaIssue {

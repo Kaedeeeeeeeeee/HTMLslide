@@ -53,6 +53,9 @@ importers:
       '@htmlslide/agent-adapters':
         specifier: workspace:*
         version: link:../../packages/agent-adapters
+      '@htmlslide/compiler':
+        specifier: workspace:*
+        version: link:../../packages/compiler
       '@htmlslide/core':
         specifier: workspace:*
         version: link:../../packages/core

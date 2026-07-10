@@ -497,7 +497,7 @@ export const loadProject = async (projectPath = process.cwd()): Promise<LoadedPr
   } catch (error) {
     if (error instanceof ProjectLoadError) {
       throw Object.assign(error, {
-        exitCode: error.code === "PROJECT_NOT_FOUND" ? EXIT_CODES.projectNotFound : EXIT_CODES.validationFailed
+        exitCode: exitCodeForProjectLoadError(error)
       });
     }
     throw Object.assign(error instanceof Error ? error : new Error(String(error)), {
@@ -514,22 +514,37 @@ export const tryLoadProjectForCheck = async (projectPath = process.cwd()): Promi
     };
   } catch (error) {
     if (error instanceof ProjectLoadError) {
+      const issueSummary = error.issues.reduce(
+        (summary, issue) => {
+          if (issue.severity === "error") {
+            summary.errors += 1;
+          } else if (issue.severity === "warning") {
+            summary.warnings += 1;
+          } else {
+            summary.info += 1;
+          }
+          return summary;
+        },
+        { errors: 0, warnings: 0, info: 0 }
+      );
       const report: CheckReport = {
         status: "failed",
         projectPath: path.resolve(projectPath),
         summary: {
-          errors: Math.max(error.issues.length, 1),
-          warnings: 0,
+          errors: Math.max(issueSummary.errors, 1),
+          warnings: issueSummary.warnings,
           suggestions: 0,
-          info: 0
+          info: issueSummary.info
         },
         issues:
           error.issues.length > 0
             ? error.issues.map((issue) => ({
                 slideId: issue.slideId ?? "deck",
-                severity: "error",
-                type: "missing-slide-source",
+                severity: issue.severity,
+                type: issue.type,
                 message: issue.message,
+                path: issue.path,
+                selector: issue.selector,
                 suggestedFix: issue.suggestedFix ?? "Fix the project manifest and rerun htmlslide check.",
                 agentInstruction:
                   issue.suggestedFix ?? "Inspect deck.json and referenced source files, then fix the reported load error."
@@ -547,12 +562,23 @@ export const tryLoadProjectForCheck = async (projectPath = process.cwd()): Promi
       };
       return {
         ok: false,
-        exitCode: error.code === "PROJECT_NOT_FOUND" ? EXIT_CODES.projectNotFound : EXIT_CODES.validationFailed,
+        exitCode: exitCodeForProjectLoadError(error),
         report
       };
     }
     throw error;
   }
+};
+
+const exitCodeForProjectLoadError = (error: ProjectLoadError): number => {
+  if (error.code === "PROJECT_NOT_FOUND") {
+    return EXIT_CODES.projectNotFound;
+  }
+  if (error.code === "PERMISSION_DENIED") {
+    return EXIT_CODES.permissionDenied;
+  }
+
+  return error.code === "INCOMPATIBLE_SCHEMA" ? EXIT_CODES.incompatibleSchema : EXIT_CODES.validationFailed;
 };
 
 const fromCoreProject = (project: LoadedDeckProject): LoadedProject => ({

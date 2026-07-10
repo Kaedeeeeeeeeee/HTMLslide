@@ -1,3 +1,5 @@
+import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -85,6 +87,80 @@ describe("project loading", () => {
 
     expect(result.error.code).toBe("VALIDATION_FAILED");
     expect(result.issues.map((issue) => issue.path)).toContain("slides.1.id");
+  });
+
+  it("classifies an unsupported schema version separately from other validation failures", async () => {
+    const result = await tryLoadDeckProject(fixturePath("invalid-unsupported-schema"));
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error("Expected unsupported schema fixture to fail");
+    }
+
+    expect(result.error.code).toBe("INCOMPATIBLE_SCHEMA");
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({ type: "schema-validation", path: "schemaVersion" })
+    );
+  });
+
+  it("reports malformed deck JSON as a structured invalid-json issue", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "htmlslide-core-"));
+    try {
+      await fs.writeFile(path.join(root, "deck.json"), '{"schemaVersion":');
+      const result = await tryLoadDeckProject(root);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        throw new Error("Expected malformed deck JSON to fail");
+      }
+      expect(result.error.code).toBe("INVALID_JSON");
+      expect(result.issues).toEqual([
+        expect.objectContaining({ type: "invalid-json", path: "deck.json" })
+      ]);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports unreadable deck paths as structured project-read-failed issues", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "htmlslide-core-"));
+    try {
+      await fs.mkdir(path.join(root, "deck.json"));
+      const result = await tryLoadDeckProject(root);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        throw new Error("Expected directory-backed deck.json to fail");
+      }
+      expect(result.error.code).toBe("DECK_READ_FAILED");
+      expect(result.issues).toEqual([
+        expect.objectContaining({ type: "project-read-failed", path: "deck.json" })
+      ]);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.runIf(process.platform !== "win32")("classifies deck read permission failures", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "htmlslide-core-"));
+    const deckPath = path.join(root, "deck.json");
+    try {
+      await fs.writeFile(deckPath, '{"schemaVersion":"0.1.0"}');
+      await fs.chmod(deckPath, 0o000);
+      const result = await tryLoadDeckProject(root);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        throw new Error("Expected unreadable deck.json to fail");
+      }
+      expect(result.error.code).toBe("PERMISSION_DENIED");
+      expect(result.issues).toEqual([
+        expect.objectContaining({ type: "permission-denied", path: "deck.json" })
+      ]);
+    } finally {
+      await fs.chmod(deckPath, 0o600).catch(() => undefined);
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 });
 

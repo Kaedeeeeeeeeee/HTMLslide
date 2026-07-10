@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,6 +23,7 @@ import {
 const execFileAsync = promisify(execFile);
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(testDir, "../../..");
+const fixturePath = (name: string): string => path.join(repoRoot, "packages", "test-fixtures", "decks", name);
 const tsxBin = path.join(repoRoot, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
 const cliBin = path.join(repoRoot, "packages", "cli", "src", "bin", "htmlslide.ts");
 
@@ -190,7 +191,143 @@ describe("CLI project helpers", () => {
       }
       expect(loaded.report.status).toBe("failed");
       expect(loaded.report.summary.errors).toBeGreaterThan(0);
+      expect(loaded.exitCode).toBe(EXIT_CODES.projectNotFound);
+      expect(loaded.report.issues[0]?.type).toBe("missing-slide-source");
       expect(loaded.report.issues[0]?.agentInstruction).toBeTruthy();
+
+      const failure = await runCli(["check", path.join(root, "missing"), "--json"]).catch(
+        (error: unknown) => error
+      );
+      expect(failure).toMatchObject({ code: EXIT_CODES.projectNotFound });
+      const report = JSON.parse(String((failure as { stdout?: unknown }).stdout)) as {
+        issues: Array<{ type: string }>;
+      };
+      expect(report.issues[0]?.type).toBe("missing-slide-source");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves schema diagnostics and exits 2 for an invalid deck", async () => {
+    const projectPath = fixturePath("invalid-duplicate-slide-id");
+    const loaded = await tryLoadProjectForCheck(projectPath);
+
+    expect(loaded.ok).toBe(false);
+    if (loaded.ok) {
+      throw new Error("Expected project load to fail");
+    }
+    expect(loaded.exitCode).toBe(EXIT_CODES.validationFailed);
+    expect(loaded.report.issues[0]).toMatchObject({
+      slideId: "deck",
+      severity: "error",
+      type: "schema-validation",
+      path: "slides.1.id"
+    });
+
+    const failure = await runCli(["check", projectPath, "--json"]).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: EXIT_CODES.validationFailed });
+    const report = JSON.parse(String((failure as { stdout?: unknown }).stdout)) as {
+      issues: Array<{ type: string; path?: string }>;
+    };
+    expect(report.issues[0]).toMatchObject({ type: "schema-validation", path: "slides.1.id" });
+  });
+
+  it("preserves schema diagnostics and exits 8 for an incompatible schema", async () => {
+    const projectPath = fixturePath("invalid-unsupported-schema");
+    const loaded = await tryLoadProjectForCheck(projectPath);
+
+    expect(loaded.ok).toBe(false);
+    if (loaded.ok) {
+      throw new Error("Expected project load to fail");
+    }
+    expect(loaded.exitCode).toBe(EXIT_CODES.incompatibleSchema);
+    expect(loaded.report.issues[0]).toMatchObject({
+      slideId: "deck",
+      severity: "error",
+      type: "schema-validation",
+      path: "schemaVersion"
+    });
+
+    const failure = await runCli(["check", projectPath, "--json"]).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: EXIT_CODES.incompatibleSchema });
+    const report = JSON.parse(String((failure as { stdout?: unknown }).stdout)) as {
+      issues: Array<{ type: string; path?: string }>;
+    };
+    expect(report.issues[0]).toMatchObject({ type: "schema-validation", path: "schemaVersion" });
+  });
+
+  it("treats a missing schema version as validation failure rather than incompatibility", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
+    try {
+      await writeFile(path.join(root, "deck.json"), JSON.stringify({ id: "missing_schema_version" }));
+      const loaded = await tryLoadProjectForCheck(root);
+
+      expect(loaded.ok).toBe(false);
+      if (loaded.ok) {
+        throw new Error("Expected project load to fail");
+      }
+      expect(loaded.exitCode).toBe(EXIT_CODES.validationFailed);
+      expect(loaded.report.issues).toContainEqual(
+        expect.objectContaining({ type: "schema-validation", path: "schemaVersion" })
+      );
+
+      const failure = await runCli(["check", root, "--json"]).catch((error: unknown) => error);
+      expect(failure).toMatchObject({ code: EXIT_CODES.validationFailed });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports malformed deck JSON without misclassifying it as a missing slide", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
+    try {
+      await writeFile(path.join(root, "deck.json"), '{"schemaVersion":');
+      const failure = await runCli(["check", root, "--json"]).catch((error: unknown) => error);
+
+      expect(failure).toMatchObject({ code: EXIT_CODES.validationFailed });
+      const report = JSON.parse(String((failure as { stdout?: unknown }).stdout)) as {
+        issues: Array<{ type: string; path?: string; suggestedFix: string }>;
+      };
+      expect(report.issues[0]).toMatchObject({
+        type: "invalid-json",
+        path: "deck.json",
+        suggestedFix: "Fix the JSON syntax in deck.json and rerun htmlslide check."
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.runIf(process.platform !== "win32")("exits 5 when deck.json cannot be read due to permissions", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
+    const deckPath = path.join(root, "deck.json");
+    try {
+      await writeFile(deckPath, '{"schemaVersion":"0.1.0"}');
+      await chmod(deckPath, 0o000);
+      const failure = await runCli(["check", root, "--json"]).catch((error: unknown) => error);
+
+      expect(failure).toMatchObject({ code: EXIT_CODES.permissionDenied });
+      const report = JSON.parse(String((failure as { stdout?: unknown }).stdout)) as {
+        issues: Array<{ type: string; path?: string }>;
+      };
+      expect(report.issues[0]).toMatchObject({ type: "permission-denied", path: "deck.json" });
+    } finally {
+      await chmod(deckPath, 0o600).catch(() => undefined);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("treats a non-string schema version as validation failure", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
+    try {
+      await writeFile(path.join(root, "deck.json"), JSON.stringify({ schemaVersion: 1 }));
+      const loaded = await tryLoadProjectForCheck(root);
+
+      expect(loaded.ok).toBe(false);
+      if (loaded.ok) {
+        throw new Error("Expected project load to fail");
+      }
+      expect(loaded.exitCode).toBe(EXIT_CODES.validationFailed);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

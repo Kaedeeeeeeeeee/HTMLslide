@@ -4,6 +4,7 @@ import type { Deck, DeckSlide } from "./deck-schema.js";
 import { validateDeck } from "./deck-schema.js";
 import type { HtmlslideIssue } from "./issues.js";
 import { resolveProjectRelativePath } from "./paths.js";
+import { DECK_SCHEMA_VERSION } from "./version.js";
 
 export const DECK_FILENAME = "deck.json";
 
@@ -11,6 +12,8 @@ export type ProjectLoadErrorCode =
   | "PROJECT_NOT_FOUND"
   | "DECK_READ_FAILED"
   | "INVALID_JSON"
+  | "INCOMPATIBLE_SCHEMA"
+  | "PERMISSION_DENIED"
   | "VALIDATION_FAILED"
   | "MISSING_PROJECT_FILE";
 
@@ -78,7 +81,8 @@ export async function loadDeckProject(inputPath = ".", options: LoadDeckProjectO
   const validationResult = validateDeck(deckValue);
 
   if (!validationResult.ok) {
-    throw new ProjectLoadError("VALIDATION_FAILED", `${DECK_FILENAME} failed schema validation.`, validationResult.issues);
+    const code = hasIncompatibleSchemaVersion(deckValue) ? "INCOMPATIBLE_SCHEMA" : "VALIDATION_FAILED";
+    throw new ProjectLoadError(code, `${DECK_FILENAME} failed schema validation.`, validationResult.issues);
   }
 
   const project = resolveDeckProjectPaths(projectRoot, validationResult.deck);
@@ -91,6 +95,15 @@ export async function loadDeckProject(inputPath = ".", options: LoadDeckProjectO
   }
 
   return project;
+}
+
+function hasIncompatibleSchemaVersion(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const manifest = value as Record<string, unknown>;
+  return typeof manifest.schemaVersion === "string" && manifest.schemaVersion !== DECK_SCHEMA_VERSION;
 }
 
 export async function tryLoadDeckProject(
@@ -151,15 +164,44 @@ async function readDeckJson(deckPath: string): Promise<string> {
   try {
     return await fs.readFile(deckPath, "utf8");
   } catch (error) {
-    throw new ProjectLoadError("DECK_READ_FAILED", `Unable to read ${deckPath}: ${formatUnknownError(error)}`);
+    const message = `Unable to read ${deckPath}: ${formatUnknownError(error)}`;
+    const permissionDenied = isPermissionError(error);
+    throw new ProjectLoadError(permissionDenied ? "PERMISSION_DENIED" : "DECK_READ_FAILED", message, [
+      {
+        severity: "error",
+        type: permissionDenied ? "permission-denied" : "project-read-failed",
+        path: DECK_FILENAME,
+        message,
+        suggestedFix: permissionDenied
+          ? "Grant the current user read permission for deck.json and rerun htmlslide check."
+          : "Verify deck.json is a readable file and that the current user has permission to open it."
+      }
+    ]);
   }
+}
+
+function isPermissionError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return false;
+  }
+
+  return error.code === "EACCES" || error.code === "EPERM";
 }
 
 function parseDeckJson(rawDeck: string, deckPath: string): unknown {
   try {
     return JSON.parse(rawDeck);
   } catch (error) {
-    throw new ProjectLoadError("INVALID_JSON", `Unable to parse ${deckPath}: ${formatUnknownError(error)}`);
+    const message = `Unable to parse ${deckPath}: ${formatUnknownError(error)}`;
+    throw new ProjectLoadError("INVALID_JSON", message, [
+      {
+        severity: "error",
+        type: "invalid-json",
+        path: DECK_FILENAME,
+        message,
+        suggestedFix: "Fix the JSON syntax in deck.json and rerun htmlslide check."
+      }
+    ]);
   }
 }
 

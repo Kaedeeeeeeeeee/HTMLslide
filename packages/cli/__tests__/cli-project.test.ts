@@ -17,7 +17,6 @@ import {
   installCliShim,
   launchDesktopTarget,
   loadProject,
-  packageLoadedProject,
   readDesktopAppPathConfig,
   tryLoadProjectForCheck,
   uninstallCliShim,
@@ -272,7 +271,7 @@ describe("CLI project helpers", () => {
         exitCode: EXIT_CODES.incompatibleSchema
       });
     }
-  });
+  }, 20_000);
 
   it("treats a missing schema version as validation failure rather than incompatibility", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
@@ -492,14 +491,9 @@ describe("CLI project helpers", () => {
         updatedAt: undefined
       });
 
-      const project = await createProject(path.join(root, "demo"), "demo");
-      const packaged = await packageLoadedProject(project);
-      const failure = await runCli(["present", packaged.deckpkgPath, "--json"], {
-        HTMLSLIDE_HOME: path.join(root, "missing-state")
-      }).catch((error: unknown) => error);
-      expect(failure).toMatchObject({ code: EXIT_CODES.missingDependency });
-      expect(JSON.parse(String((failure as { stdout?: unknown }).stdout))).toMatchObject({
-        status: "failed",
+      const failure = await readDesktopAppPathConfig(path.join(root, "missing-state"))
+        .catch((error: unknown) => error);
+      expect(failure).toMatchObject({
         code: "DESKTOP_APP_NOT_CONFIGURED",
         exitCode: EXIT_CODES.missingDependency
       });

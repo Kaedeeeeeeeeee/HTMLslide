@@ -31,10 +31,14 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
   exportProject: (projectPath: string) => ipcRenderer.invoke("htmlslide:export-project", projectPath),
   loadPresenterDeck: (projectPath: string) => ipcRenderer.invoke("htmlslide:load-presenter-deck", projectPath),
   loadPresenterDeckPackage: (deckpkgPath: string) => ipcRenderer.invoke("htmlslide:load-presenter-deckpkg", deckpkgPath),
-  onOpenDeckPackage: (handler: (request: { kind: "deckpkg"; path: string }) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, request: { kind: "deckpkg"; path: string }) => handler(request);
-    ipcRenderer.on("htmlslide:open-deckpkg", listener);
-    return () => ipcRenderer.removeListener("htmlslide:open-deckpkg", listener);
+  onOpenRequest: (handler: (request: { kind: "deckpkg" | "project"; path: string; requestId: number }) => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      request: { kind: "deckpkg" | "project"; path: string; requestId: number }
+    ) => handler(request);
+    ipcRenderer.on("htmlslide:open-request", listener);
+    void ipcRenderer.invoke("htmlslide:open-request-ready");
+    return () => ipcRenderer.removeListener("htmlslide:open-request", listener);
   },
   reportSmokeReady: (marker: unknown) => ipcRenderer.invoke("htmlslide:report-smoke-ready", marker),
   listPresenterDisplays: () => ipcRenderer.invoke("htmlslide:list-presenter-displays"),

@@ -176,10 +176,16 @@ export interface SkillLicenseCompatibilityReport {
 }
 
 export type SkillInstallTarget =
-  | {
-      kind: "global";
-      homeDir: string;
-    }
+  | ({ kind: "global" } & (
+      | {
+          homeDir: string;
+          htmlslideHomeDir?: never;
+        }
+      | {
+          htmlslideHomeDir: string;
+          homeDir?: never;
+        }
+    ))
   | {
       kind: "project";
       projectRoot: string;
@@ -189,8 +195,12 @@ export type SkillInstallTarget =
 export interface SkillInstallFile {
   path: string;
   content: string;
-  kind: "entrypoint";
+  kind: "entrypoint" | "support" | "management";
   overwrite: "replace";
+  encoding?: "utf8" | "base64";
+  mode?: number;
+  sha256?: string;
+  sizeBytes?: number;
 }
 
 export interface SkillInstallWarning {
@@ -203,7 +213,9 @@ export interface SkillInstallWarning {
     | "high-risk"
     | "license-review-required"
     | "license-unknown"
-    | "license-incompatible";
+    | "license-incompatible"
+    | "unsupported-install-target"
+    | "invalid-project-location";
   severity: "warning" | "error";
   message: string;
 }
@@ -221,4 +233,152 @@ export interface SkillInstallPlanOptions {
   metadata: SkillMetadata;
   markdown: string;
   target: SkillInstallTarget;
+}
+
+export const SKILL_SOURCE_KINDS = ["official", "local-file", "local-directory", "url"] as const;
+export type SkillSourceKind = (typeof SKILL_SOURCE_KINDS)[number];
+
+export type SkillSourceReference =
+  | string
+  | { kind: "official"; name: string }
+  | { kind: "local"; path: string }
+  | { kind: "url"; url: string };
+
+export interface SkillSourceFile {
+  relativePath: string;
+  content: string;
+  encoding: "utf8" | "base64";
+  mode: 0o644 | 0o755;
+  sha256: string;
+  sizeBytes: number;
+}
+
+export interface ResolvedSkillSource {
+  kind: SkillSourceKind;
+  reference: string;
+  metadata: SkillMetadata;
+  markdown: string;
+  files: SkillSourceFile[];
+}
+
+export interface ManagedSkillFileRecord {
+  path: string;
+  sha256: string;
+  sizeBytes: number;
+  mode: 0o644 | 0o755;
+}
+
+export interface ManagedSkillRecord {
+  schemaVersion: 1;
+  manager: "htmlslide";
+  name: string;
+  version: string;
+  entrypoint: string;
+  sourceKind: SkillSourceKind;
+  files: ManagedSkillFileRecord[];
+}
+
+export interface SkillStoreInstallPlan extends SkillInstallPlan {
+  managed: true;
+  source: {
+    kind: SkillSourceKind;
+    reference: string;
+  };
+  confirmationRequired: boolean;
+}
+
+export type SkillStoreErrorCode =
+  | "SKILL_SOURCE_NOT_FOUND"
+  | "SKILL_SOURCE_UNSUPPORTED"
+  | "SKILL_SOURCE_URL_INSECURE"
+  | "SKILL_SOURCE_URL_INVALID"
+  | "SKILL_SOURCE_URL_UNSAFE"
+  | "SKILL_SOURCE_DNS_FAILED"
+  | "SKILL_SOURCE_FETCH_FAILED"
+  | "SKILL_SOURCE_HTTP_ERROR"
+  | "SKILL_SOURCE_REDIRECT_INVALID"
+  | "SKILL_SOURCE_REDIRECT_LIMIT"
+  | "SKILL_SOURCE_CONTENT_TYPE_UNSAFE"
+  | "SKILL_SOURCE_TOO_LARGE"
+  | "SKILL_SOURCE_TOO_MANY_FILES"
+  | "SKILL_SOURCE_INVALID_UTF8"
+  | "SKILL_SOURCE_INVALID"
+  | "SKILL_SOURCE_SYMLINK"
+  | "SKILL_SOURCE_UNSAFE_FILE"
+  | "SKILL_PLAN_NOT_INSTALLABLE"
+  | "SKILL_CONFIRMATION_REQUIRED"
+  | "SKILL_TARGET_UNSAFE"
+  | "SKILL_TARGET_CONFLICT"
+  | "SKILL_TARGET_UNMANAGED"
+  | "SKILL_TARGET_INVALID"
+  | "SKILL_TARGET_MODIFIED"
+  | "SKILL_LEGACY_ADOPTION_NOT_ALLOWED"
+  | "SKILL_LEGACY_ADOPTION_UNSAFE"
+  | "SKILL_NOT_FOUND"
+  | "SKILL_NAME_INVALID"
+  | "SKILL_INSTALL_FAILED"
+  | "SKILL_REMOVE_FAILED";
+
+export type SkillStoreLocation = "global" | ProjectSkillInstallLocation;
+export type SkillStoreIntegrity = "verified" | "modified" | "unmanaged" | "invalid";
+
+export interface InstalledSkillSummary {
+  name: string;
+  version: string;
+  description: string;
+  license: SkillLicense;
+  riskLevel: SkillRiskLevel;
+  location: SkillStoreLocation;
+  directoryPath: string;
+  entrypointPath: string;
+  managed: boolean;
+  integrity: SkillStoreIntegrity;
+}
+
+export interface InstalledSkillInspection extends InstalledSkillSummary {
+  metadata: SkillMetadata;
+  markdown: string;
+  record?: ManagedSkillRecord;
+}
+
+export interface InvalidInstalledSkill {
+  name: string;
+  location: SkillStoreLocation;
+  directoryPath: string;
+  code: SkillStoreErrorCode;
+  message: string;
+}
+
+export interface ListInstalledSkillsResult {
+  target: SkillInstallTargetKind;
+  skills: InstalledSkillSummary[];
+  invalid: InvalidInstalledSkill[];
+}
+
+export interface SkillInstallLocationResult {
+  location: SkillStoreLocation;
+  directoryPath: string;
+  action: "installed" | "updated" | "adopted" | "unchanged";
+}
+
+export interface SkillInstallResult {
+  action: "installed" | "updated" | "adopted" | "unchanged";
+  skillName: string;
+  version: string;
+  source: {
+    kind: SkillSourceKind;
+    reference: string;
+  };
+  locations: SkillInstallLocationResult[];
+  warnings: SkillInstallWarning[];
+}
+
+export interface SkillRemoveResult {
+  action: "removed";
+  skillName: string;
+  removed: Array<{
+    location: SkillStoreLocation;
+    directoryPath: string;
+  }>;
+  missing: SkillStoreLocation[];
 }

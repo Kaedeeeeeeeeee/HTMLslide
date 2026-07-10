@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import JSZip from "jszip";
 import {
   sortIssuesDeterministically,
@@ -9,6 +9,7 @@ import {
   type IssueSummary
 } from "@htmlslide/core";
 import { DECK_PACKAGE_SCHEMA_VERSION as CORE_DECK_PACKAGE_SCHEMA_VERSION } from "@htmlslide/core/version";
+import { preflightZipArchive } from "./zip-preflight.js";
 
 export const DECK_PACKAGE_SCHEMA_VERSION = CORE_DECK_PACKAGE_SCHEMA_VERSION;
 export const PRESENTER_SESSION_MODE = "rehearsal" as const;
@@ -16,6 +17,17 @@ export const DEFAULT_NOTES_FONT_SIZE_PX = 20;
 export const MIN_NOTES_FONT_SIZE_PX = 12;
 export const MAX_NOTES_FONT_SIZE_PX = 40;
 export const NOTES_FONT_SIZE_STEP_PX = 2;
+
+/**
+ * Public-alpha resource ceilings for untrusted deck packages. A bounded ZIP
+ * preflight measures actual expansion before JSZip can materialize an entry.
+ */
+export const DECK_PACKAGE_RESOURCE_LIMITS = Object.freeze({
+  maxArchiveBytes: 128 * 1024 * 1024,
+  maxEntryCount: 4_096,
+  maxEntryUncompressedBytes: 64 * 1024 * 1024,
+  maxTotalUncompressedBytes: 256 * 1024 * 1024
+});
 
 export type DeckPackageSchemaVersion = typeof DECK_PACKAGE_SCHEMA_VERSION;
 export type PresenterSessionMode = typeof PRESENTER_SESSION_MODE;
@@ -171,8 +183,16 @@ export async function readDeckPackage(deckpkgPath: string): Promise<PresenterDec
 
   let bytes: Uint8Array;
   try {
+    const deckpkgStats = await stat(deckpkgPath);
+    validateArchiveByteLength(deckpkgStats.size, issues, deckpkgPath);
+    if (issues.length > 0) {
+      failValidation(issues, deckpkgPath);
+    }
     bytes = await readFile(deckpkgPath);
   } catch (error) {
+    if (error instanceof DeckPackageValidationError) {
+      throw error;
+    }
     const detail = error instanceof Error ? error.message : "Unknown file read failure.";
     pushIssue(issues, "deckpkg-read-failed", `Unable to read deck package: ${detail}`, deckpkgPath);
     failValidation(issues, deckpkgPath);
@@ -190,12 +210,43 @@ export async function readDeckPackageBytes(
   options: ReadDeckPackageBytesOptions = {}
 ): Promise<PresenterDeckPackage> {
   const issues: HtmlslideIssue[] = [];
+  const packagePath = options.sourcePath ?? "deckpkg";
+  validateArchiveByteLength(bytes.byteLength, issues, packagePath);
+  if (issues.length === 0) {
+    const preflightIssue = await preflightZipArchive(bytes, DECK_PACKAGE_RESOURCE_LIMITS, packagePath);
+    if (preflightIssue) {
+      pushIssue(issues, preflightIssue.type, preflightIssue.message, preflightIssue.path);
+    }
+  }
+  if (issues.length > 0) {
+    failValidation(issues, options.sourcePath);
+  }
+
   let zip: JSZip;
   try {
     zip = await JSZip.loadAsync(bytes);
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Unknown ZIP parse failure.";
-    pushIssue(issues, "invalid-deckpkg-archive", `Unable to open deck package ZIP archive: ${detail}`, "deckpkg");
+    if (/encrypted zip/iu.test(detail)) {
+      pushIssue(
+        issues,
+        "encrypted-deckpkg-archive",
+        "Encrypted deck package archives are not supported. Re-export the deck without ZIP encryption.",
+        packagePath
+      );
+    } else {
+      pushIssue(
+        issues,
+        "invalid-deckpkg-archive",
+        `Unable to open deck package ZIP archive: ${detail}`,
+        packagePath
+      );
+    }
+    failValidation(issues, options.sourcePath);
+  }
+
+  validateArchiveEntries(zip, issues, packagePath);
+  if (issues.length > 0) {
     failValidation(issues, options.sourcePath);
   }
 
@@ -683,6 +734,60 @@ const validateDeckPackageRead = async (
       };
     }
     throw error;
+  }
+};
+
+const validateArchiveByteLength = (
+  byteLength: number,
+  issues: HtmlslideIssue[],
+  packagePath: string
+): void => {
+  if (byteLength <= DECK_PACKAGE_RESOURCE_LIMITS.maxArchiveBytes) {
+    return;
+  }
+  pushIssue(
+    issues,
+    "deckpkg-archive-too-large",
+    `Deck package archive is ${byteLength} bytes; the alpha limit is ${DECK_PACKAGE_RESOURCE_LIMITS.maxArchiveBytes} bytes. Reduce embedded asset sizes and re-export the deck.`,
+    packagePath
+  );
+};
+
+const validateArchiveEntries = (
+  zip: JSZip,
+  issues: HtmlslideIssue[],
+  packagePath: string
+): void => {
+  const entries = Object.values(zip.files);
+  if (entries.length > DECK_PACKAGE_RESOURCE_LIMITS.maxEntryCount) {
+    pushIssue(
+      issues,
+      "deckpkg-entry-count-exceeded",
+      `Deck package contains ${entries.length} loaded archive entries; the alpha limit is ${DECK_PACKAGE_RESOURCE_LIMITS.maxEntryCount}. Remove unused package assets and re-export the deck.`,
+      packagePath
+    );
+    return;
+  }
+
+  for (const entry of entries) {
+    const originalName = entry.unsafeOriginalName ?? entry.name;
+    const pathToValidate = entry.dir ? entry.name.replace(/\/+$/u, "") : entry.name;
+    if (
+      pathToValidate.length === 0 ||
+      !isSafeDeckPackagePath(pathToValidate) ||
+      (entry.unsafeOriginalName !== undefined && entry.unsafeOriginalName !== entry.name)
+    ) {
+      pushIssue(
+        issues,
+        "unsafe-deckpkg-entry-path",
+        `Archive entry ${originalName} uses an unsafe path. Re-export the deck with project-relative package paths that contain no traversal, absolute paths, or backslashes.`,
+        originalName
+      );
+      return;
+    }
+    if (entry.dir) {
+      continue;
+    }
   }
 };
 

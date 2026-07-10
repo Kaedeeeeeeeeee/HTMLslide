@@ -156,6 +156,7 @@ const cliRuntimePackages = [
   "@htmlslide/linter",
   "@htmlslide/compiler",
   "@htmlslide/mcp-server",
+  "@htmlslide/presenter",
   "@htmlslide/skills",
   "@htmlslide/cli"
 ];
@@ -167,7 +168,7 @@ function buildCliRuntimePackages() {
 }
 
 async function pruneCliRuntime(cliRuntimePath) {
-  const packageNames = ["agent", "cli", "compiler", "core", "linter", "mcp-server", "renderer", "skills"];
+  const packageNames = ["agent", "cli", "compiler", "core", "linter", "mcp-server", "presenter", "renderer", "skills"];
   const redundantPaths = [
     path.join(cliRuntimePath, "__tests__"),
     path.join(cliRuntimePath, "src"),

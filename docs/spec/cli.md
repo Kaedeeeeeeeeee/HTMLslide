@@ -7,9 +7,16 @@ Initial commands:
 - `htmlslide new <name> [--template <id>]` creates a deck project from a built-in template. The default template id is `default`.
 - `htmlslide init [--template <id>]` initializes the current folder as a deck project from a built-in template.
 - `htmlslide templates list --json` lists built-in deck template metadata.
+- `htmlslide open [path] --json` opens a loadable deck project or validated `.deckpkg` in the configured macOS app.
 - `htmlslide check [path] --json` discovers `deck.json` from a project root, nested source path, or direct `deck.json` path, then validates schema, files, notes, and source rules.
 - `htmlslide export [path] --pdf --html --deckpkg --thumbnails` creates export artifacts plus `exports/export-manifest.json` after a successful check.
 - `htmlslide export [path] --no-pdf --no-deckpkg --no-thumbnails` skips selected artifacts while still writing required sidecars such as `notes.json`.
+- `htmlslide package [path] --json` checks a project and exports its portable `.deckpkg` plus required package sidecars.
+- `htmlslide present [file] --json` validates a `.deckpkg`, or checks and packages a project, then opens presenter mode in the configured macOS app.
+- `htmlslide skill list [--project <path>] --json` lists official skills plus installed integrity state.
+- `htmlslide skill add <path-or-url> [--project <path>] [--location project codex claude] [--yes] --json` validates and atomically installs an official, local, or HTTPS skill source.
+- `htmlslide skill inspect <name> [--project <path>] --json` returns official metadata and installed ownership/integrity details.
+- `htmlslide skill remove <name> [--project <path>] --yes --json` removes only integrity-verified HTMLslide-managed installs.
 - `htmlslide mcp [path]` starts the project-scoped stdio MCP server and reserves stdout for MCP protocol messages.
 - `htmlslide mcp --list-tools --json` lists registered MCP tool descriptors, safety labels, and implementation status.
 - `htmlslide mcp [path] --status --json` validates the project-scoped MCP in-process harness for a deck project and returns the project root plus registered and implemented tool counts.
@@ -32,12 +39,32 @@ Exit codes:
 - `8` incompatible schema
 
 All important commands must support JSON output suitable for external agents.
+When `--json` is present, missing arguments, unknown options, and other Commander parsing failures return the normal failed JSON envelope with `code: "CLI_ARGUMENT_ERROR"` instead of human-only stderr.
 
 ## Export Commit Contract
 
 `htmlslide export` acquires a project-level export lock and builds every requested output from one source snapshot in a private staging directory. It commits artifact files first and atomically replaces the compiler-owned `exports/export-manifest.json` last. Concurrent export attempts for the same project or transaction failures use export-failed exit code `3` and must not publish a new commit marker.
 
 A partial export writes a manifest containing exactly that invocation's artifacts and removes only previously manifest-owned artifacts that the invocation omits. `htmlslide check` treats a missing manifest as a legacy-project warning with mtime fallback; a present but invalid or truncated manifest is an error and fails closed without that fallback.
+
+`htmlslide package` uses the same compiler transaction and exit-code contract as `htmlslide export`. It means deck package creation, not packaging or signing `HTMLslide.app`. A deckpkg contains its own PDF, HTML, notes, settings, and thumbnails; the compiler may also publish required notes and thumbnail sidecars, but does not publish standalone PDF or HTML artifacts for this command.
+
+## Desktop Launch Contract
+
+`htmlslide open` and `htmlslide present` read the app path recorded by CLI provisioning. The runtime invokes macOS `/usr/bin/open` with an argument array and never interpolates a shell command. A missing, malformed, moved, or non-app-bundle target returns missing-dependency exit code `4` with a repair instruction.
+
+- `open` loads and validates project metadata before starting the App. Direct `.deckpkg` input must pass presenter package validation first.
+- `present` accepts a project directory or `.deckpkg`. Project input runs `check`, creates a fresh package with the shared compiler, validates it with `@htmlslide/presenter`, and then starts presenter mode.
+- Missing projects return `7`; project/schema/package validation failures return `2` or `8`; compiler transaction failures return `3`.
+- Successful JSON output contains `status`, `command`, `appPath`, `targetPath`, and `targetKind`. It reports that the launch request was accepted; presenter window lifetime is owned by the App.
+
+## Skill Commands
+
+Without `--project`, skill commands use the global HTMLslide state root (`HTMLSLIDE_HOME` in controlled environments, otherwise `~/.htmlslide`). Project targets must resolve to a valid deck project. `--location` is valid only with `--project` and accepts `project`, `codex`, and `claude`; the default is `project`.
+
+`skill add` accepts an official registry name, a local `SKILL.md`, a local skill directory, or a direct HTTPS Markdown URL. The shared skills package validates metadata, source paths, source size, declared risk, and license compatibility before writing. URL requests use bounded responses and redirects and reject local/private network targets. Warning-level script, network, asset, high-risk, or license declarations require `--yes`; error-level plans are never installable.
+
+Managed installs contain `.htmlslide-managed.json` with deterministic file digests. Updates use staging and rollback. `skill remove` requires `--yes` and refuses unmanaged, modified, invalid, symlinked, or path-escaping targets. `skill list` and `skill inspect` report `verified`, `modified`, `unmanaged`, or `invalid` integrity without executing skill content.
 
 ## Templates
 

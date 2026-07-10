@@ -39,6 +39,52 @@ describe("skill install planning", () => {
     expect(plan.installable).toBe(true);
   });
 
+  it("accepts a resolved HTMLslide state directory for desktop reuse", () => {
+    const markdown = readSkillFixture("valid-deck-skill");
+    const parsed = parseSkillMarkdown(markdown);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) {
+      throw new Error(parsed.issues.map((issue) => issue.message).join("\n"));
+    }
+
+    const plan = planSkillInstall({
+      metadata: parsed.document.metadata,
+      markdown,
+      target: { kind: "global", htmlslideHomeDir: "/tmp/htmlslide-state" }
+    });
+
+    expect(plan.filesToWrite.map((file) => file.path)).toEqual([
+      "/tmp/htmlslide-state/skills/deck-architect-test/SKILL.md"
+    ]);
+  });
+
+  it("rejects unsupported and empty target selections in the pure plan", () => {
+    const markdown = readSkillFixture("valid-deck-skill");
+    const parsed = parseSkillMarkdown(markdown);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) {
+      throw new Error(parsed.issues.map((issue) => issue.message).join("\n"));
+    }
+
+    const unsupported = planSkillInstall({
+      metadata: { ...parsed.document.metadata, installTargets: ["project"] },
+      markdown,
+      target: { kind: "global", homeDir: "/tmp/htmlslide-home" }
+    });
+    expect(unsupported.installable).toBe(false);
+    expect(unsupported.filesToWrite).toEqual([]);
+    expect(unsupported.warnings.at(-1)?.code).toBe("unsupported-install-target");
+
+    const empty = planSkillInstall({
+      metadata: parsed.document.metadata,
+      markdown,
+      target: { kind: "project", projectRoot: "/tmp/htmlslide-project", locations: [] }
+    });
+    expect(empty.installable).toBe(false);
+    expect(empty.filesToWrite).toEqual([]);
+    expect(empty.warnings.at(-1)).toMatchObject({ code: "invalid-project-location", severity: "error" });
+  });
+
   it("plans project install files and reports risk and license warnings", () => {
     const markdown = readSkillFixture("scripted-third-party");
     const parsed = parseSkillMarkdown(markdown);

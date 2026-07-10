@@ -117,6 +117,10 @@ export function isSafeSkillEntrypoint(entrypoint: string): boolean {
   return isSafeRelativeSkillPath(entrypoint, [".md"]);
 }
 
+export function isValidSkillName(name: string): boolean {
+  return SKILL_NAME_PATTERN.test(name);
+}
+
 function validateRiskProfile(
   riskInput: unknown,
   riskLevel: SkillRiskLevel | undefined,

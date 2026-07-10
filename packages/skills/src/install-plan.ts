@@ -139,22 +139,36 @@ function entrypointFile(filePath: string, content: string): SkillInstallFile {
 function projectLocations(
   locations: readonly ProjectSkillInstallLocation[] | undefined
 ): readonly ProjectSkillInstallLocation[] {
-  return locations ?? ["project"];
+  return [...new Set<ProjectSkillInstallLocation>(locations ?? ["project"])];
+}
+
+function globalSkillsDirectory(target: Extract<SkillInstallPlanOptions["target"], { kind: "global" }>): string {
+  const htmlslideHomeDir = target.htmlslideHomeDir ?? path.join(target.homeDir, ".htmlslide");
+  return path.join(htmlslideHomeDir, "skills");
 }
 
 export function planSkillInstall(options: SkillInstallPlanOptions): SkillInstallPlan {
   const filesToWrite: SkillInstallFile[] = [];
+  const targetSupported = options.metadata.installTargets.includes(options.target.kind);
+  const invalidLocations: string[] = [];
+  const requestedProjectLocations = options.target.kind === "project"
+    ? projectLocations(options.target.locations)
+    : [];
 
-  if (options.target.kind === "global") {
+  if (targetSupported && options.target.kind === "global") {
     filesToWrite.push(
       entrypointFile(
-        path.join(options.target.homeDir, ".htmlslide", "skills", options.metadata.name, options.metadata.entrypoint),
+        path.join(globalSkillsDirectory(options.target), options.metadata.name, options.metadata.entrypoint),
         options.markdown
       )
     );
-  } else {
-    for (const location of projectLocations(options.target.locations)) {
+  } else if (targetSupported && options.target.kind === "project") {
+    if (requestedProjectLocations.length === 0) {
+      invalidLocations.push("<none>");
+    }
+    for (const location of requestedProjectLocations) {
       if (!PROJECT_SKILL_INSTALL_LOCATIONS.includes(location)) {
+        invalidLocations.push(String(location));
         continue;
       }
       filesToWrite.push(
@@ -173,6 +187,20 @@ export function planSkillInstall(options: SkillInstallPlanOptions): SkillInstall
 
   const license = evaluateLicenseCompatibility(options.metadata.license);
   const warnings = riskWarnings(options);
+  if (!targetSupported) {
+    warnings.push({
+      code: "unsupported-install-target",
+      severity: "error",
+      message: `${options.metadata.name} does not support the ${options.target.kind} install target.`
+    });
+  }
+  if (invalidLocations.length > 0) {
+    warnings.push({
+      code: "invalid-project-location",
+      severity: "error",
+      message: `Unsupported project skill locations: ${invalidLocations.sort().join(", ")}.`
+    });
+  }
 
   return {
     skillName: options.metadata.name,

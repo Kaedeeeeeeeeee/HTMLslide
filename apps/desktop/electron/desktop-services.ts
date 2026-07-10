@@ -45,7 +45,11 @@ import {
 } from "@htmlslide/presenter";
 import type { PresenterDeck } from "@htmlslide/presenter/session";
 import {
+  inspectInstalledSkill,
+  installSkill,
   OFFICIAL_SKILLS,
+  SkillStoreError,
+  type SkillInstallResult,
   validateOfficialSkillRegistry
 } from "@htmlslide/skills";
 
@@ -1390,17 +1394,6 @@ function officialSkillSummary(
   };
 }
 
-async function readTextIfExists(filePath: string): Promise<string | undefined> {
-  try {
-    return await fs.readFile(filePath, "utf8");
-  } catch (error) {
-    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
-      return undefined;
-    }
-    throw error;
-  }
-}
-
 export async function getDesktopOfficialSkills(
   options: DesktopOfficialSkillsOptions = {}
 ): Promise<DesktopOfficialSkillsState> {
@@ -1420,22 +1413,31 @@ export async function getDesktopOfficialSkills(
   const stale: string[] = [];
   const states = new Map<string, DesktopOfficialSkillSummary["status"]>();
   let installedCount = 0;
+  const target = { kind: "global" as const, htmlslideHomeDir: base.htmlslideHomeDir };
 
   await Promise.all(OFFICIAL_SKILLS.map(async (skill) => {
-    const entryPath = officialSkillEntryPath(base.htmlslideHomeDir, skill.metadata.name);
-    const current = await readTextIfExists(entryPath);
-    if (current === undefined) {
-      missing.push(skill.metadata.name);
-      states.set(skill.metadata.name, "missing");
-      return;
-    }
-    if (current !== skill.markdown) {
+    try {
+      const [inspection] = await inspectInstalledSkill({ target, name: skill.metadata.name });
+      if (
+        inspection?.managed !== true ||
+        inspection.integrity !== "verified" ||
+        inspection.markdown !== skill.markdown
+      ) {
+        stale.push(skill.metadata.name);
+        states.set(skill.metadata.name, "stale");
+        return;
+      }
+      states.set(skill.metadata.name, "installed");
+      installedCount += 1;
+    } catch (error) {
+      if (error instanceof SkillStoreError && error.code === "SKILL_NOT_FOUND") {
+        missing.push(skill.metadata.name);
+        states.set(skill.metadata.name, "missing");
+        return;
+      }
       stale.push(skill.metadata.name);
       states.set(skill.metadata.name, "stale");
-      return;
     }
-    states.set(skill.metadata.name, "installed");
-    installedCount += 1;
   }));
 
   missing.sort();
@@ -1469,25 +1471,33 @@ export async function installDesktopOfficialSkills(
     return before;
   }
 
-  const action: DesktopOfficialSkillsState["action"] =
-    before.installed ? "unchanged" : before.stale.length > 0 ? "updated" : "installed";
-
+  let results: SkillInstallResult[];
   try {
-    await Promise.all(OFFICIAL_SKILLS.map(async (skill) => {
-      const entryPath = officialSkillEntryPath(before.htmlslideHomeDir, skill.metadata.name);
-      await fs.mkdir(path.dirname(entryPath), { recursive: true });
-      await fs.writeFile(entryPath, skill.markdown, "utf8");
-    }));
+    results = [];
+    for (const skill of OFFICIAL_SKILLS) {
+      results.push(await installSkill({
+        source: { kind: "official", name: skill.metadata.name },
+        target: { kind: "global", htmlslideHomeDir: before.htmlslideHomeDir },
+        adoptLegacyOfficial: true
+      }));
+    }
   } catch (error) {
     return {
       ...before,
-      action,
       status: "failed",
       installed: false,
       message: error instanceof Error ? error.message : String(error),
       suggestedFix: `Check write permissions for ${before.skillsDir}.`
     };
   }
+
+  const action: DesktopOfficialSkillsState["action"] = results.some((result) => result.action === "updated")
+    ? "updated"
+    : results.some((result) => result.action === "installed")
+      ? "installed"
+      : results.some((result) => result.action === "adopted")
+        ? "updated"
+        : "unchanged";
 
   const after = await getDesktopOfficialSkills({
     ...options,

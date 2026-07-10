@@ -774,6 +774,9 @@ describe("desktop services", () => {
     const deckArchitect = await readFile(path.join(homeDir, "skills", "deck-architect", "SKILL.md"), "utf8");
     expect(deckArchitect).toContain("name: deck-architect");
     expect(deckArchitect).toContain("Do not write generated exports or secrets.");
+    await expect(
+      readFile(path.join(homeDir, "skills", "deck-architect", ".htmlslide-managed.json"), "utf8")
+    ).resolves.toContain('"manager": "htmlslide"');
 
     const unchanged = await installDesktopOfficialSkills(options);
     expect(unchanged).toMatchObject({
@@ -782,6 +785,15 @@ describe("desktop services", () => {
       installedCount: OFFICIAL_SKILLS.length,
       status: "passed"
     });
+
+    await writeFile(
+      path.join(homeDir, "skills", "deck-architect", ".htmlslide-managed.json"),
+      "{invalid",
+      "utf8"
+    );
+    const corrupted = await getDesktopOfficialSkills(options);
+    expect(corrupted).toMatchObject({ installed: false, status: "warning" });
+    expect(corrupted.stale).toContain("deck-architect");
   });
 
   it("reports and updates stale official skill files", async () => {
@@ -811,6 +823,9 @@ describe("desktop services", () => {
       status: "passed"
     });
     await expect(readFile(stalePath, "utf8")).resolves.toContain("name: deck-architect");
+    await expect(
+      readFile(path.join(homeDir, "skills", "deck-architect", ".htmlslide-managed.json"), "utf8")
+    ).resolves.toContain('"manager": "htmlslide"');
   });
 
   it("runs the mock agent and then real project check/export through the CLI runner", async () => {

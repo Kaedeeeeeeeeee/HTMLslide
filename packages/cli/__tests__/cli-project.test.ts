@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { DECK_SCHEMA_VERSION, HTMLSLIDE_APP_VERSION } from "@htmlslide/core/version";
+import { getOfficialSkill } from "@htmlslide/skills";
 import {
   checkLoadedProject,
   createProject,
@@ -14,10 +15,14 @@ import {
   exportLoadedProject,
   getCliShimStatus,
   installCliShim,
+  launchDesktopTarget,
   loadProject,
+  packageLoadedProject,
+  readDesktopAppPathConfig,
   tryLoadProjectForCheck,
   uninstallCliShim,
-  validateAgentProviderCredentials
+  validateAgentProviderCredentials,
+  validateDeckPackageForPresentation
 } from "../src/index";
 
 const execFileAsync = promisify(execFile);
@@ -254,6 +259,19 @@ describe("CLI project helpers", () => {
       issues: Array<{ type: string; path?: string }>;
     };
     expect(report.issues[0]).toMatchObject({ type: "schema-validation", path: "schemaVersion" });
+
+    for (const args of [
+      ["open", projectPath, "--json"],
+      ["package", projectPath, "--json"],
+      ["present", projectPath, "--json"],
+      ["skill", "list", "--project", projectPath, "--json"]
+    ]) {
+      const commandFailure = await runCli(args).catch((error: unknown) => error);
+      expect(commandFailure).toMatchObject({ code: EXIT_CODES.incompatibleSchema });
+      expect(JSON.parse(String((commandFailure as { stdout?: unknown }).stdout))).toMatchObject({
+        exitCode: EXIT_CODES.incompatibleSchema
+      });
+    }
   });
 
   it("treats a missing schema version as validation failure rather than incompatibility", async () => {
@@ -386,6 +404,234 @@ describe("CLI project helpers", () => {
       await expect(access(exported.metadata.manifest)).resolves.toBeUndefined();
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("packages a checked project without standalone PDF or HTML artifacts", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
+    try {
+      const project = await createProject(path.join(root, "demo"), "demo");
+      const { stdout } = await runCli(["package", project.projectPath, "--json"]);
+      const packaged = JSON.parse(stdout) as {
+        status: string;
+        command: string;
+        deckpkgPath: string;
+        artifacts: Record<string, unknown>;
+      };
+
+      expect(packaged).toMatchObject({
+        status: "passed",
+        command: "package",
+        deckpkgPath: path.join(project.projectPath, "exports", "demo.deckpkg")
+      });
+      expect(packaged.artifacts).toMatchObject({
+        deckpkg: packaged.deckpkgPath,
+        notes: path.join(project.projectPath, "exports", "notes.json")
+      });
+      expect(packaged.artifacts).not.toHaveProperty("pdf");
+      expect(packaged.artifacts).not.toHaveProperty("html");
+      expect(packaged.artifacts.thumbnails).toHaveLength(2);
+      await expect(access(packaged.deckpkgPath)).resolves.toBeUndefined();
+      await expect(validateDeckPackageForPresentation(packaged.deckpkgPath)).resolves.toMatchObject({
+        status: "passed",
+        deckpkgPath: packaged.deckpkgPath
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("launches validated desktop targets with argument-safe macOS open invocation", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
+    try {
+      const appPath = path.join(root, "HTMLslide Test.app");
+      const project = await createProject(path.join(root, "deck with spaces"), "demo");
+      await mkdir(appPath, { recursive: true });
+      const invocations: Array<{ executable: string; args: readonly string[] }> = [];
+
+      const result = await launchDesktopTarget("open", project.projectPath, "project", {
+        appPath,
+        platform: "darwin",
+        runOpen: async (executable, args) => {
+          invocations.push({ executable, args: [...args] });
+        }
+      });
+
+      expect(result).toMatchObject({
+        status: "passed",
+        command: "open",
+        appPath,
+        targetPath: project.projectPath,
+        targetKind: "project"
+      });
+      expect(invocations).toEqual([
+        {
+          executable: "/usr/bin/open",
+          args: ["-a", appPath, project.projectPath]
+        }
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reads app-path configuration and reports missing desktop setup with exit code 4", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
+    try {
+      const appPath = path.join(root, "HTMLslide.app");
+      await mkdir(appPath, { recursive: true });
+      await writeFile(
+        path.join(root, "app-path.json"),
+        `${JSON.stringify({ schemaVersion: 1, appPath, version: "0.1.0" })}\n`
+      );
+      await expect(readDesktopAppPathConfig(root)).resolves.toEqual({
+        schemaVersion: 1,
+        appPath,
+        version: "0.1.0",
+        bundleId: undefined,
+        updatedAt: undefined
+      });
+
+      const project = await createProject(path.join(root, "demo"), "demo");
+      const packaged = await packageLoadedProject(project);
+      const failure = await runCli(["present", packaged.deckpkgPath, "--json"], {
+        HTMLSLIDE_HOME: path.join(root, "missing-state")
+      }).catch((error: unknown) => error);
+      expect(failure).toMatchObject({ code: EXIT_CODES.missingDependency });
+      expect(JSON.parse(String((failure as { stdout?: unknown }).stdout))).toMatchObject({
+        status: "failed",
+        code: "DESKTOP_APP_NOT_CONFIGURED",
+        exitCode: EXIT_CODES.missingDependency
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("lists, installs, inspects, and removes managed official skills through the CLI", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-skill-"));
+    const htmlslideHome = path.join(root, "state");
+    try {
+      const listed = JSON.parse((await runCli(["skill", "list", "--json"], { HTMLSLIDE_HOME: htmlslideHome })).stdout) as {
+        status: string;
+        official: Array<{ name: string; installed: unknown[] }>;
+      };
+      expect(listed.status).toBe("passed");
+      expect(listed.official).toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: "deck-architect", installed: [] })])
+      );
+
+      const added = JSON.parse(
+        (await runCli(["skill", "add", "deck-architect", "--json"], { HTMLSLIDE_HOME: htmlslideHome })).stdout
+      ) as { action: string; locations: Array<{ directoryPath: string }>; skillName: string };
+      expect(added).toMatchObject({ action: "installed", skillName: "deck-architect" });
+      expect(added.locations[0]?.directoryPath).toBe(path.join(htmlslideHome, "skills", "deck-architect"));
+      await expect(access(path.join(htmlslideHome, "skills", "deck-architect", ".htmlslide-managed.json"))).resolves.toBeUndefined();
+
+      const inspected = JSON.parse(
+        (await runCli(["skill", "inspect", "deck-architect", "--json"], { HTMLSLIDE_HOME: htmlslideHome })).stdout
+      ) as { installed: Array<{ integrity: string; managed: boolean }>; official?: unknown };
+      expect(inspected.official).toBeTruthy();
+      expect(inspected.installed).toEqual([
+        expect.objectContaining({ integrity: "verified", managed: true })
+      ]);
+
+      const confirmationFailure = await runCli(
+        ["skill", "remove", "deck-architect", "--json"],
+        { HTMLSLIDE_HOME: htmlslideHome }
+      ).catch((error: unknown) => error);
+      expect(confirmationFailure).toMatchObject({ code: EXIT_CODES.generic });
+      expect(JSON.parse(String((confirmationFailure as { stdout?: unknown }).stdout))).toMatchObject({
+        code: "SKILL_REMOVE_CONFIRMATION_REQUIRED"
+      });
+
+      const removed = JSON.parse(
+        (await runCli(["skill", "remove", "deck-architect", "--yes", "--json"], { HTMLSLIDE_HOME: htmlslideHome })).stdout
+      ) as { action: string; skillName: string };
+      expect(removed).toMatchObject({ action: "removed", skillName: "deck-architect" });
+      await expectMissing(path.join(htmlslideHome, "skills", "deck-architect"));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("requires explicit confirmation for declared third-party skill risks", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-skill-"));
+    const htmlslideHome = path.join(root, "state");
+    try {
+      const official = getOfficialSkill("data-report");
+      if (!official) {
+        throw new Error("Expected data-report official skill fixture");
+      }
+      const skillPath = path.join(root, "risky-skill", "SKILL.md");
+      const markdown = official.markdown
+        .replace("name: data-report", "name: cli-risk-test")
+        .replace("scripts: false", "scripts: true");
+      await mkdir(path.dirname(skillPath), { recursive: true });
+      await writeFile(skillPath, markdown);
+
+      const failure = await runCli(["skill", "add", skillPath, "--json"], {
+        HTMLSLIDE_HOME: htmlslideHome
+      }).catch((error: unknown) => error);
+      expect(failure).toMatchObject({ code: EXIT_CODES.generic });
+      const payload = JSON.parse(String((failure as { stdout?: unknown }).stdout)) as {
+        code: string;
+        details?: { warnings?: Array<{ code: string }> };
+      };
+      expect(payload.code).toBe("SKILL_CONFIRMATION_REQUIRED");
+      expect(payload.details?.warnings).toEqual(
+        expect.arrayContaining([expect.objectContaining({ code: "contains-scripts" })])
+      );
+
+      const installed = JSON.parse(
+        (await runCli(["skill", "add", skillPath, "--yes", "--json"], { HTMLSLIDE_HOME: htmlslideHome })).stdout
+      ) as { status: string; skillName: string };
+      expect(installed).toMatchObject({ status: "passed", skillName: "cli-risk-test" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("installs official skills to validated project adapter locations", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-skill-"));
+    try {
+      const project = await createProject(path.join(root, "demo"), "demo");
+      const result = JSON.parse(
+        (
+          await runCli([
+            "skill",
+            "add",
+            "brand-kit",
+            "--project",
+            project.projectPath,
+            "--location",
+            "project",
+            "codex",
+            "--json"
+          ])
+        ).stdout
+      ) as { locations: Array<{ location: string }> };
+      expect(result.locations.map((entry) => entry.location)).toEqual(["project", "codex"]);
+      await expect(access(path.join(project.projectPath, "skills", "project", "brand-kit", "SKILL.md"))).resolves.toBeUndefined();
+      await expect(access(path.join(project.projectPath, ".agents", "skills", "htmlslide", "brand-kit", "SKILL.md"))).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("returns machine-readable JSON for Commander argument failures", async () => {
+    for (const args of [
+      ["skill", "add", "--json"],
+      ["skill", "list", "--unknown-option", "--json"]
+    ]) {
+      const failure = await runCli(args).catch((error: unknown) => error);
+      expect(failure).toMatchObject({ code: EXIT_CODES.generic });
+      expect(JSON.parse(String((failure as { stdout?: unknown }).stdout))).toMatchObject({
+        status: "failed",
+        code: "CLI_ARGUMENT_ERROR",
+        exitCode: EXIT_CODES.generic,
+        details: { commanderCode: expect.stringMatching(/^commander\./u) }
+      });
     }
   });
 

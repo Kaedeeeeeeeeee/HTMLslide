@@ -38,6 +38,17 @@ Manifest paths are POSIX-style project-relative paths. They must not be absolute
 
 File existence is validated by the project loader, not by pure schema validation.
 
+## Deck Package Safety
+
+`.deckpkg` files are untrusted ZIP inputs. Before presenter assets are expanded, the shared presenter reader enforces these public-alpha limits:
+
+- archive bytes: 128 MiB;
+- archive entries: 4,096;
+- uncompressed bytes per entry: 64 MiB;
+- total declared uncompressed bytes: 256 MiB.
+
+Before JSZip materializes package files, a bounded preflight compares central and local ZIP metadata, streams actual STORE/DEFLATE expansion through the per-entry and total limits, and verifies each entry's CRC32 against its expanded content. Encrypted, ZIP64, multi-disk, data-descriptor, unsupported-compression, overlapping-path, inconsistent-size, CRC-mismatched, and over-limit archives fail with structured validation issues. The desktop App and `htmlslide present` use the same reader and limits.
+
 ## Issue Contract
 
 Core helpers expose issues with:

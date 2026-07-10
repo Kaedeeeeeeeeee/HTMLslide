@@ -1,4 +1,5 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, screen, shell, type Rectangle } from "electron";
+import { statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import process from "node:process";
@@ -51,7 +52,16 @@ const smokeReadyFile = process.env.HTMLSLIDE_SMOKE_READY_FILE
 const smokeExpectedOpenDeckPackagePath = isDeckPackagePath(process.env.HTMLSLIDE_SMOKE_EXPECT_OPEN_DECKPKG_PATH)
   ? resolve(process.env.HTMLSLIDE_SMOKE_EXPECT_OPEN_DECKPKG_PATH)
   : undefined;
-let pendingDeckPackagePath = initialDeckPackagePath();
+type DesktopOpenRequest =
+  | { kind: "deckpkg"; path: string; requestId: number }
+  | { kind: "project"; path: string; requestId: number };
+
+let nextOpenRequestId = 1;
+let initialOpenRequest = resolveInitialOpenRequest();
+const pendingOpenRequests: DesktopOpenRequest[] = [];
+let rendererReadyForOpenRequests = false;
+let mainWindow: BrowserWindow | undefined;
+let startupProvisioning: Promise<void> = Promise.resolve();
 
 const writeSmokeMarker = async (marker: Record<string, unknown>) => {
   if (!smokeReadyFile) {
@@ -64,6 +74,11 @@ const writeSmokeMarker = async (marker: Record<string, unknown>) => {
 
 if (configuredUserDataPath) {
   app.setPath("userData", configuredUserDataPath);
+}
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
 }
 
 const libraryPath = (): string => join(app.getPath("userData"), "library.json");
@@ -164,36 +179,115 @@ function isDeckPackagePath(filePath: string | undefined): filePath is string {
   return typeof filePath === "string" && /\.deckpkg$/iu.test(filePath.trim());
 }
 
-function initialDeckPackagePath(): string | undefined {
-  const envPath = process.env.HTMLSLIDE_E2E_OPEN_DECKPKG_PATH;
-  if (isDeckPackagePath(envPath)) {
-    return resolve(envPath);
-  }
-
-  const argPath = process.argv.find((arg) => isDeckPackagePath(arg));
-  return argPath ? resolve(argPath) : undefined;
-}
-
-function takePendingDeckPackageOpen(): string | undefined {
-  const deckpkgPath = pendingDeckPackagePath;
-  pendingDeckPackagePath = undefined;
-  return deckpkgPath;
-}
-
-function queueDeckPackageOpen(filePath: string): boolean {
-  if (!isDeckPackagePath(filePath)) {
+function isDeckProjectDirectory(projectPath: string | undefined, workingDirectory = process.cwd()): projectPath is string {
+  if (typeof projectPath !== "string" || projectPath.trim().length === 0 || projectPath.startsWith("-")) {
     return false;
   }
 
-  const deckpkgPath = resolve(filePath);
-  pendingDeckPackagePath = deckpkgPath;
-  for (const browserWindow of BrowserWindow.getAllWindows()) {
-    browserWindow.webContents.send("htmlslide:open-deckpkg", {
-      kind: "deckpkg",
-      path: deckpkgPath
-    });
+  try {
+    const resolvedProjectPath = resolve(workingDirectory, projectPath);
+    return statSync(resolvedProjectPath).isDirectory() && statSync(join(resolvedProjectPath, "deck.json")).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function openRequestForPath(filePath: string | undefined, workingDirectory = process.cwd()): DesktopOpenRequest | undefined {
+  if (isDeckPackagePath(filePath)) {
+    return { kind: "deckpkg", path: resolve(workingDirectory, filePath), requestId: nextOpenRequestId++ };
+  }
+  if (isDeckProjectDirectory(filePath, workingDirectory)) {
+    return { kind: "project", path: resolve(workingDirectory, filePath), requestId: nextOpenRequestId++ };
+  }
+  return undefined;
+}
+
+function openRequestFromArgv(argv: string[], workingDirectory = process.cwd()): DesktopOpenRequest | undefined {
+  for (const option of ["--project", "--deckpkg"] as const) {
+    const optionIndex = argv.indexOf(option);
+    if (optionIndex >= 0) {
+      const request = openRequestForPath(argv[optionIndex + 1], workingDirectory);
+      return request?.kind === (option === "--project" ? "project" : "deckpkg") ? request : undefined;
+    }
+  }
+
+  for (const argument of argv) {
+    if (!argument.startsWith("-")) {
+      const request = openRequestForPath(argument, workingDirectory);
+      if (request) {
+        return request;
+      }
+    }
+  }
+  return undefined;
+}
+
+function resolveInitialOpenRequest(): DesktopOpenRequest | undefined {
+  const envPath = process.env.HTMLSLIDE_E2E_OPEN_DECKPKG_PATH;
+  if (isDeckPackagePath(envPath)) {
+    return { kind: "deckpkg", path: resolve(envPath), requestId: nextOpenRequestId++ };
+  }
+
+  return openRequestFromArgv(process.argv);
+}
+
+function takePendingOpenRequest(): DesktopOpenRequest | undefined {
+  return pendingOpenRequests.shift();
+}
+
+function takeInitialOpenRequest(): DesktopOpenRequest | undefined {
+  const request = initialOpenRequest;
+  initialOpenRequest = undefined;
+  return request;
+}
+
+function sendOpenRequest(request: DesktopOpenRequest): boolean {
+  if (!rendererReadyForOpenRequests || !mainWindow || mainWindow.isDestroyed()) {
+    return false;
+  }
+
+  mainWindow.webContents.send("htmlslide:open-request", request);
+  return true;
+}
+
+function queueOpenRequest(request: DesktopOpenRequest | undefined): boolean {
+  if (!request) {
+    return false;
+  }
+  if (initialOpenRequest?.kind === request.kind && initialOpenRequest.path === request.path) {
+    return true;
+  }
+  if (!sendOpenRequest(request)) {
+    const duplicate = pendingOpenRequests.some(
+      (pendingRequest) => pendingRequest.kind === request.kind && pendingRequest.path === request.path
+    );
+    if (!duplicate) {
+      pendingOpenRequests.push(request);
+    }
   }
   return true;
+}
+
+function flushPendingOpenRequests(): void {
+  let pendingRequest = takePendingOpenRequest();
+  while (pendingRequest) {
+    if (!sendOpenRequest(pendingRequest)) {
+      pendingOpenRequests.unshift(pendingRequest);
+      break;
+    }
+    pendingRequest = takePendingOpenRequest();
+  }
+}
+
+function focusMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
 }
 
 function isAudienceSlidePayload(value: unknown): value is DesktopAudienceSlidePayload {
@@ -505,12 +599,13 @@ function escapeCssColor(value: string): string {
 
 function registerIpcHandlers(): void {
   ipcMain.handle("htmlslide:get-setup", async () => {
+    await startupProvisioning;
     const library = await readDesktopLibrary(libraryPath(), configuredWorkspacePath());
     const [cliIntegration, officialSkills] = await Promise.all([
       getDesktopCliIntegration(cliIntegrationOptions()),
       getDesktopOfficialSkills(officialSkillsOptions())
     ]);
-    const initialOpenDeckPackagePath = takePendingDeckPackageOpen();
+    const initialOpen = takeInitialOpenRequest();
     return {
       appName: "HTMLslide",
       version: app.getVersion(),
@@ -530,13 +625,17 @@ function registerIpcHandlers(): void {
             expectOpenDeckpkgPath: smokeExpectedOpenDeckPackagePath
           }
         : undefined,
-      initialOpen: initialOpenDeckPackagePath
-        ? {
-            kind: "deckpkg",
-            path: initialOpenDeckPackagePath
-          }
-        : undefined
+      initialOpen
     };
+  });
+
+  ipcMain.handle("htmlslide:open-request-ready", (event) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender.id !== mainWindow.webContents.id) {
+      return { ready: false };
+    }
+    rendererReadyForOpenRequests = true;
+    flushPendingOpenRequests();
+    return { ready: true };
   });
 
   ipcMain.handle("htmlslide:get-cli-integration", async () =>
@@ -804,13 +903,21 @@ function registerIpcHandlers(): void {
 }
 
 app.on("open-file", (event, filePath) => {
-  if (queueDeckPackageOpen(filePath)) {
+  if (queueOpenRequest(openRequestForPath(filePath))) {
     event.preventDefault();
+    focusMainWindow();
   }
 });
 
+if (hasSingleInstanceLock) {
+  app.on("second-instance", (_event, commandLine, workingDirectory) => {
+    queueOpenRequest(openRequestFromArgv(commandLine, workingDirectory));
+    focusMainWindow();
+  });
+}
+
 function createWindow(): void {
-  const mainWindow = new BrowserWindow({
+  const createdWindow = new BrowserWindow({
     backgroundColor: "#f5f7fb",
     height: 960,
     minHeight: 760,
@@ -827,28 +934,42 @@ function createWindow(): void {
     },
     width: 1440
   });
+  mainWindow = createdWindow;
 
-  mainWindow.once("ready-to-show", () => {
-    mainWindow.show();
+  createdWindow.on("closed", () => {
+    if (mainWindow === createdWindow) {
+      mainWindow = undefined;
+    }
+    rendererReadyForOpenRequests = false;
+  });
+  createdWindow.webContents.on("did-start-loading", () => {
+    rendererReadyForOpenRequests = false;
   });
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  createdWindow.once("ready-to-show", () => {
+    createdWindow.show();
+  });
+
+  createdWindow.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: "deny" };
   });
 
   const completeSmokeStartup = async (load: Promise<void>) => {
-    if (!smokeQuitAfterReady) {
+    if (!smokeReadyFile) {
       return;
     }
 
     try {
       await load;
+      await startupProvisioning;
       if (smokeExpectedOpenDeckPackagePath) {
         return;
       }
       await writeSmokeMarker({ status: "passed", kind: "startup" });
-      setTimeout(() => app.quit(), 100);
+      if (smokeQuitAfterReady) {
+        setTimeout(() => app.quit(), 100);
+      }
     } catch (error) {
       await writeSmokeMarker({
         status: "failed",
@@ -859,43 +980,47 @@ function createWindow(): void {
   };
 
   if (devServerUrl) {
-    void completeSmokeStartup(mainWindow.loadURL(devServerUrl));
-    mainWindow.webContents.openDevTools({ mode: "detach" });
+    void completeSmokeStartup(createdWindow.loadURL(devServerUrl));
+    createdWindow.webContents.openDevTools({ mode: "detach" });
     return;
   }
 
-  void completeSmokeStartup(mainWindow.loadFile(join(currentDir, "../renderer/index.html")));
+  void completeSmokeStartup(createdWindow.loadFile(join(currentDir, "../renderer/index.html")));
 }
 
-app.whenReady().then(async () => {
-  if (smokeQuitAfterReady) {
-    void writeSmokeMarker({
-      status: "main-started",
-      kind: smokeExpectedOpenDeckPackagePath ? "deckpkg-open" : "startup",
-      expectedDeckpkgPath: smokeExpectedOpenDeckPackagePath
-    }).catch(() => undefined);
-  }
-  registerIpcHandlers();
-  if (
-    process.env.HTMLSLIDE_DISABLE_AUTO_CLI_PROVISIONING !== "1" &&
-    (appBundlePath() || process.env.HTMLSLIDE_AUTO_INSTALL_CLI === "1")
-  ) {
-    await installDesktopCliIntegration(cliIntegrationOptions()).catch(() => undefined);
-  }
-  if (
-    process.env.HTMLSLIDE_DISABLE_AUTO_SKILLS_PROVISIONING !== "1" &&
-    (appBundlePath() || process.env.HTMLSLIDE_AUTO_INSTALL_SKILLS === "1")
-  ) {
-    await installDesktopOfficialSkills(officialSkillsOptions()).catch(() => undefined);
-  }
-  createWindow();
-
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+if (hasSingleInstanceLock) {
+  void app.whenReady().then(async () => {
+    if (smokeQuitAfterReady) {
+      void writeSmokeMarker({
+        status: "main-started",
+        kind: smokeExpectedOpenDeckPackagePath ? "deckpkg-open" : "startup",
+        expectedDeckpkgPath: smokeExpectedOpenDeckPackagePath
+      }).catch(() => undefined);
     }
+    registerIpcHandlers();
+    const provisioningTasks: Promise<unknown>[] = [];
+    if (
+      process.env.HTMLSLIDE_DISABLE_AUTO_CLI_PROVISIONING !== "1" &&
+      (appBundlePath() || process.env.HTMLSLIDE_AUTO_INSTALL_CLI === "1")
+    ) {
+      provisioningTasks.push(installDesktopCliIntegration(cliIntegrationOptions()).catch(() => undefined));
+    }
+    if (
+      process.env.HTMLSLIDE_DISABLE_AUTO_SKILLS_PROVISIONING !== "1" &&
+      (appBundlePath() || process.env.HTMLSLIDE_AUTO_INSTALL_SKILLS === "1")
+    ) {
+      provisioningTasks.push(installDesktopOfficialSkills(officialSkillsOptions()).catch(() => undefined));
+    }
+    startupProvisioning = Promise.all(provisioningTasks).then(() => undefined);
+    createWindow();
+
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+      }
+    });
   });
-});
+}
 
 app.on("window-all-closed", () => {
   closeAudienceWindow();

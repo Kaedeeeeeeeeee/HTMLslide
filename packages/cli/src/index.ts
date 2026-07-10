@@ -1,7 +1,9 @@
 import { constants as fsConstants } from "node:fs";
+import { execFile } from "node:child_process";
 import { access, chmod, lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import {
   applyMockAgentProject,
@@ -32,6 +34,7 @@ import {
 import { renderBuiltInDeckTemplate, type DeckTemplateId } from "@htmlslide/core/templates";
 import { HTMLSLIDE_APP_VERSION } from "@htmlslide/core/version";
 import { checkProject, type CheckReport } from "@htmlslide/linter";
+import { validateDeckPackage, type DeckPackageValidationResult } from "@htmlslide/presenter";
 
 export const EXIT_CODES = {
   success: 0,
@@ -141,8 +144,39 @@ export type CliShimStatus = {
   suggestedFix?: string;
 };
 
+export type DesktopAppPathConfig = {
+  schemaVersion: 1;
+  appPath: string;
+  bundleId?: string;
+  version?: string;
+  updatedAt?: string;
+};
+
+export type DesktopLaunchTargetKind = "project" | "deckpkg";
+
+export type DesktopLaunchOptions = {
+  htmlslideHomeDir?: string;
+  platform?: NodeJS.Platform;
+  appPath?: string;
+  runOpen?: (executable: string, args: readonly string[]) => Promise<void>;
+};
+
+export type DesktopLaunchResult = {
+  status: "passed";
+  command: "open" | "present";
+  appPath: string;
+  targetPath: string;
+  targetKind: DesktopLaunchTargetKind;
+};
+
+export type PackageProjectResult = Awaited<ReturnType<typeof exportLoadedProject>> & {
+  command: "package";
+  deckpkgPath: string;
+};
+
 const HTMLSLIDE_SHIM_MARKER = "HTMLslide managed CLI shim v1";
 const HTMLSLIDE_HOME_ENV = "HTMLSLIDE_HOME";
+const execFileAsync = promisify(execFile);
 
 const exists = async (filePath: string): Promise<boolean> => {
   try {
@@ -201,6 +235,154 @@ const defaultFallbackCliPath = (): string => {
 };
 
 const appPathConfigPath = (htmlslideHomeDir: string): string => path.join(htmlslideHomeDir, "app-path.json");
+
+const isObjectRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+export const readDesktopAppPathConfig = async (
+  htmlslideHomeDir?: string
+): Promise<DesktopAppPathConfig> => {
+  const homeDir = resolveHtmlslideHomeDir(htmlslideHomeDir);
+  const configPath = appPathConfigPath(homeDir);
+  let value: unknown;
+  try {
+    value = JSON.parse(await readFile(configPath, "utf8"));
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+      throw setupError(
+        "DESKTOP_APP_NOT_CONFIGURED",
+        `HTMLslide desktop app is not configured at ${configPath}.`,
+        EXIT_CODES.missingDependency,
+        "Open HTMLslide.app once or run htmlslide setup install-cli --app-path <HTMLslide.app>."
+      );
+    }
+    throw setupError(
+      "DESKTOP_APP_CONFIG_INVALID",
+      `HTMLslide desktop app configuration is invalid at ${configPath}.`,
+      EXIT_CODES.missingDependency,
+      "Open HTMLslide.app to repair CLI integration.",
+      { cause: error }
+    );
+  }
+
+  if (
+    !isObjectRecord(value) ||
+    value.schemaVersion !== 1 ||
+    typeof value.appPath !== "string" ||
+    value.appPath.trim().length === 0
+  ) {
+    throw setupError(
+      "DESKTOP_APP_CONFIG_INVALID",
+      `HTMLslide desktop app configuration is invalid at ${configPath}.`,
+      EXIT_CODES.missingDependency,
+      "Open HTMLslide.app to repair CLI integration."
+    );
+  }
+
+  const optionalString = (key: "bundleId" | "version" | "updatedAt"): string | undefined => {
+    const entry = value[key];
+    return typeof entry === "string" && entry.trim().length > 0 ? entry.trim() : undefined;
+  };
+
+  return {
+    schemaVersion: 1,
+    appPath: path.resolve(value.appPath),
+    bundleId: optionalString("bundleId"),
+    version: optionalString("version"),
+    updatedAt: optionalString("updatedAt")
+  };
+};
+
+const defaultOpenRunner = async (executable: string, args: readonly string[]): Promise<void> => {
+  await execFileAsync(executable, [...args]);
+};
+
+export const launchDesktopTarget = async (
+  command: DesktopLaunchResult["command"],
+  targetPath: string,
+  targetKind: DesktopLaunchTargetKind,
+  options: DesktopLaunchOptions = {}
+): Promise<DesktopLaunchResult> => {
+  const platform = options.platform ?? process.platform;
+  if (platform !== "darwin") {
+    throw setupError(
+      "DESKTOP_LAUNCH_UNSUPPORTED",
+      `HTMLslide desktop launch is not supported on ${platform}.`,
+      EXIT_CODES.missingDependency,
+      "Run this command on macOS, or use htmlslide check/export in headless environments."
+    );
+  }
+
+  const appPath = options.appPath
+    ? path.resolve(options.appPath)
+    : (await readDesktopAppPathConfig(options.htmlslideHomeDir)).appPath;
+  let appStats;
+  try {
+    appStats = await lstat(appPath);
+  } catch (error) {
+    throw setupError(
+      "DESKTOP_APP_MISSING",
+      `Configured HTMLslide desktop app was not found at ${appPath}.`,
+      EXIT_CODES.missingDependency,
+      "Open the installed HTMLslide.app to repair CLI integration.",
+      { cause: error }
+    );
+  }
+  if (!appStats.isDirectory() || !appPath.endsWith(".app")) {
+    throw setupError(
+      "DESKTOP_APP_INVALID",
+      `Configured HTMLslide desktop app is not a macOS application bundle: ${appPath}.`,
+      EXIT_CODES.missingDependency,
+      "Reinstall HTMLslide.app and open it once to repair CLI integration."
+    );
+  }
+
+  const resolvedTargetPath = path.resolve(targetPath);
+  let targetStats;
+  try {
+    targetStats = await lstat(resolvedTargetPath);
+  } catch (error) {
+    throw setupError(
+      targetKind === "project" ? "PROJECT_NOT_FOUND" : "DECK_PACKAGE_NOT_FOUND",
+      `Launch target was not found at ${resolvedTargetPath}.`,
+      targetKind === "project" ? EXIT_CODES.projectNotFound : EXIT_CODES.validationFailed,
+      targetKind === "project" ? "Pass a valid HTMLslide project directory." : "Pass an existing .deckpkg file.",
+      { cause: error }
+    );
+  }
+  if (
+    (targetKind === "project" && !targetStats.isDirectory()) ||
+    (targetKind === "deckpkg" && (!targetStats.isFile() || !resolvedTargetPath.endsWith(".deckpkg")))
+  ) {
+    throw setupError(
+      "DESKTOP_LAUNCH_TARGET_INVALID",
+      `Launch target is not a valid ${targetKind}: ${resolvedTargetPath}.`,
+      EXIT_CODES.validationFailed,
+      targetKind === "project" ? "Pass a valid HTMLslide project directory." : "Pass an existing .deckpkg file."
+    );
+  }
+
+  const runOpen = options.runOpen ?? defaultOpenRunner;
+  try {
+    await runOpen("/usr/bin/open", ["-a", appPath, resolvedTargetPath]);
+  } catch (error) {
+    throw setupError(
+      "DESKTOP_LAUNCH_FAILED",
+      `Unable to launch HTMLslide.app for ${resolvedTargetPath}.`,
+      EXIT_CODES.missingDependency,
+      "Open HTMLslide.app manually, then rerun the command.",
+      { cause: error }
+    );
+  }
+
+  return {
+    status: "passed",
+    command,
+    appPath,
+    targetPath: resolvedTargetPath,
+    targetKind
+  };
+};
 
 const readExistingShim = async (
   targetPath: string
@@ -617,6 +799,49 @@ export const checkLoadedProject = async (project: LoadedProject): Promise<CheckR
 
 export const exportLoadedProject = async (project: LoadedProject, options?: ExportOptions) =>
   exportDeck(toCompilerInput(project), options);
+
+export const packageLoadedProject = async (project: LoadedProject): Promise<PackageProjectResult> => {
+  const result = await exportLoadedProject(project, {
+    pdf: false,
+    html: false,
+    deckpkg: true,
+    thumbnails: false
+  });
+  const deckpkgPath = result.artifacts.deckpkg;
+  if (!deckpkgPath) {
+    throw setupError(
+      "DECK_PACKAGE_EXPORT_MISSING",
+      "The compiler completed without returning a deck package path.",
+      EXIT_CODES.exportFailed,
+      "Rerun htmlslide package. If the issue persists, rebuild HTMLslide and inspect the compiler report."
+    );
+  }
+  return {
+    command: "package",
+    deckpkgPath,
+    ...result
+  };
+};
+
+export const validateDeckPackageForPresentation = async (
+  deckpkgPath: string
+): Promise<DeckPackageValidationResult & { deckpkgPath: string }> => {
+  const resolvedDeckpkgPath = path.resolve(deckpkgPath);
+  const result = await validateDeckPackage(resolvedDeckpkgPath);
+  if (result.status === "failed" || !result.deckPackage) {
+    throw Object.assign(new Error(`Deck package validation failed for ${resolvedDeckpkgPath}.`), {
+      code: "DECK_PACKAGE_INVALID",
+      exitCode: EXIT_CODES.validationFailed,
+      suggestedFix: "Rebuild the package with htmlslide package and resolve the reported package issues.",
+      issues: result.issues,
+      summary: result.summary
+    });
+  }
+  return {
+    ...result,
+    deckpkgPath: resolvedDeckpkgPath
+  };
+};
 
 export const doctor = async (options: CliShimTargetOptions = {}) => {
   const cliShim = await getCliShimStatus(options);

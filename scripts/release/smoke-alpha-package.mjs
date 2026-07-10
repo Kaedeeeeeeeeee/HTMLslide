@@ -182,9 +182,79 @@ function assertDeckPackageDocumentType(appPath) {
 }
 
 async function mountDmg(dmgPath, mountPoint) {
-  await rm(mountPoint, { recursive: true, force: true });
-  await mkdir(mountPoint, { recursive: true });
-  run("hdiutil", ["attach", "-nobrowse", "-readonly", "-mountpoint", mountPoint, dmgPath]);
+  let lastFailure;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    detachAttachedImage(dmgPath);
+    await rm(mountPoint, { recursive: true, force: true });
+    await mkdir(mountPoint, { recursive: true });
+    const result = spawnSync(
+      "hdiutil",
+      ["attach", "-nobrowse", "-readonly", "-mountpoint", mountPoint, dmgPath],
+      { cwd: root, encoding: "utf8", stdio: "pipe" }
+    );
+    if (result.status === 0) {
+      return;
+    }
+
+    lastFailure = result;
+    detachAttachedImage(dmgPath);
+    const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+    if (!output.includes("Resource temporarily unavailable") || attempt === 3) {
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, attempt * 500));
+  }
+
+  fail([
+    `hdiutil could not mount ${dmgPath}`,
+    lastFailure?.stdout,
+    lastFailure?.stderr
+  ].filter(Boolean).join("\n"));
+}
+
+function detachAttachedImage(dmgPath) {
+  const info = spawnSync("hdiutil", ["info", "-plist"], {
+    cwd: root,
+    encoding: "utf8",
+    stdio: "pipe"
+  });
+  if (info.status !== 0 || !info.stdout) {
+    return;
+  }
+
+  const converted = spawnSync("/usr/bin/plutil", ["-convert", "json", "-o", "-", "--", "-"], {
+    cwd: root,
+    encoding: "utf8",
+    input: info.stdout,
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+  if (converted.status !== 0 || !converted.stdout) {
+    return;
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(converted.stdout);
+  } catch {
+    return;
+  }
+
+  const expectedPath = path.resolve(dmgPath);
+  for (const image of Array.isArray(parsed.images) ? parsed.images : []) {
+    if (path.resolve(String(image?.["image-path"] ?? "")) !== expectedPath) {
+      continue;
+    }
+    const rootDevice = (Array.isArray(image?.["system-entities"]) ? image["system-entities"] : [])
+      .map((entity) => String(entity?.["dev-entry"] ?? ""))
+      .find((device) => /^\/dev\/disk\d+$/u.test(device));
+    if (rootDevice) {
+      spawnSync("hdiutil", ["detach", rootDevice, "-quiet"], {
+        cwd: root,
+        encoding: "utf8",
+        stdio: "ignore"
+      });
+    }
+  }
 }
 
 async function smokeZipArtifact(zipPath, smokeRoot) {
@@ -312,19 +382,19 @@ async function exportFixtureDeckPackageWithPackagedCli(appPath, smokeRoot) {
   });
 
   const cliPath = packagedCliPath(appPath);
-  const result = run(process.execPath, [cliPath, "export", projectPath, "--json"], {
+  const result = run(process.execPath, [cliPath, "package", projectPath, "--json"], {
     env: {
       HTMLSLIDE_HOME: path.join(smokeRoot, "deckpkg-cli-home")
     }
   });
-  const exported = readJsonOutput(result, "packaged htmlslide export");
+  const exported = readJsonOutput(result, "packaged htmlslide package");
   const deckpkgPath =
     typeof exported.artifacts?.deckpkg === "string"
       ? exported.artifacts.deckpkg
       : path.join(projectPath, "exports", "golden-export-basic.deckpkg");
 
   if (!existsSync(deckpkgPath)) {
-    fail(`Packaged CLI export did not create a deckpkg artifact: ${deckpkgPath}`);
+    fail(`Packaged CLI package did not create a deckpkg artifact: ${deckpkgPath}`);
   }
   assertPackagedDeckPackageAssets(deckpkgPath);
 
@@ -545,9 +615,17 @@ async function smokeFirstRunOfficialSkills(htmlslideHome) {
     if (!existsSync(skillPath)) {
       fail(`Packaged app first-run setup did not install official skill: ${skillPath}`);
     }
+    const recordPath = path.join(skillsDir, skillName, ".htmlslide-managed.json");
+    if (!existsSync(recordPath)) {
+      fail(`Packaged app first-run setup did not manage official skill ownership: ${recordPath}`);
+    }
     const skillMarkdown = await readFile(skillPath, "utf8");
     if (!skillMarkdown.includes(`name: ${skillName}`) || skillMarkdown.includes("writesSecrets: true")) {
       fail(`Official skill file does not match expected safe metadata: ${skillPath}`);
+    }
+    const record = JSON.parse(await readFile(recordPath, "utf8"));
+    if (record.manager !== "htmlslide" || record.name !== skillName || !Array.isArray(record.files)) {
+      fail(`Official skill ownership record is invalid: ${recordPath}`);
     }
   }
 
@@ -562,6 +640,41 @@ function readJsonOutput(result, label) {
   } catch {
     fail(`${label} did not print valid JSON.\n${result.stdout}\n${result.stderr}`);
   }
+}
+
+async function waitForJsonFile(filePath, timeoutMs = 30_000, predicate = () => true) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (existsSync(filePath)) {
+      try {
+        const value = JSON.parse(await readFile(filePath, "utf8"));
+        if (predicate(value)) {
+          return value;
+        }
+      } catch {
+        // The producer may still be replacing the JSON file.
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  fail(`Timed out waiting for packaged smoke marker: ${filePath}`);
+}
+
+async function waitForPackagedAppExit(appPath, timeoutMs = 15_000) {
+  const bundlePrefix = `${path.resolve(appPath)}${path.sep}`;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const processes = spawnSync("ps", ["-axo", "command="], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: "pipe"
+    });
+    if (processes.status === 0 && !processes.stdout.split(/\r?\n/u).some((line) => line.includes(bundlePrefix))) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  fail(`Timed out waiting for packaged app processes to exit: ${appPath}`);
 }
 
 async function assertDeckPackageSmokeMarker(marker, deckpkgPath, label) {
@@ -604,6 +717,7 @@ async function smokeCliShim(appPath, smokeRoot) {
     fail(`htmlslide doctor did not pass through the installed shim: ${JSON.stringify(doctor, null, 2)}`);
   }
 
+  await smokePackagedCliSkills(shimPath, env);
   await smokePackagedCliMcp(shimPath, smokeRoot, env);
 
   const uninstall = readJsonOutput(
@@ -612,6 +726,176 @@ async function smokeCliShim(appPath, smokeRoot) {
   );
   if (uninstall.status !== "passed" || uninstall.action !== "removed" || existsSync(shimPath)) {
     fail(`CLI shim uninstall did not remove the managed shim: ${JSON.stringify(uninstall)}`);
+  }
+}
+
+async function smokePackagedCliPresent(appPath, deckpkgPath, smokeRoot, firstRunState) {
+  const shimPath = path.join(firstRunState.cliTargetDir, "htmlslide");
+  const smokeReadyFile = path.join(smokeRoot, "cli-present", "ready.json");
+  const smokeHome = path.join(smokeRoot, "cli-present", "home");
+  const smokeWorkspace = path.join(smokeRoot, "cli-present", "workspace");
+  const smokeUserData = path.join(smokeRoot, "cli-present", "user-data");
+  await Promise.all([
+    mkdir(smokeHome, { recursive: true }),
+    mkdir(smokeWorkspace, { recursive: true }),
+    mkdir(smokeUserData, { recursive: true })
+  ]);
+  const env = {
+    ...process.env,
+    ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+    HOME: smokeHome,
+    HTMLSLIDE_CLI_TARGET_DIR: firstRunState.cliTargetDir,
+    HTMLSLIDE_DEFAULT_WORKSPACE: smokeWorkspace,
+    HTMLSLIDE_HOME: firstRunState.htmlslideHome,
+    HTMLSLIDE_SMOKE_EXPECT_OPEN_DECKPKG_PATH: deckpkgPath,
+    HTMLSLIDE_SMOKE_QUIT_AFTER_READY: "1",
+    HTMLSLIDE_SMOKE_READY_FILE: smokeReadyFile,
+    HTMLSLIDE_USER_DATA_DIR: smokeUserData,
+    PATH: `${firstRunState.cliTargetDir}${path.delimiter}${process.env.PATH ?? ""}`
+  };
+
+  const presented = readJsonOutput(
+    run(shimPath, ["present", deckpkgPath, "--json"], { env }),
+    "packaged htmlslide present"
+  );
+  if (
+    presented.status !== "passed" ||
+    presented.command !== "present" ||
+    presented.targetKind !== "deckpkg" ||
+    await realpath(String(presented.appPath)) !== await realpath(appPath)
+  ) {
+    fail(`Packaged CLI present did not launch the configured app: ${JSON.stringify(presented, null, 2)}`);
+  }
+
+  const marker = await waitForJsonFile(
+    smokeReadyFile,
+    30_000,
+    (value) => value?.status === "passed" || value?.status === "failed"
+  );
+  if (marker?.status !== "passed") {
+    fail(`Packaged CLI present app marker failed: ${JSON.stringify(marker, null, 2)}`);
+  }
+  await assertDeckPackageSmokeMarker(marker, deckpkgPath, "Packaged CLI present");
+  await waitForPackagedAppExit(appPath);
+}
+
+async function smokePackagedCliOpenProject(appPath, smokeRoot, firstRunState) {
+  const executablePath = packagedAppExecutablePath(appPath);
+  const projectPath = path.join(smokeRoot, "cli-open", "valid-full");
+  const smokeHome = path.join(smokeRoot, "cli-open", "home");
+  const smokeWorkspace = path.join(smokeRoot, "cli-open", "workspace");
+  const smokeUserData = path.join(smokeRoot, "cli-open", "user-data");
+  const startupReadyFile = path.join(smokeRoot, "cli-open", "ready.json");
+  await Promise.all([
+    mkdir(path.dirname(projectPath), { recursive: true }),
+    mkdir(smokeHome, { recursive: true }),
+    mkdir(smokeWorkspace, { recursive: true }),
+    mkdir(smokeUserData, { recursive: true })
+  ]);
+  await cp(validFullFixturePath, projectPath, { recursive: true, verbatimSymlinks: true });
+
+  const appProcess = spawn(executablePath, [], {
+    cwd: path.dirname(appPath),
+    env: {
+      ...process.env,
+      ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+      HOME: smokeHome,
+      HTMLSLIDE_DEFAULT_WORKSPACE: smokeWorkspace,
+      HTMLSLIDE_DISABLE_AUTO_CLI_PROVISIONING: "1",
+      HTMLSLIDE_DISABLE_AUTO_SKILLS_PROVISIONING: "1",
+      HTMLSLIDE_HOME: firstRunState.htmlslideHome,
+      HTMLSLIDE_SMOKE_READY_FILE: startupReadyFile,
+      HTMLSLIDE_USER_DATA_DIR: smokeUserData
+    },
+    stdio: "ignore"
+  });
+
+  try {
+    const libraryPath = path.join(smokeUserData, "library.json");
+    const readyMarker = await waitForJsonFile(startupReadyFile);
+    if (readyMarker.status !== "passed" || readyMarker.kind !== "startup") {
+      fail(`Packaged app did not become ready for CLI open smoke: ${JSON.stringify(readyMarker, null, 2)}`);
+    }
+    const shimPath = path.join(firstRunState.cliTargetDir, "htmlslide");
+    const opened = readJsonOutput(
+      run(shimPath, ["open", projectPath, "--json"], {
+        env: {
+          ...process.env,
+          HTMLSLIDE_HOME: firstRunState.htmlslideHome,
+          PATH: `${firstRunState.cliTargetDir}${path.delimiter}${process.env.PATH ?? ""}`
+        }
+      }),
+      "packaged htmlslide open"
+    );
+    if (
+      opened.status !== "passed" ||
+      opened.command !== "open" ||
+      opened.targetKind !== "project" ||
+      await realpath(String(opened.appPath)) !== await realpath(appPath)
+    ) {
+      fail(`Packaged CLI open did not target the configured app: ${JSON.stringify(opened, null, 2)}`);
+    }
+
+    const deadline = Date.now() + 30_000;
+    const expectedProjectPath = await realpath(projectPath);
+    let received = false;
+    while (Date.now() < deadline) {
+      try {
+        const library = JSON.parse(await readFile(libraryPath, "utf8"));
+        const recentProjectPaths = await Promise.all(
+          (library.recentProjects ?? []).map((project) => realpath(String(project.path)).catch(() => undefined))
+        );
+        if (recentProjectPaths.includes(expectedProjectPath)) {
+          received = true;
+          break;
+        }
+      } catch {
+        // The app may be replacing library.json while this poll runs.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (!received) {
+      fail(`Packaged app did not receive the CLI project open request: ${projectPath}`);
+    }
+  } finally {
+    appProcess.kill("SIGTERM");
+    await Promise.race([
+      new Promise((resolve) => appProcess.once("exit", resolve)),
+      new Promise((resolve) => setTimeout(resolve, 2_000))
+    ]);
+    if (appProcess.exitCode === null) {
+      appProcess.kill("SIGKILL");
+    }
+  }
+}
+
+async function smokePackagedCliSkills(shimPath, env) {
+  const added = readJsonOutput(
+    run(shimPath, ["skill", "add", "deck-architect", "--json"], { env }),
+    "packaged htmlslide skill add"
+  );
+  if (added.status !== "passed" || added.skillName !== "deck-architect" || added.action !== "installed") {
+    fail(`Packaged CLI skill add failed: ${JSON.stringify(added, null, 2)}`);
+  }
+
+  const inspected = readJsonOutput(
+    run(shimPath, ["skill", "inspect", "deck-architect", "--json"], { env }),
+    "packaged htmlslide skill inspect"
+  );
+  if (
+    inspected.status !== "passed" ||
+    !Array.isArray(inspected.installed) ||
+    !inspected.installed.some((skill) => skill.name === "deck-architect" && skill.integrity === "verified")
+  ) {
+    fail(`Packaged CLI skill inspect did not verify the managed install: ${JSON.stringify(inspected, null, 2)}`);
+  }
+
+  const removed = readJsonOutput(
+    run(shimPath, ["skill", "remove", "deck-architect", "--yes", "--json"], { env }),
+    "packaged htmlslide skill remove"
+  );
+  if (removed.status !== "passed" || removed.action !== "removed" || removed.skillName !== "deck-architect") {
+    fail(`Packaged CLI skill remove failed: ${JSON.stringify(removed, null, 2)}`);
   }
 }
 
@@ -723,13 +1007,15 @@ async function main() {
     const firstRunState = await launchAppOnce(installedAppPath, smokeRoot);
     const movedAppPath = await smokeMovedAppCliRepair(installedAppPath, smokeRoot, firstRunState);
     const deckpkgPath = await launchAppWithDeckPackage(movedAppPath, smokeRoot);
+    await smokePackagedCliOpenProject(movedAppPath, smokeRoot, firstRunState);
+    await smokePackagedCliPresent(movedAppPath, deckpkgPath, smokeRoot, firstRunState);
     await openDeckPackageWithLaunchServices(movedAppPath, deckpkgPath, smokeRoot);
     await smokeCliShim(movedAppPath, smokeRoot);
 
     process.stdout.write("Alpha package smoke passed.\n");
   } finally {
     detachDmg(mountPoint);
-    await rm(smokeRoot, { recursive: true, force: true });
+    await rm(smokeRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
 }
 

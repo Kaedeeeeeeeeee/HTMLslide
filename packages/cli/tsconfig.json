@@ -11,6 +11,8 @@
     { "path": "../compiler" },
     { "path": "../core" },
     { "path": "../linter" },
-    { "path": "../mcp-server" }
+    { "path": "../mcp-server" },
+    { "path": "../presenter" },
+    { "path": "../skills" }
   ]
 }

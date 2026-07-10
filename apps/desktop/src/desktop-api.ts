@@ -33,10 +33,9 @@ export type DesktopSetupState = {
   officialSkills: DesktopOfficialSkillsState;
 };
 
-export type DesktopInitialOpenRequest = {
-  kind: "deckpkg";
-  path: string;
-};
+export type DesktopInitialOpenRequest =
+  | { kind: "deckpkg"; path: string; requestId: number }
+  | { kind: "project"; path: string; requestId: number };
 
 export type DesktopSmokeReadyMarker = {
   status: "passed" | "failed";
@@ -398,7 +397,7 @@ export type HtmlslideDesktopApi = {
   exportProject(projectPath: string): Promise<DesktopCliResult>;
   loadPresenterDeck(projectPath: string): Promise<DesktopPresenterDeckResult>;
   loadPresenterDeckPackage(deckpkgPath: string): Promise<DesktopPresenterDeckResult>;
-  onOpenDeckPackage(handler: (request: DesktopInitialOpenRequest) => void): () => void;
+  onOpenRequest(handler: (request: DesktopInitialOpenRequest) => void): () => void;
   reportSmokeReady(marker: DesktopSmokeReadyMarker): Promise<{ ok: boolean }>;
   listPresenterDisplays(): Promise<DesktopPresenterDisplay[]>;
   openAudienceWindow(request: DesktopAudienceWindowRequest): Promise<DesktopAudienceWindowState>;

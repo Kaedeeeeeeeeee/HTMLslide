@@ -20,6 +20,8 @@
     "@htmlslide/core": "workspace:*",
     "@htmlslide/linter": "workspace:*",
     "@htmlslide/mcp-server": "workspace:*",
+    "@htmlslide/presenter": "workspace:*",
+    "@htmlslide/skills": "workspace:*",
     "commander": "^14.0.0"
   }
 }

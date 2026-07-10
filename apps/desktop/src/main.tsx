@@ -256,7 +256,30 @@ function App(): React.ReactNode {
     message: "No AI mode"
   });
   const [directPresenterOpen, setDirectPresenterOpen] = useState<DirectPresenterOpen | undefined>();
+  const latestOpenRequestIdRef = useRef(Number.NEGATIVE_INFINITY);
+  const latestOpenRequestPathRef = useRef<string | undefined>(undefined);
+  const openRequestEpochRef = useRef(0);
+  const latestDeckPackageOpenResultRef = useRef<DesktopPresenterDeckResult | undefined>(undefined);
+  const smokeExpectedDeckPackagePathRef = useRef<string | undefined>(undefined);
+  const smokeDeckPackageReportedRef = useRef(false);
   const desktopApi = getDesktopApi();
+
+  const beginOpenRequest = useCallback((path: string, requestId: number | undefined): boolean => {
+    if (requestId !== undefined && requestId <= latestOpenRequestIdRef.current) {
+      return false;
+    }
+    if (requestId !== undefined) {
+      latestOpenRequestIdRef.current = requestId;
+    }
+    latestOpenRequestPathRef.current = path;
+    openRequestEpochRef.current += 1;
+    return true;
+  }, []);
+
+  const isCurrentOpenRequest = useCallback(
+    (requestId: number | undefined): boolean => requestId === undefined || requestId === latestOpenRequestIdRef.current,
+    []
+  );
 
   const applyDeckPackageOpenResult = useCallback((
     result: DesktopPresenterDeckResult,
@@ -297,26 +320,128 @@ function App(): React.ReactNode {
     }));
   }, []);
 
-  const openDeckPackagePath = useCallback(
-    async (deckpkgPath: string, baseProjects?: ProjectSummary[]): Promise<DesktopPresenterDeckResult | undefined> => {
-      if (!desktopApi) {
-        setOperationStatus({ kind: "failed", message: "Desktop API unavailable" });
-        return undefined;
-      }
-
-      setOperationStatus({ kind: "running", message: "Opening deck package" });
-      const result = await desktopApi.loadPresenterDeckPackage(deckpkgPath);
-      applyDeckPackageOpenResult(result, baseProjects);
-      return result;
-    },
-    [applyDeckPackageOpenResult, desktopApi]
-  );
-
   const reportSmokeReady = useCallback(
     async (marker: DesktopSmokeReadyMarker): Promise<void> => {
       await desktopApi?.reportSmokeReady(marker);
     },
     [desktopApi]
+  );
+
+  const reportDeckPackageSmokeResult = useCallback(
+    async (result: DesktopPresenterDeckResult): Promise<void> => {
+      const expectedDeckpkgPath = smokeExpectedDeckPackagePathRef.current;
+      if (!expectedDeckpkgPath || smokeDeckPackageReportedRef.current) {
+        return;
+      }
+
+      smokeDeckPackageReportedRef.current = true;
+      await reportSmokeReady(
+        result.ok
+          ? {
+              status: "passed",
+              kind: "deckpkg-open",
+              deckpkgPath: result.deckpkgPath,
+              expectedDeckpkgPath,
+              title: result.deck.title,
+              slideCount: result.deck.slides.length
+            }
+          : {
+              status: "failed",
+              kind: "deckpkg-open",
+              expectedDeckpkgPath,
+              error: result.error
+            }
+      );
+    },
+    [reportSmokeReady]
+  );
+
+  const openDeckPackagePath = useCallback(
+    async (
+      deckpkgPath: string,
+      baseProjects?: ProjectSummary[],
+      requestId?: number
+    ): Promise<DesktopPresenterDeckResult | undefined> => {
+      if (!beginOpenRequest(deckpkgPath, requestId)) {
+        return undefined;
+      }
+      if (!desktopApi) {
+        if (isCurrentOpenRequest(requestId)) {
+          setOperationStatus({ kind: "failed", message: "Desktop API unavailable" });
+        }
+        return undefined;
+      }
+
+      setOperationStatus({ kind: "running", message: "Opening deck package" });
+      const result = await desktopApi.loadPresenterDeckPackage(deckpkgPath);
+      latestDeckPackageOpenResultRef.current = result;
+      if (isCurrentOpenRequest(requestId)) {
+        applyDeckPackageOpenResult(result, baseProjects);
+      }
+      await reportDeckPackageSmokeResult(result);
+      return result;
+    },
+    [applyDeckPackageOpenResult, beginOpenRequest, desktopApi, isCurrentOpenRequest, reportDeckPackageSmokeResult]
+  );
+
+  const openPreview = useCallback((preview: DesktopProjectPreview): void => {
+    const next = projectPreviewToState(preview);
+    setDirectPresenterOpen(undefined);
+    setProjectPreviews((current) => ({
+      ...current,
+      [next.project.id]: preview
+    }));
+    setProjects((current) => {
+      const existing = current.filter((project) => project.id !== next.project.id);
+      return [next.project, ...existing];
+    });
+    setSelectedProjectId(next.project.id);
+    setActiveSlides(next.slides);
+    setSelectedSlideId(next.slides[0]?.id ?? "");
+    setQaIssues([]);
+    setDiffReview(undefined);
+    setOperationStatus({
+      kind: "success",
+      message: "Project loaded"
+    });
+    setView("workspace");
+  }, []);
+
+  const openProjectPath = useCallback(
+    async (projectPath: string, requestId?: number): Promise<DesktopProjectPreview | undefined> => {
+      if (!beginOpenRequest(projectPath, requestId)) {
+        return undefined;
+      }
+      if (!desktopApi) {
+        if (isCurrentOpenRequest(requestId)) {
+          setOperationStatus({ kind: "failed", message: "Desktop API unavailable" });
+        }
+        return undefined;
+      }
+
+      setOperationStatus({ kind: "running", message: "Loading project" });
+      try {
+        const preview = await desktopApi.loadProject(projectPath);
+        if (isCurrentOpenRequest(requestId)) {
+          openPreview(preview);
+        }
+        return preview;
+      } catch (error) {
+        if (!isCurrentOpenRequest(requestId)) {
+          return undefined;
+        }
+        await desktopApi.markRecentProjectMissing({ path: projectPath })
+          .then((records) => setProjects(projectRecordsToSummaries(records)))
+          .catch(() => undefined);
+        setOperationStatus({
+          kind: "failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+        setView("library");
+        return undefined;
+      }
+    },
+    [beginOpenRequest, desktopApi, isCurrentOpenRequest, openPreview]
   );
 
   useEffect(() => {
@@ -325,6 +450,8 @@ function App(): React.ReactNode {
     }
 
     let cancelled = false;
+    let smokeFailureTimer: number | undefined;
+    const startingOpenRequestEpoch = openRequestEpochRef.current;
     Promise.all([desktopApi.getSetup(), desktopApi.listProjects(), desktopApi.getAiEngineSettings()])
       .then(async ([setup, records, settings]) => {
         if (cancelled) {
@@ -332,7 +459,16 @@ function App(): React.ReactNode {
         }
         const projectSummaries = projectRecordsToSummaries(records);
         setWorkspacePath(setup.workspacePath);
-        setProjects(projectSummaries);
+        setProjects((current) => {
+          if (openRequestEpochRef.current === startingOpenRequestEpoch) {
+            return projectSummaries;
+          }
+
+          const openedProject = current.find((project) => project.path === latestOpenRequestPathRef.current);
+          return openedProject
+            ? [openedProject, ...projectSummaries.filter((project) => project.id !== openedProject.id)]
+            : projectSummaries;
+        });
         if (!aiEngineSettingsTouchedRef.current) {
           setAiEngineSettings(normalizeAiEngineSettings(settings));
         }
@@ -355,38 +491,44 @@ function App(): React.ReactNode {
           message: "AI engine settings loaded"
         });
 
-        if (setup.initialOpen?.kind === "deckpkg") {
-          const openResult = await openDeckPackagePath(setup.initialOpen.path, projectSummaries);
-          if (setup.smoke?.expectOpenDeckpkgPath) {
-            await reportSmokeReady(
-              openResult?.ok
-                ? {
-                    status: "passed",
-                    kind: "deckpkg-open",
-                    deckpkgPath: openResult.deckpkgPath,
-                    expectedDeckpkgPath: setup.smoke.expectOpenDeckpkgPath,
-                    title: openResult.deck.title,
-                    slideCount: openResult.deck.slides.length
-                  }
-                : {
-                    status: "failed",
-                    kind: "deckpkg-open",
-                    deckpkgPath: setup.initialOpen.path,
-                    expectedDeckpkgPath: setup.smoke.expectOpenDeckpkgPath,
-                    error: openResult?.error ?? "Deck package did not open."
-                  }
-            );
+        const expectedDeckpkgPath = setup.smoke?.expectOpenDeckpkgPath;
+        if (expectedDeckpkgPath) {
+          smokeExpectedDeckPackagePathRef.current = expectedDeckpkgPath;
+          const latestOpenResult = latestDeckPackageOpenResultRef.current;
+          if (latestOpenResult) {
+            await reportDeckPackageSmokeResult(latestOpenResult);
           }
+        }
+
+        if (setup.initialOpen?.kind === "project") {
+          await openProjectPath(setup.initialOpen.path, setup.initialOpen.requestId);
           if (cancelled) {
             return;
           }
-        } else if (setup.smoke?.expectOpenDeckpkgPath) {
-          await reportSmokeReady({
-            status: "failed",
-            kind: "deckpkg-open",
-            expectedDeckpkgPath: setup.smoke.expectOpenDeckpkgPath,
-            error: "Packaged smoke expected an initial deckpkg open request."
-          });
+        } else if (setup.initialOpen?.kind === "deckpkg") {
+          await openDeckPackagePath(
+            setup.initialOpen.path,
+            projectSummaries,
+            setup.initialOpen.requestId
+          );
+          if (cancelled) {
+            return;
+          }
+        }
+
+        if (expectedDeckpkgPath && !smokeDeckPackageReportedRef.current) {
+          smokeFailureTimer = window.setTimeout(() => {
+            if (smokeDeckPackageReportedRef.current) {
+              return;
+            }
+            smokeDeckPackageReportedRef.current = true;
+            void reportSmokeReady({
+              status: "failed",
+              kind: "deckpkg-open",
+              expectedDeckpkgPath,
+              error: "Packaged smoke did not receive a deckpkg open result."
+            });
+          }, 10_000);
         }
 
         return desktopApi.detectExternalAgents();
@@ -421,20 +563,25 @@ function App(): React.ReactNode {
 
     return () => {
       cancelled = true;
+      if (smokeFailureTimer !== undefined) {
+        window.clearTimeout(smokeFailureTimer);
+      }
     };
-  }, [desktopApi, openDeckPackagePath, reportSmokeReady]);
+  }, [desktopApi, openDeckPackagePath, openProjectPath, reportDeckPackageSmokeResult, reportSmokeReady]);
 
   useEffect(() => {
     if (!desktopApi) {
       return;
     }
 
-    return desktopApi.onOpenDeckPackage((request) => {
+    return desktopApi.onOpenRequest((request) => {
       if (request.kind === "deckpkg") {
-        void openDeckPackagePath(request.path);
+        void openDeckPackagePath(request.path, undefined, request.requestId);
+      } else {
+        void openProjectPath(request.path, request.requestId);
       }
     });
-  }, [desktopApi, openDeckPackagePath]);
+  }, [desktopApi, openDeckPackagePath, openProjectPath]);
 
   useEffect(() => {
     if (!running || agentRunEvents.length > 0) {
@@ -692,29 +839,6 @@ function App(): React.ReactNode {
   const activeProjectIsDeckPackage = Boolean(
     directPresenterOpen && activeProject?.path === directPresenterOpen.deckpkgPath
   );
-
-  const openPreview = useCallback((preview: DesktopProjectPreview): void => {
-    const next = projectPreviewToState(preview);
-    setDirectPresenterOpen(undefined);
-    setProjectPreviews((current) => ({
-      ...current,
-      [next.project.id]: preview
-    }));
-    setProjects((current) => {
-      const existing = current.filter((project) => project.id !== next.project.id);
-      return [next.project, ...existing];
-    });
-    setSelectedProjectId(next.project.id);
-    setActiveSlides(next.slides);
-    setSelectedSlideId(next.slides[0]?.id ?? "");
-    setQaIssues([]);
-    setDiffReview(undefined);
-    setOperationStatus({
-      kind: "success",
-      message: "Project loaded"
-    });
-    setView("workspace");
-  }, []);
 
   const handleOpenProject = useCallback(
     (projectId: string): void => {

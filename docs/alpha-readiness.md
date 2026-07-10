@@ -36,6 +36,8 @@ These gates are expected before each alpha candidate:
 | App can launch | Package smoke launches the packaged app in isolated user data. |
 | CLI shim can install | Electron E2E and package smoke cover first-run CLI provisioning and uninstall. |
 | `htmlslide doctor` passes | CLI tests and package smoke cover doctor through the packaged CLI shim. |
+| CLI project/package/presenter surface works | CLI tests cover project discovery, portable package intent, package validation, launch error contracts, and argument-safe macOS App invocation; Electron E2E covers initial and second-instance project opens; package smoke generates its deckpkg with the packaged `htmlslide package` command. |
+| Managed skill lifecycle works | Shared skills tests cover local/official/HTTPS resolution, DNS and source limits, warning confirmation, ownership hashes, atomic update, legacy official adoption, and safe removal. CLI E2E and package smoke cover list/add/inspect/remove, while first-run package smoke verifies official ownership records. |
 | Packaged MCP diagnostics work | CLI/MCP tests cover source runtime behavior; package smoke runs packaged `htmlslide mcp --list-tools --json` and project-scoped `htmlslide mcp --status --json`. |
 | New Deck creates a project | CLI tests and Electron E2E cover source project creation. |
 | Open Folder opens a project | Electron E2E covers opening fixture and created projects. |
@@ -52,6 +54,7 @@ These gates are expected before each alpha candidate:
 | PNG thumbnails are produced | Compiler tests and export fixtures cover deterministic thumbnails. |
 | Export integrity metadata is enforced | Core/compiler/linter tests cover deterministic SHA-256 metadata, lock and staging cleanup, partial exports, legacy missing-manifest fallback, artifact edits, and invalid or truncated manifests failing closed. |
 | `deckpkg` can open | Presenter tests, Electron E2E, and package smoke cover package opening through direct launch arguments, Electron `open-file` handling, and macOS LaunchServices `open -a` against the packaged app. |
+| Malicious or oversized `deckpkg` is rejected | Presenter tests cover archive byte, entry count, per-entry and total uncompressed limits, encryption, unsafe paths, and malformed package metadata before presenter asset expansion. |
 | Rehearsal mode works | Presenter tests and Electron E2E cover single-screen rehearsal. |
 | Fake external adapter automation | Agent adapter tests, desktop service tests, and Electron E2E cover saving a Generic command, running it from New Deck and opened-workspace paths, applying reported source writes, check/export gating, diff review, and checkpoint revert. |
 | Unit, CLI, compiler, Electron, and packaging tests pass | Covered by local commands and CI workflows. |

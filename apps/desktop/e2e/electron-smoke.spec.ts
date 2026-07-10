@@ -1427,6 +1427,98 @@ test.describe("HTMLslide desktop smoke", () => {
     expect(browserErrors).toEqual([]);
   });
 
+  test("opens a deck project from an explicit launch argument and records it as recent", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
+    const homeDir = path.join(tempRoot, "home");
+    const userDataDir = path.join(tempRoot, "user-data");
+    const workspaceDir = path.join(tempRoot, "workspace");
+    const projectPath = path.join(tempRoot, "valid-full");
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(userDataDir, { recursive: true });
+    await mkdir(workspaceDir, { recursive: true });
+    await cp(sampleProjectPath, projectPath, { recursive: true });
+
+    electronApp = await electron.launch({
+      executablePath: electronExecutable,
+      args: [electronMain, "--project", projectPath],
+      env: {
+        ...process.env,
+        ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+        HOME: homeDir,
+        HTMLSLIDE_USER_DATA_DIR: userDataDir,
+        HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir
+      }
+    });
+
+    const page = await electronApp.firstWindow();
+    const browserErrors = collectBrowserErrors(page);
+    await page.waitForLoadState("domcontentloaded");
+    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible({
+      timeout: 30_000
+    });
+    await expect(page.getByLabel("Presenter rehearsal mode")).toBeHidden();
+
+    const library = JSON.parse(await readFile(path.join(userDataDir, "library.json"), "utf8")) as {
+      recentProjects: Array<{ path: string }>;
+    };
+    expect(library.recentProjects[0]?.path).toBe(projectPath);
+    await expectNoFrameworkOverlay(page);
+    expect(browserErrors).toEqual([]);
+  });
+
+  test("ignores an invalid project argument and accepts a later second-instance project request", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
+    const homeDir = path.join(tempRoot, "home");
+    const userDataDir = path.join(tempRoot, "user-data");
+    const workspaceDir = path.join(tempRoot, "workspace");
+    const invalidProjectPath = path.join(tempRoot, "not-a-deck");
+    const projectPath = path.join(tempRoot, "valid-full");
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(userDataDir, { recursive: true });
+    await mkdir(workspaceDir, { recursive: true });
+    await mkdir(invalidProjectPath, { recursive: true });
+    await cp(sampleProjectPath, projectPath, { recursive: true });
+
+    electronApp = await electron.launch({
+      executablePath: electronExecutable,
+      args: [electronMain, "--project", invalidProjectPath],
+      env: {
+        ...process.env,
+        ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+        HOME: homeDir,
+        HTMLSLIDE_USER_DATA_DIR: userDataDir,
+        HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir
+      }
+    });
+
+    await electronApp.evaluate(
+      ({ app }, request: { mainEntry: string; projectPath: string; workingDirectory: string }) => {
+        const emit = app.emit.bind(app) as (...args: unknown[]) => boolean;
+        emit(
+          "second-instance",
+          {},
+          [process.execPath, request.mainEntry, "--project", request.projectPath],
+          request.workingDirectory,
+          {}
+        );
+      },
+      { mainEntry: electronMain, projectPath, workingDirectory: tempRoot }
+    );
+
+    const page = await electronApp.firstWindow();
+    const browserErrors = collectBrowserErrors(page);
+    await page.waitForLoadState("domcontentloaded");
+    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible({
+      timeout: 30_000
+    });
+    const library = JSON.parse(await readFile(path.join(userDataDir, "library.json"), "utf8")) as {
+      recentProjects: Array<{ path: string }>;
+    };
+    expect(library.recentProjects[0]?.path).toBe(projectPath);
+    await expectNoFrameworkOverlay(page);
+    expect(browserErrors).toEqual([]);
+  });
+
   test("shows failing check issues in the QA panel", async () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
     const homeDir = path.join(tempRoot, "home");

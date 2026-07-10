@@ -8,14 +8,39 @@ The `htmlslide` CLI is the agent-facing and CI-facing surface for the same proje
 htmlslide new demo
 htmlslide new report --template data-report
 htmlslide templates list --json
+htmlslide open demo --json
 htmlslide check demo --json
 htmlslide export demo --pdf --deckpkg --thumbnails --json
+htmlslide package demo --json
+htmlslide present demo --json
+htmlslide skill list --json
+htmlslide skill inspect deck-architect --json
 htmlslide mcp demo
 htmlslide mcp --list-tools --json
 htmlslide mcp demo --status --json
 htmlslide agent validate-provider --provider openai --model <openai-model-id> --api-key-env OPENAI_API_KEY --json
 htmlslide doctor --json
 ```
+
+## Open, package, and present
+
+`htmlslide package <project>` runs the same check and transactional compiler used by the App, then creates a portable `.deckpkg`. It does not package or sign `HTMLslide.app`.
+
+`htmlslide open <project>` opens a source project in the configured macOS App. `htmlslide present <project-or-deckpkg>` packages source projects when needed, validates the deckpkg, and opens presenter mode. These commands require the App path installed during first-run CLI setup; missing or moved App installs return exit code `4` with a repair instruction.
+
+## Skill commands
+
+Official and user-installed skills share one managed store:
+
+```bash
+htmlslide skill list --json
+htmlslide skill add deck-architect --json
+htmlslide skill add /path/to/my-skill --project demo --location project codex --yes --json
+htmlslide skill inspect deck-architect --json
+htmlslide skill remove deck-architect --yes --json
+```
+
+Local directories and direct HTTPS `SKILL.md` URLs are supported. HTMLslide validates metadata, declared risks, licenses, source limits, and target ownership before writing. Installs with warning-level risks require `--yes`; removal refuses unmanaged or locally modified skill directories.
 
 ## MCP commands
 

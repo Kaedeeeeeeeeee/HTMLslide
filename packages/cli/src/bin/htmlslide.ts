@@ -1,6 +1,7 @@
 #!/usr/bin/env node
+import os from "node:os";
 import path from "node:path";
-import { Command } from "commander";
+import { Command, CommanderError } from "commander";
 import { ProjectLoadError } from "@htmlslide/core";
 import { listBuiltInDeckTemplates } from "@htmlslide/core/templates";
 import { HTMLSLIDE_APP_VERSION } from "@htmlslide/core/version";
@@ -11,6 +12,17 @@ import {
   summarizeHtmlslideMcpTools
 } from "@htmlslide/mcp-server";
 import {
+  getOfficialSkill,
+  inspectInstalledSkill,
+  installSkill,
+  listInstalledSkills,
+  OFFICIAL_SKILLS,
+  removeSkill,
+  SkillStoreError,
+  type ProjectSkillInstallLocation,
+  type SkillInstallTarget
+} from "@htmlslide/skills";
+import {
   checkLoadedProject,
   createProject,
   diffCheckpoint,
@@ -19,13 +31,16 @@ import {
   exportLoadedProject,
   getCliShimStatus,
   installCliShim,
+  launchDesktopTarget,
   listAgentEngines,
   loadProject,
+  packageLoadedProject,
   revertCheckpoint,
   runAgentTask,
   tryLoadProjectForCheck,
   uninstallCliShim,
-  validateAgentProviderCredentials
+  validateAgentProviderCredentials,
+  validateDeckPackageForPresentation
 } from "../index.js";
 
 type JsonOption = {
@@ -79,12 +94,21 @@ type McpCommandOptions = JsonOption & {
   status?: boolean;
 };
 
+type SkillCommandOptions = JsonOption & {
+  location?: string[];
+  project?: string;
+  yes?: boolean;
+};
+
 type CliError = Error & {
   code?: string;
   exitCode?: number;
   suggestedFix?: string;
   targetPath?: string;
   targetDir?: string;
+  issues?: unknown;
+  summary?: unknown;
+  details?: unknown;
 };
 
 const writeResult = (payload: unknown, json = false): void => {
@@ -111,7 +135,10 @@ const fail = (error: unknown, json = false): never => {
       exitCode,
       suggestedFix: details?.suggestedFix,
       targetPath: details?.targetPath,
-      targetDir: details?.targetDir
+      targetDir: details?.targetDir,
+      summary: details?.summary,
+      issues: details?.issues,
+      details: details?.details
     },
     json
   );
@@ -151,11 +178,89 @@ const failStdioStartup = (error: unknown): never => {
 
 const annotateProjectLoadError = (error: unknown): unknown => {
   if (error instanceof ProjectLoadError) {
+    if (typeof (error as CliError).exitCode === "number") {
+      return error;
+    }
     return Object.assign(error, {
-      exitCode: error.code === "PROJECT_NOT_FOUND" ? EXIT_CODES.projectNotFound : EXIT_CODES.validationFailed
+      exitCode:
+        error.code === "PROJECT_NOT_FOUND"
+          ? EXIT_CODES.projectNotFound
+          : error.code === "INCOMPATIBLE_SCHEMA"
+            ? EXIT_CODES.incompatibleSchema
+            : EXIT_CODES.validationFailed
     });
   }
   return error;
+};
+
+const annotateSkillError = (error: unknown): unknown => {
+  if (error instanceof SkillStoreError) {
+    const networkFailure = [
+      "SKILL_SOURCE_DNS_FAILED",
+      "SKILL_SOURCE_FETCH_FAILED",
+      "SKILL_SOURCE_HTTP_ERROR"
+    ].includes(error.code);
+    const validationFailure =
+      error.code.startsWith("SKILL_SOURCE_") ||
+      error.code === "SKILL_PLAN_NOT_INSTALLABLE" ||
+      error.code === "SKILL_NAME_INVALID";
+    return Object.assign(error, {
+      exitCode: networkFailure
+        ? EXIT_CODES.missingDependency
+        : validationFailure
+          ? EXIT_CODES.validationFailed
+          : EXIT_CODES.generic,
+      suggestedFix:
+        error.code === "SKILL_CONFIRMATION_REQUIRED"
+          ? "Inspect the reported warnings, then rerun with --yes to confirm installation."
+          : error.code === "SKILL_TARGET_UNMANAGED" || error.code === "SKILL_TARGET_MODIFIED"
+            ? "Inspect the existing skill and resolve local changes manually before retrying."
+            : error.code.startsWith("SKILL_SOURCE_") || error.code === "SKILL_PLAN_NOT_INSTALLABLE"
+              ? "Inspect the skill source, metadata, declared risks, and license before retrying."
+              : "Inspect the selected skill target and retry the command.",
+      details: error.details
+    });
+  }
+  if (typeof error === "object" && error !== null && "code" in error && ["EACCES", "EPERM"].includes(String(error.code))) {
+    return Object.assign(error, {
+      exitCode: EXIT_CODES.permissionDenied,
+      suggestedFix: "Choose a writable skill target or fix its directory permissions."
+    });
+  }
+  return annotateProjectLoadError(error);
+};
+
+const resolveSkillTarget = async (options: SkillCommandOptions): Promise<SkillInstallTarget> => {
+  if (!options.project) {
+    if (options.location && options.location.length > 0) {
+      throw Object.assign(new Error("--location requires --project."), {
+        code: "SKILL_LOCATION_REQUIRES_PROJECT",
+        exitCode: EXIT_CODES.generic,
+        suggestedFix: "Pass --project <path>, or omit --location for a global install."
+      });
+    }
+    return {
+      kind: "global",
+      htmlslideHomeDir: path.resolve(process.env.HTMLSLIDE_HOME ?? path.join(os.homedir(), ".htmlslide"))
+    };
+  }
+
+  const project = await loadProject(options.project);
+  const locations = options.location ?? ["project"];
+  const allowed = new Set<ProjectSkillInstallLocation>(["project", "codex", "claude"]);
+  const invalid = locations.filter((location) => !allowed.has(location as ProjectSkillInstallLocation));
+  if (invalid.length > 0) {
+    throw Object.assign(new Error(`Unsupported project skill locations: ${invalid.join(", ")}.`), {
+      code: "SKILL_LOCATION_INVALID",
+      exitCode: EXIT_CODES.generic,
+      suggestedFix: "Use --location project, codex, or claude."
+    });
+  }
+  return {
+    kind: "project",
+    projectRoot: project.projectPath,
+    locations: [...new Set(locations)] as ProjectSkillInstallLocation[]
+  };
 };
 
 const requireCheckpointReference = (options: CheckpointCommandOptions): void => {
@@ -235,6 +340,26 @@ templatesCommand
   });
 
 program
+  .command("open")
+  .argument("[path]", "deck project directory or .deckpkg path", process.cwd())
+  .option("--json", "print machine-readable JSON")
+  .description("Open a deck project or validated deck package in HTMLslide.app.")
+  .action(async (targetPath: string, options: JsonOption) => {
+    const json = Boolean(options.json ?? program.opts<JsonOption>().json);
+    try {
+      if (targetPath.toLowerCase().endsWith(".deckpkg")) {
+        const validated = await validateDeckPackageForPresentation(targetPath);
+        writeResult(await launchDesktopTarget("open", validated.deckpkgPath, "deckpkg"), json);
+        return;
+      }
+      const project = await loadProject(targetPath);
+      writeResult(await launchDesktopTarget("open", project.projectPath, "project"), json);
+    } catch (error) {
+      fail(annotateProjectLoadError(error), json);
+    }
+  });
+
+program
   .command("check")
   .argument("[path]", "deck project path", process.cwd())
   .option("--json", "print machine-readable JSON")
@@ -290,6 +415,192 @@ program
       fail(exportFailure(error), json);
     }
   });
+
+program
+  .command("package")
+  .argument("[path]", "deck project path", process.cwd())
+  .option("--json", "print machine-readable JSON")
+  .description("Validate a deck project and export its portable .deckpkg artifact.")
+  .action(async (projectPath: string, options: JsonOption) => {
+    const json = Boolean(options.json ?? program.opts<JsonOption>().json);
+    try {
+      const project = await loadProject(projectPath);
+      const report = await checkLoadedProject(project);
+      if (report.status === "failed") {
+        writeResult(report, json);
+        process.exit(EXIT_CODES.validationFailed);
+      }
+      const result = await packageLoadedProject(project);
+      writeResult({ status: "passed", ...result }, json);
+    } catch (error) {
+      fail(exportFailure(annotateProjectLoadError(error)), json);
+    }
+  });
+
+program
+  .command("present")
+  .argument("[file]", "deck project directory or .deckpkg path", process.cwd())
+  .option("--json", "print machine-readable JSON")
+  .description("Validate a deck package and open it in HTMLslide presenter mode.")
+  .action(async (inputPath: string, options: JsonOption) => {
+    const json = Boolean(options.json ?? program.opts<JsonOption>().json);
+    try {
+      let deckpkgPath: string;
+      if (inputPath.toLowerCase().endsWith(".deckpkg")) {
+        deckpkgPath = (await validateDeckPackageForPresentation(inputPath)).deckpkgPath;
+      } else {
+        const project = await loadProject(inputPath);
+        const report = await checkLoadedProject(project);
+        if (report.status === "failed") {
+          writeResult(report, json);
+          process.exit(EXIT_CODES.validationFailed);
+        }
+        try {
+          deckpkgPath = (await packageLoadedProject(project)).deckpkgPath;
+        } catch (error) {
+          throw exportFailure(error);
+        }
+        await validateDeckPackageForPresentation(deckpkgPath);
+      }
+      writeResult(await launchDesktopTarget("present", deckpkgPath, "deckpkg"), json);
+    } catch (error) {
+      const annotated = annotateProjectLoadError(error);
+      const details = annotated instanceof Error ? annotated as CliError : undefined;
+      fail(details?.exitCode === EXIT_CODES.exportFailed ? exportFailure(annotated) : annotated, json);
+    }
+  });
+
+const skillCommand = program.command("skill").description("Inspect and manage HTMLslide skills.");
+
+const addSkillTargetOptions = (command: Command): Command =>
+  command
+    .option("--project <path>", "install or inspect project-local skills")
+    .option("--location <locations...>", "project locations: project, codex, or claude");
+
+addSkillTargetOptions(
+  skillCommand
+    .command("list")
+    .option("--json", "print machine-readable JSON")
+    .description("List official skills and installed skill integrity.")
+).action(async (options: SkillCommandOptions) => {
+  const json = Boolean(options.json ?? program.opts<JsonOption>().json);
+  try {
+    const target = await resolveSkillTarget(options);
+    const installed = await listInstalledSkills({ target });
+    const official = OFFICIAL_SKILLS.map((skill) => ({
+      name: skill.metadata.name,
+      version: skill.metadata.version,
+      description: skill.metadata.description,
+      license: skill.metadata.license,
+      riskLevel: skill.metadata.riskLevel,
+      installed: installed.skills
+        .filter((entry) => entry.name === skill.metadata.name)
+        .map((entry) => ({ location: entry.location, integrity: entry.integrity }))
+    }));
+    writeResult(
+      {
+        status: installed.invalid.length > 0 ? "warning" : "passed",
+        command: "skill list",
+        target: target.kind,
+        official,
+        installed: installed.skills,
+        invalid: installed.invalid
+      },
+      json
+    );
+  } catch (error) {
+    fail(annotateSkillError(error), json);
+  }
+});
+
+addSkillTargetOptions(
+  skillCommand
+    .command("add")
+    .argument("<path-or-url>", "official skill name, local file/directory, or HTTPS SKILL.md URL")
+    .option("--yes", "confirm declared risk and license warnings")
+    .option("--json", "print machine-readable JSON")
+    .description("Validate and atomically install a managed skill.")
+).action(async (source: string, options: SkillCommandOptions) => {
+  const json = Boolean(options.json ?? program.opts<JsonOption>().json);
+  try {
+    const target = await resolveSkillTarget(options);
+    const result = await installSkill({
+      source,
+      target,
+      confirmWarnings: options.yes
+    });
+    writeResult({ status: "passed", command: "skill add", ...result }, json);
+  } catch (error) {
+    fail(annotateSkillError(error), json);
+  }
+});
+
+addSkillTargetOptions(
+  skillCommand
+    .command("remove")
+    .argument("<name>", "installed skill name")
+    .option("--yes", "confirm managed skill removal")
+    .option("--json", "print machine-readable JSON")
+    .description("Remove only an integrity-verified HTMLslide-managed skill.")
+).action(async (name: string, options: SkillCommandOptions) => {
+  const json = Boolean(options.json ?? program.opts<JsonOption>().json);
+  try {
+    if (!options.yes) {
+      throw Object.assign(new Error("Skill removal requires --yes."), {
+        code: "SKILL_REMOVE_CONFIRMATION_REQUIRED",
+        exitCode: EXIT_CODES.generic,
+        suggestedFix: "Inspect the installed skill, then rerun with --yes."
+      });
+    }
+    const target = await resolveSkillTarget(options);
+    const result = await removeSkill({ target, name });
+    writeResult({ status: "passed", command: "skill remove", ...result }, json);
+  } catch (error) {
+    fail(annotateSkillError(error), json);
+  }
+});
+
+addSkillTargetOptions(
+  skillCommand
+    .command("inspect")
+    .argument("<name>", "official or installed skill name")
+    .option("--json", "print machine-readable JSON")
+    .description("Inspect official metadata and installed skill integrity.")
+).action(async (name: string, options: SkillCommandOptions) => {
+  const json = Boolean(options.json ?? program.opts<JsonOption>().json);
+  try {
+    const target = await resolveSkillTarget(options);
+    const officialSkill = getOfficialSkill(name);
+    let installed: Awaited<ReturnType<typeof inspectInstalledSkill>> = [];
+    try {
+      installed = await inspectInstalledSkill({ target, name });
+    } catch (error) {
+      if (!(error instanceof SkillStoreError) || error.code !== "SKILL_NOT_FOUND") {
+        throw error;
+      }
+    }
+    if (!officialSkill && installed.length === 0) {
+      throw new SkillStoreError("SKILL_NOT_FOUND", `Skill not found: ${name}.`);
+    }
+    writeResult(
+      {
+        status: "passed",
+        command: "skill inspect",
+        target: target.kind,
+        official: officialSkill
+          ? {
+              metadata: officialSkill.metadata,
+              markdown: officialSkill.markdown
+            }
+          : undefined,
+        installed
+      },
+      json
+    );
+  } catch (error) {
+    fail(annotateSkillError(error), json);
+  }
+});
 
 const setupCommand = program.command("setup").description("Install, inspect, or remove local HTMLslide setup helpers.");
 
@@ -576,4 +887,36 @@ program
     }
   });
 
-program.parseAsync(process.argv);
+const jsonArgumentRequested = process.argv.slice(2).includes("--json");
+const configureCommanderErrors = (command: Command): void => {
+  if (jsonArgumentRequested) {
+    command.configureOutput({
+      writeErr: () => undefined
+    });
+  }
+  command.exitOverride();
+  command.commands.forEach(configureCommanderErrors);
+};
+configureCommanderErrors(program);
+void program.parseAsync(process.argv).catch((error: unknown) => {
+  if (error instanceof CommanderError) {
+    if (error.exitCode === 0) {
+      process.exit(0);
+    }
+    if (jsonArgumentRequested) {
+      writeResult(
+        {
+          status: "failed",
+          error: error.message,
+          code: "CLI_ARGUMENT_ERROR",
+          exitCode: EXIT_CODES.generic,
+          suggestedFix: "Run the command with --help and correct its arguments or options.",
+          details: { commanderCode: error.code }
+        },
+        true
+      );
+    }
+    process.exit(error.exitCode || EXIT_CODES.generic);
+  }
+  fail(error, jsonArgumentRequested);
+});

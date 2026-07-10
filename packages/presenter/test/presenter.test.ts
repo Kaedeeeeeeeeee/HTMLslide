@@ -1,11 +1,13 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { deflateRawSync } from "node:zlib";
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 import {
   applyPresenterKeyboardAction,
   createPresenterSession,
+  DECK_PACKAGE_RESOURCE_LIMITS,
   getCurrentSlide,
   getElapsedMs,
   getNextSlide,
@@ -19,11 +21,13 @@ import {
   pauseTimer,
   previousSlide,
   readDeckPackage,
+  readDeckPackageBytes,
   resumeTimer,
   setNotesFontSize,
   toggleBlackScreen,
   toggleWhiteScreen,
-  validateDeckPackage
+  validateDeckPackage,
+  validateDeckPackageBytes
 } from "../src/index";
 import {
   applyPresenterKeyboardAction as applySessionKeyboardAction,
@@ -137,15 +141,17 @@ const deckHtml = `<!doctype html>
   </body>
 </html>`;
 
-const writeFixtureDeckPackage = async (
-  deckpkgPath: string,
-  options: {
-    manifestOverride?: unknown;
-    notesOverride?: unknown;
-    omitAccentAsset?: boolean;
-    omitSecondThumbnail?: boolean;
-  } = {}
-): Promise<void> => {
+type FixtureDeckPackageOptions = {
+  compression?: "DEFLATE" | "STORE";
+  manifestOverride?: unknown;
+  notesOverride?: unknown;
+  omitAccentAsset?: boolean;
+  omitSecondThumbnail?: boolean;
+};
+
+const createFixtureDeckPackageBytes = async (
+  options: FixtureDeckPackageOptions = {}
+): Promise<Uint8Array> => {
   const zip = new JSZip();
   zip.file("manifest.json", `${JSON.stringify(options.manifestOverride ?? manifest, null, 2)}\n`, { date: ZIP_DATE });
   zip.file("deck.html", `${deckHtml}\n`, { date: ZIP_DATE });
@@ -160,27 +166,59 @@ const writeFixtureDeckPackage = async (
     zip.file("thumbnails/002-plan.png", PNG_BYTES, { date: ZIP_DATE });
   }
 
-  await writeFile(
-    deckpkgPath,
-    await zip.generateAsync({
-      type: "nodebuffer",
-      compression: "DEFLATE",
-      compressionOptions: {
-        level: 9
-      },
-      platform: "UNIX"
-    })
-  );
+  return zip.generateAsync({
+    type: "uint8array",
+    compression: options.compression ?? "DEFLATE",
+    compressionOptions: {
+      level: 9
+    },
+    platform: "UNIX"
+  });
+};
+
+const flipStoredEntryPayloadByte = (sourceBytes: Uint8Array, entryName: string): Uint8Array => {
+  const bytes = Uint8Array.from(sourceBytes);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const decoder = new TextDecoder();
+
+  for (let offset = 0; offset <= bytes.byteLength - 46; offset += 1) {
+    if (view.getUint32(offset, true) !== 0x02014b50) {
+      continue;
+    }
+    const nameLength = view.getUint16(offset + 28, true);
+    const extraLength = view.getUint16(offset + 30, true);
+    const commentLength = view.getUint16(offset + 32, true);
+    const nameStart = offset + 46;
+    const nameEnd = nameStart + nameLength;
+    if (decoder.decode(bytes.subarray(nameStart, nameEnd)) === entryName) {
+      expect(view.getUint16(offset + 10, true)).toBe(0);
+      const localHeaderOffset = view.getUint32(offset + 42, true);
+      const localNameLength = view.getUint16(localHeaderOffset + 26, true);
+      const localExtraLength = view.getUint16(localHeaderOffset + 28, true);
+      const dataStart = localHeaderOffset + 30 + localNameLength + localExtraLength;
+      const compressedSize = view.getUint32(offset + 20, true);
+      if (compressedSize === 0) {
+        throw new Error(`ZIP entry has no payload: ${entryName}`);
+      }
+      bytes[dataStart] = (bytes[dataStart] ?? 0) ^ 0x01;
+      return bytes;
+    }
+    offset = nameEnd + extraLength + commentLength - 1;
+  }
+
+  throw new Error(`ZIP entry not found: ${entryName}`);
+};
+
+const writeFixtureDeckPackage = async (
+  deckpkgPath: string,
+  options: FixtureDeckPackageOptions = {}
+): Promise<void> => {
+  await writeFile(deckpkgPath, await createFixtureDeckPackageBytes(options));
 };
 
 const withFixtureDeckPackage = async <T>(
   test: (deckpkgPath: string) => Promise<T>,
-  options: {
-    manifestOverride?: unknown;
-    notesOverride?: unknown;
-    omitAccentAsset?: boolean;
-    omitSecondThumbnail?: boolean;
-  } = {}
+  options: FixtureDeckPackageOptions = {}
 ): Promise<T> => {
   const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-presenter-"));
   try {
@@ -190,6 +228,97 @@ const withFixtureDeckPackage = async <T>(
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+};
+
+const setDeclaredUncompressedSize = (
+  sourceBytes: Uint8Array,
+  entryName: string,
+  uncompressedSize: number
+): Uint8Array => {
+  const bytes = Uint8Array.from(sourceBytes);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const decoder = new TextDecoder();
+
+  for (let offset = 0; offset <= bytes.byteLength - 46; offset += 1) {
+    if (view.getUint32(offset, true) !== 0x02014b50) {
+      continue;
+    }
+    const nameLength = view.getUint16(offset + 28, true);
+    const extraLength = view.getUint16(offset + 30, true);
+    const commentLength = view.getUint16(offset + 32, true);
+    const nameStart = offset + 46;
+    const nameEnd = nameStart + nameLength;
+    if (decoder.decode(bytes.subarray(nameStart, nameEnd)) === entryName) {
+      const localHeaderOffset = view.getUint32(offset + 42, true);
+      view.setUint32(offset + 24, uncompressedSize, true);
+      view.setUint32(localHeaderOffset + 22, uncompressedSize, true);
+      return bytes;
+    }
+    offset = nameEnd + extraLength + commentLength - 1;
+  }
+
+  throw new Error(`ZIP entry not found: ${entryName}`);
+};
+
+const createForgedUnderreportedDeflateEntry = (): Uint8Array => {
+  const entryName = new TextEncoder().encode("bomb.bin");
+  const declaredUncompressedSize = 1;
+  const compressed = deflateRawSync(
+    new Uint8Array(DECK_PACKAGE_RESOURCE_LIMITS.maxEntryUncompressedBytes + 1),
+    { level: 9 }
+  );
+  const localHeaderSize = 30 + entryName.byteLength;
+  const centralDirectoryOffset = localHeaderSize + compressed.byteLength;
+  const centralDirectorySize = 46 + entryName.byteLength;
+  const bytes = new Uint8Array(centralDirectoryOffset + centralDirectorySize + 22);
+  const view = new DataView(bytes.buffer);
+
+  view.setUint32(0, 0x04034b50, true);
+  view.setUint16(4, 20, true);
+  view.setUint16(8, 8, true);
+  view.setUint32(18, compressed.byteLength, true);
+  view.setUint32(22, declaredUncompressedSize, true);
+  view.setUint16(26, entryName.byteLength, true);
+  bytes.set(entryName, 30);
+  bytes.set(compressed, localHeaderSize);
+
+  view.setUint32(centralDirectoryOffset, 0x02014b50, true);
+  view.setUint16(centralDirectoryOffset + 4, 20, true);
+  view.setUint16(centralDirectoryOffset + 6, 20, true);
+  view.setUint16(centralDirectoryOffset + 10, 8, true);
+  view.setUint32(centralDirectoryOffset + 20, compressed.byteLength, true);
+  view.setUint32(centralDirectoryOffset + 24, declaredUncompressedSize, true);
+  view.setUint16(centralDirectoryOffset + 28, entryName.byteLength, true);
+  bytes.set(entryName, centralDirectoryOffset + 46);
+
+  const endOffset = centralDirectoryOffset + centralDirectorySize;
+  view.setUint32(endOffset, 0x06054b50, true);
+  view.setUint16(endOffset + 8, 1, true);
+  view.setUint16(endOffset + 10, 1, true);
+  view.setUint32(endOffset + 12, centralDirectorySize, true);
+  view.setUint32(endOffset + 16, centralDirectoryOffset, true);
+  return bytes;
+};
+
+const setEncryptedFlag = (sourceBytes: Uint8Array, entryName: string): Uint8Array => {
+  const bytes = Uint8Array.from(sourceBytes);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const decoder = new TextDecoder();
+
+  for (let offset = 0; offset <= bytes.byteLength - 46; offset += 1) {
+    if (view.getUint32(offset, true) !== 0x02014b50) {
+      continue;
+    }
+    const nameLength = view.getUint16(offset + 28, true);
+    const nameStart = offset + 46;
+    const nameEnd = nameStart + nameLength;
+    if (decoder.decode(bytes.subarray(nameStart, nameEnd)) === entryName) {
+      view.setUint16(offset + 8, view.getUint16(offset + 8, true) | 0x0001, true);
+      return bytes;
+    }
+  }
+
+  throw new Error(`ZIP entry not found: ${entryName}`);
 };
 
 describe("@htmlslide/presenter deckpkg reader", () => {
@@ -214,6 +343,167 @@ describe("@htmlslide/presenter deckpkg reader", () => {
       ]);
       expect(deckPackage.slides[0]?.thumbnail.size).toEqual({ width: 960, height: 540 });
     });
+  });
+
+  it("keeps a valid package within every alpha resource limit", async () => {
+    const bytes = await createFixtureDeckPackageBytes();
+    const deckPackage = await readDeckPackageBytes(bytes, { sourcePath: "valid.deckpkg" });
+
+    expect(bytes.byteLength).toBeLessThan(DECK_PACKAGE_RESOURCE_LIMITS.maxArchiveBytes);
+    expect(deckPackage.sourcePath).toBe("valid.deckpkg");
+    expect(deckPackage.slides).toHaveLength(2);
+  });
+
+  it("rejects an over-limit archive from file metadata before ZIP parsing", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-presenter-limit-"));
+    try {
+      const deckpkgPath = path.join(root, "oversized.deckpkg");
+      await writeFile(deckpkgPath, "");
+      await truncate(deckpkgPath, DECK_PACKAGE_RESOURCE_LIMITS.maxArchiveBytes + 1);
+
+      const result = await validateDeckPackage(deckpkgPath);
+
+      expect(result.status).toBe("failed");
+      expect(result.issues).toEqual([
+        expect.objectContaining({
+          path: deckpkgPath,
+          type: "deckpkg-archive-too-large"
+        })
+      ]);
+      expect(result.issues[0]?.message).toContain("re-export the deck");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an archive whose declared entry count exceeds the alpha limit", async () => {
+    const zip = new JSZip();
+    for (let index = 0; index <= DECK_PACKAGE_RESOURCE_LIMITS.maxEntryCount; index += 1) {
+      zip.file(`entry-${index.toString().padStart(4, "0")}.txt`, "", {
+        createFolders: false,
+        date: ZIP_DATE
+      });
+    }
+    const bytes = await zip.generateAsync({ type: "uint8array", compression: "STORE", platform: "UNIX" });
+
+    const result = await validateDeckPackageBytes(bytes, { sourcePath: "too-many.deckpkg" });
+
+    expect(result.status).toBe("failed");
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        path: "too-many.deckpkg",
+        type: "deckpkg-entry-count-exceeded"
+      })
+    ]);
+  });
+
+  it("rejects an entry whose declared uncompressed size exceeds the per-entry limit", async () => {
+    const bytes = setDeclaredUncompressedSize(
+      await createFixtureDeckPackageBytes(),
+      "deck.pdf",
+      DECK_PACKAGE_RESOURCE_LIMITS.maxEntryUncompressedBytes + 1
+    );
+
+    const result = await validateDeckPackageBytes(bytes, { sourcePath: "large-entry.deckpkg" });
+
+    expect(result.status).toBe("failed");
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        path: "deck.pdf",
+        type: "deckpkg-entry-too-large"
+      })
+    ]);
+    expect(result.issues[0]?.message).toContain("Reduce or split this asset");
+  });
+
+  it("rejects excessive total declared uncompressed data", async () => {
+    let bytes = await createFixtureDeckPackageBytes();
+    for (const entryName of [
+      "manifest.json",
+      "deck.html",
+      "deck.pdf",
+      "notes.json",
+      "presenter-settings.json"
+    ]) {
+      bytes = setDeclaredUncompressedSize(
+        bytes,
+        entryName,
+        DECK_PACKAGE_RESOURCE_LIMITS.maxEntryUncompressedBytes
+      );
+    }
+
+    const result = await validateDeckPackageBytes(bytes, { sourcePath: "expanded.deckpkg" });
+
+    expect(result.status).toBe("failed");
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        path: "expanded.deckpkg",
+        type: "deckpkg-total-uncompressed-size-exceeded"
+      })
+    ]);
+  });
+
+  it("bounds actual DEFLATE expansion when ZIP metadata under-reports the entry size", async () => {
+    const bytes = createForgedUnderreportedDeflateEntry();
+
+    const result = await validateDeckPackageBytes(bytes, { sourcePath: "forged-size.deckpkg" });
+
+    expect(bytes.byteLength).toBeLessThan(DECK_PACKAGE_RESOURCE_LIMITS.maxArchiveBytes);
+    expect(result.status).toBe("failed");
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        path: "bomb.bin",
+        type: "deckpkg-entry-too-large"
+      })
+    ]);
+    expect(result.issues[0]?.message).toContain("expands beyond");
+  });
+
+  it("rejects a stored entry whose payload does not match its declared CRC32", async () => {
+    const bytes = flipStoredEntryPayloadByte(
+      await createFixtureDeckPackageBytes({ compression: "STORE" }),
+      "thumbnails/001-title.png"
+    );
+
+    const result = await validateDeckPackageBytes(bytes, { sourcePath: "crc-mismatch.deckpkg" });
+
+    expect(result.status).toBe("failed");
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        path: "thumbnails/001-title.png",
+        type: "deckpkg-entry-crc-mismatch"
+      })
+    ]);
+  });
+
+  it("maps observable ZIP encryption to a stable validation issue", async () => {
+    const bytes = setEncryptedFlag(await createFixtureDeckPackageBytes(), "deck.pdf");
+
+    const result = await validateDeckPackageBytes(bytes, { sourcePath: "encrypted.deckpkg" });
+
+    expect(result.status).toBe("failed");
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        path: "encrypted.deckpkg",
+        type: "encrypted-deckpkg-archive"
+      })
+    ]);
+  });
+
+  it("rejects ZIP entries whose original paths were sanitized by JSZip", async () => {
+    const zip = new JSZip();
+    zip.file("../manifest.json", "{}", { createFolders: false, date: ZIP_DATE });
+    const bytes = await zip.generateAsync({ type: "uint8array", compression: "STORE", platform: "UNIX" });
+
+    const result = await validateDeckPackageBytes(bytes, { sourcePath: "unsafe.deckpkg" });
+
+    expect(result.status).toBe("failed");
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        path: "../manifest.json",
+        type: "unsafe-deckpkg-entry-path"
+      })
+    ]);
   });
 
   it("returns validation issues for malformed deckpkg assets", async () => {

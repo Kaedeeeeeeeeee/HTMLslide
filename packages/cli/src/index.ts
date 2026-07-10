@@ -593,6 +593,7 @@ const toCompilerInput = (project: LoadedProject): CompilerProjectInput => ({
   viewport: project.manifest.viewport,
   safeArea: project.manifest.safeArea,
   themeCssPath: project.manifest.theme?.css,
+  themeTokensPath: project.manifest.theme?.tokens,
   slides: project.manifest.slides.map((slide) => ({
     id: slide.id,
     title: slide.title,

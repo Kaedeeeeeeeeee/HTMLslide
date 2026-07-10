@@ -954,6 +954,7 @@ const toCompilerInput = (project: LoadedDeckProject): CompilerProjectInput => ({
   viewport: project.deck.viewport,
   safeArea: project.deck.safeArea,
   themeCssPath: project.deck.theme?.css,
+  themeTokensPath: project.deck.theme?.tokens,
   slides: project.deck.slides.map((slide) => ({
     id: slide.id,
     title: slide.title,

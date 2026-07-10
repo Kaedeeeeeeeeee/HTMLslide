@@ -9,6 +9,12 @@
     "width": 1920,
     "height": 1080
   },
+  "safeArea": {
+    "top": 72,
+    "right": 96,
+    "bottom": 72,
+    "left": 96
+  },
   "slides": [
     {
       "id": "001-title",

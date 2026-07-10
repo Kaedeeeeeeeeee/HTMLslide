@@ -1,8 +1,10 @@
-import { cp, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { loadDeckProject } from "@htmlslide/core";
+import { exportDeck } from "../../compiler/src/index.js";
 import { checkProject, type CheckReport, type HtmlslideIssue } from "../src/index.js";
 
 const FIXTURE_ROOT = fileURLToPath(new URL("../../test-fixtures/decks/", import.meta.url));
@@ -22,6 +24,39 @@ const withTempFixture = async <T>(fixtureName: string, callback: (projectPath: s
 };
 
 const issueTypes = (report: CheckReport): Set<string> => new Set(report.issues.map((issue) => issue.type));
+
+const requestAllExports = async (projectPath: string): Promise<void> => {
+  const deckPath = path.join(projectPath, "deck.json");
+  const deck = JSON.parse(await readFile(deckPath, "utf8")) as Record<string, unknown>;
+  deck.export = {
+    pdf: true,
+    html: true,
+    deckpkg: true,
+    thumbnails: true,
+    speakerNotes: true
+  };
+  await writeFile(deckPath, `${JSON.stringify(deck, null, 2)}\n`);
+};
+
+const exportLoadedFixture = async (projectPath: string) => {
+  const project = await loadDeckProject(projectPath);
+  return exportDeck({
+    projectPath,
+    title: project.deck.title,
+    language: project.deck.language,
+    viewport: project.deck.viewport,
+    safeArea: project.deck.safeArea,
+    themeCssPath: project.deck.theme?.css,
+    themeTokensPath: project.deck.theme?.tokens,
+    slides: project.deck.slides.map((slide) => ({
+      id: slide.id,
+      title: slide.title,
+      sourcePath: slide.source,
+      notesPath: slide.notes,
+      durationSec: slide.durationSec
+    }))
+  });
+};
 
 const expectMachineRepairableIssues = (issues: readonly HtmlslideIssue[]): void => {
   for (const issue of issues) {
@@ -250,16 +285,7 @@ describe("HTMLslide linter", () => {
 
   it("flags expected exports that are older than deck sources", async () => {
     await withTempFixture("linter-valid-clean", async (projectPath) => {
-      const deckPath = path.join(projectPath, "deck.json");
-      const deck = JSON.parse(await readFile(deckPath, "utf8")) as Record<string, unknown>;
-      deck.export = {
-        pdf: true,
-        html: true,
-        deckpkg: true,
-        thumbnails: true,
-        speakerNotes: true
-      };
-      await writeFile(deckPath, `${JSON.stringify(deck, null, 2)}\n`);
+      await requestAllExports(projectPath);
 
       const exportsPath = path.join(projectPath, "exports");
       const thumbnailsPath = path.join(exportsPath, "thumbnails");
@@ -283,8 +309,160 @@ describe("HTMLslide linter", () => {
 
       expect(report.status).toBe("passed");
       expect(outdatedIssues).toHaveLength(5);
+      expect(report.issues).toContainEqual(expect.objectContaining({ type: "export-manifest-missing" }));
       expect(report.issues.some((issue) => issue.type === "export-missing")).toBe(false);
       expectMachineRepairableIssues(outdatedIssues);
+    });
+  });
+
+  it("uses compiler fingerprints to detect source changes even when mtimes look older", async () => {
+    await withTempFixture("linter-valid-clean", async (projectPath) => {
+      await requestAllExports(projectPath);
+      await exportLoadedFixture(projectPath);
+
+      const cleanReport = await checkProject(projectPath);
+      expect(cleanReport.issues.filter((issue) => issue.type.startsWith("export-"))).toEqual([]);
+
+      const slidePath = path.join(projectPath, "slides", "001-clean.html");
+      const source = await readFile(slidePath, "utf8");
+      await writeFile(slidePath, `${source}\n<!-- changed after export -->\n`);
+      const oldDate = new Date("2000-01-01T00:00:00.000Z");
+      await utimes(slidePath, oldDate, oldDate);
+
+      const report = await checkProject(projectPath);
+      const outdatedIssues = report.issues.filter((issue) => issue.type === "export-outdated");
+
+      expect(outdatedIssues).toHaveLength(5);
+      expect(outdatedIssues[0]?.measurement).toMatchObject({
+        changedSourceCount: 1,
+        firstChangedSourcePath: "slides/001-clean.html"
+      });
+      expect(report.issues.some((issue) => issue.type === "export-manifest-missing")).toBe(false);
+      expectMachineRepairableIssues(outdatedIssues);
+    });
+  });
+
+  it("detects manual edits to compiler-owned export artifacts", async () => {
+    await withTempFixture("linter-valid-clean", async (projectPath) => {
+      await requestAllExports(projectPath);
+      const exported = await exportLoadedFixture(projectPath);
+      await writeFile(exported.artifacts.pdf!, "manually edited export");
+
+      const report = await checkProject(projectPath);
+      const modifiedIssues = report.issues.filter((issue) => issue.type === "export-modified");
+
+      expect(modifiedIssues).toHaveLength(1);
+      expect(modifiedIssues[0]).toMatchObject({
+        path: "exports/linter-valid-clean.pdf",
+        slideId: "deck"
+      });
+      expect(report.issues.some((issue) => issue.type === "export-outdated")).toBe(false);
+      expectMachineRepairableIssues(modifiedIssues);
+    });
+  });
+
+  it("ignores mtime-only source changes when source bytes still match the manifest", async () => {
+    await withTempFixture("linter-valid-clean", async (projectPath) => {
+      await requestAllExports(projectPath);
+      await exportLoadedFixture(projectPath);
+      const slidePath = path.join(projectPath, "slides", "001-clean.html");
+      const futureDate = new Date("2040-01-01T00:00:00.000Z");
+      await utimes(slidePath, futureDate, futureDate);
+
+      const report = await checkProject(projectPath);
+
+      expect(report.issues.filter((issue) => issue.type.startsWith("export-"))).toEqual([]);
+    });
+  });
+
+  it("fails closed when the compiler export manifest is truncated", async () => {
+    await withTempFixture("linter-valid-clean", async (projectPath) => {
+      await requestAllExports(projectPath);
+      const exported = await exportLoadedFixture(projectPath);
+      await writeFile(exported.metadata.manifest, '{"schemaVersion":');
+
+      const report = await checkProject(projectPath);
+      const manifestIssue = report.issues.find((issue) => issue.type === "export-manifest-invalid");
+
+      expect(report.status).toBe("failed");
+      expect(manifestIssue).toMatchObject({
+        severity: "error",
+        path: "exports/export-manifest.json",
+        slideId: "deck"
+      });
+      expect(report.issues.some((issue) => issue.type === "export-outdated")).toBe(false);
+      expectMachineRepairableIssues([manifestIssue!]);
+    });
+  });
+
+  it("fails closed for a present invalid manifest even when the deck requests no exports", async () => {
+    await withTempFixture("linter-valid-clean", async (projectPath) => {
+      const exportsPath = path.join(projectPath, "exports");
+      await mkdir(exportsPath, { recursive: true });
+      await writeFile(path.join(exportsPath, "export-manifest.json"), '{"schemaVersion":');
+
+      const report = await checkProject(projectPath);
+
+      expect(report.status).toBe("failed");
+      expect(report.issues).toContainEqual(expect.objectContaining({
+        severity: "error",
+        type: "export-manifest-invalid",
+        path: "exports/export-manifest.json"
+      }));
+    });
+  });
+
+  it("reports an artifact symlink as a stable integrity error", async () => {
+    await withTempFixture("linter-valid-clean", async (projectPath) => {
+      await requestAllExports(projectPath);
+      const exported = await exportLoadedFixture(projectPath);
+      const outsidePdf = path.join(path.dirname(projectPath), "outside.pdf");
+      await writeFile(outsidePdf, "outside");
+      await rm(exported.artifacts.pdf!);
+      await symlink(outsidePdf, exported.artifacts.pdf!);
+
+      const report = await checkProject(projectPath);
+      const integrityIssue = report.issues.find((issue) =>
+        issue.type === "export-integrity-unverified" && issue.path === "exports/linter-valid-clean.pdf"
+      );
+
+      expect(report.status).toBe("failed");
+      expect(integrityIssue).toMatchObject({ severity: "error", slideId: "deck" });
+      expectMachineRepairableIssues([integrityIssue!]);
+    });
+  });
+
+  it("uses an exact partial-export manifest without treating removed artifacts as untracked", async () => {
+    await withTempFixture("linter-valid-clean", async (projectPath) => {
+      await requestAllExports(projectPath);
+      await exportLoadedFixture(projectPath);
+      const project = await loadDeckProject(projectPath);
+      await exportDeck({
+        projectPath,
+        title: project.deck.title,
+        language: project.deck.language,
+        viewport: project.deck.viewport,
+        safeArea: project.deck.safeArea,
+        slides: project.deck.slides.map((slide) => ({
+          id: slide.id,
+          title: slide.title,
+          sourcePath: slide.source,
+          notesPath: slide.notes,
+          durationSec: slide.durationSec
+        }))
+      }, {
+        pdf: false,
+        html: true,
+        deckpkg: false,
+        thumbnails: false
+      });
+
+      const report = await checkProject(projectPath);
+      const exportIssues = report.issues.filter((issue) => issue.type.startsWith("export-"));
+
+      expect(exportIssues.filter((issue) => issue.type === "export-missing")).toHaveLength(3);
+      expect(exportIssues.some((issue) => issue.type === "export-untracked")).toBe(false);
+      expect(exportIssues.some((issue) => issue.type === "export-manifest-invalid")).toBe(false);
     });
   });
 });

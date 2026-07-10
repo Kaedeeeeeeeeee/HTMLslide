@@ -268,6 +268,7 @@ async function writeTwentySlideProject(projectPath: string): Promise<CompilerPro
     viewport: loaded.deck.viewport,
     safeArea: loaded.deck.safeArea,
     themeCssPath: loaded.deck.theme?.css,
+    themeTokensPath: loaded.deck.theme?.tokens,
     slides: loaded.deck.slides.map((slide) => ({
       id: slide.id,
       title: slide.title,

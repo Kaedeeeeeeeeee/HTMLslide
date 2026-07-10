@@ -367,6 +367,9 @@ describe("CLI project helpers", () => {
           pdf?: string;
           thumbnails?: string[];
         };
+        metadata: {
+          manifest: string;
+        };
       };
 
       expect(exported.artifacts.pdf).toBe(path.join(project.projectPath, "exports", "demo.pdf"));
@@ -374,13 +377,50 @@ describe("CLI project helpers", () => {
       expect(exported.artifacts.deckpkg).toBe(path.join(project.projectPath, "exports", "demo.deckpkg"));
       expect(exported.artifacts.notes).toBe(path.join(project.projectPath, "exports", "notes.json"));
       expect(exported.artifacts.thumbnails).toHaveLength(2);
+      expect(exported.artifacts).not.toHaveProperty("manifest");
+      expect(exported.metadata.manifest).toBe(path.join(project.projectPath, "exports", "export-manifest.json"));
       await expect(access(exported.artifacts.pdf!)).resolves.toBeUndefined();
       await expect(access(exported.artifacts.html!)).resolves.toBeUndefined();
       await expect(access(exported.artifacts.deckpkg!)).resolves.toBeUndefined();
       await expect(access(exported.artifacts.thumbnails![0]!)).resolves.toBeUndefined();
+      await expect(access(exported.metadata.manifest)).resolves.toBeUndefined();
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("returns export-failed exit code 3 when the compiler cannot acquire the project lock", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
+    try {
+      const project = await createProject(path.join(root, "demo"), "demo");
+      const cachePath = path.join(project.projectPath, ".htmlslide", "cache");
+      await mkdir(cachePath, { recursive: true });
+      await writeFile(
+        path.join(cachePath, "export.lock"),
+        `${JSON.stringify({ pid: process.pid, token: "active-test-owner" })}\n`
+      );
+
+      const failure = await runCli(["export", project.projectPath, "--json"]).catch((error: unknown) => error);
+      expect(failure).toMatchObject({ code: EXIT_CODES.exportFailed });
+      expect(JSON.parse(String((failure as { stdout?: unknown }).stdout))).toMatchObject({
+        status: "failed",
+        code: "EXPORT_FAILED",
+        exitCode: EXIT_CODES.exportFailed
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves project-load exit codes before export starts", async () => {
+    const missingPath = path.join(os.tmpdir(), `htmlslide-missing-export-${Date.now()}`);
+    const failure = await runCli(["export", missingPath, "--json"]).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({ code: EXIT_CODES.projectNotFound });
+    expect(JSON.parse(String((failure as { stdout?: unknown }).stdout))).toMatchObject({
+      status: "failed",
+      exitCode: EXIT_CODES.projectNotFound
+    });
   });
 
   it("installs a managed CLI shim to an explicit target dir and uses the fallback CLI path", async () => {

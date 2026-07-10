@@ -51,6 +51,7 @@ const loadCompilerProject = async (projectPath: string): Promise<CompilerProject
     viewport: deck.viewport,
     safeArea: deck.safeArea,
     themeCssPath: deck.theme?.css,
+    themeTokensPath: deck.theme?.tokens,
     slides: deck.slides.map((slide) => ({
       id: slide.id,
       title: slide.title,

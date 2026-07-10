@@ -8,7 +8,7 @@ Initial commands:
 - `htmlslide init [--template <id>]` initializes the current folder as a deck project from a built-in template.
 - `htmlslide templates list --json` lists built-in deck template metadata.
 - `htmlslide check [path] --json` discovers `deck.json` from a project root, nested source path, or direct `deck.json` path, then validates schema, files, notes, and source rules.
-- `htmlslide export [path] --pdf --html --deckpkg --thumbnails` creates export artifacts after a successful check.
+- `htmlslide export [path] --pdf --html --deckpkg --thumbnails` creates export artifacts plus `exports/export-manifest.json` after a successful check.
 - `htmlslide export [path] --no-pdf --no-deckpkg --no-thumbnails` skips selected artifacts while still writing required sidecars such as `notes.json`.
 - `htmlslide mcp [path]` starts the project-scoped stdio MCP server and reserves stdout for MCP protocol messages.
 - `htmlslide mcp --list-tools --json` lists registered MCP tool descriptors, safety labels, and implementation status.
@@ -32,6 +32,12 @@ Exit codes:
 - `8` incompatible schema
 
 All important commands must support JSON output suitable for external agents.
+
+## Export Commit Contract
+
+`htmlslide export` acquires a project-level export lock and builds every requested output from one source snapshot in a private staging directory. It commits artifact files first and atomically replaces the compiler-owned `exports/export-manifest.json` last. Concurrent export attempts for the same project or transaction failures use export-failed exit code `3` and must not publish a new commit marker.
+
+A partial export writes a manifest containing exactly that invocation's artifacts and removes only previously manifest-owned artifacts that the invocation omits. `htmlslide check` treats a missing manifest as a legacy-project warning with mtime fallback; a present but invalid or truncated manifest is an error and fails closed without that fallback.
 
 ## Templates
 

@@ -31,6 +31,8 @@ my-deck/
 
 ## Exports
 
-`exports/` is compiler-owned. Do not edit generated PDF, HTML, deckpkg, thumbnails, or `notes.json` by hand.
+`exports/` is compiler-owned. Do not edit generated PDF, HTML, deckpkg, thumbnails, `notes.json`, or `export-manifest.json` by hand. The manifest records source and artifact SHA-256 integrity metadata, is not a digital signature, and acts as the commit marker for the latest completed export.
 
-For the formal manifest rules, see [spec/deck.md](spec/deck.md) and [spec/project-structure.md](spec/project-structure.md).
+Exports use a project-level lock and private staging under `.htmlslide/cache/`. Artifact files are committed first and the manifest is atomically replaced last. Partial exports clean up only files owned by the previous valid manifest that the new invocation omits; unrelated files are left alone.
+
+For the formal rules, see [spec/deck.md](spec/deck.md), [spec/project-structure.md](spec/project-structure.md), and [spec/export.md](spec/export.md).

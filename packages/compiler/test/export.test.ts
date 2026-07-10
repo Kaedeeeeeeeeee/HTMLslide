@@ -1,10 +1,17 @@
-import { access, cp, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
+import {
+  ExportManifestSchema,
+  EXPORT_MANIFEST_PROJECT_PATH,
+  fingerprintEntriesDigest,
+  fingerprintProjectFile
+} from "@htmlslide/core";
+import { HTMLSLIDE_APP_VERSION } from "@htmlslide/core/version";
 import { DECK_PACKAGE_SCHEMA_VERSION } from "../../presenter/src/index";
 import {
   buildDeckPackageManifest,
@@ -22,6 +29,7 @@ type DeckJson = {
   safeArea?: CompilerProjectInput["safeArea"];
   theme?: {
     css?: string;
+    tokens?: string;
   };
   slides: Array<{
     id: string;
@@ -78,6 +86,7 @@ const loadCompilerProject = async (projectPath: string): Promise<CompilerProject
     viewport: deck.viewport,
     safeArea: deck.safeArea,
     themeCssPath: deck.theme?.css,
+    themeTokensPath: deck.theme?.tokens,
     slides: deck.slides.map((slide) => ({
       id: slide.id,
       title: slide.title,
@@ -114,6 +123,7 @@ const artifactHashes = async (project: CompilerProjectInput) => {
     pdf: sha256(await readFile(exported.artifacts.pdf!)),
     html: sha256(await readFile(exported.artifacts.html!, "utf8")),
     deckpkg: sha256(await readFile(exported.artifacts.deckpkg!)),
+    manifest: sha256(await readFile(exported.metadata.manifest, "utf8")),
     notes: sha256(await readFile(exported.artifacts.notes!, "utf8")),
     thumbnails: await Promise.all((exported.artifacts.thumbnails ?? []).map(async (thumbnailPath) =>
       sha256(await readFile(thumbnailPath))
@@ -136,6 +146,8 @@ describe("exportDeck", () => {
       expect(exported.artifacts.html).toBe(path.join(projectPath, "exports", "golden-export-basic.html"));
       expect(exported.artifacts.deckpkg).toBe(path.join(projectPath, "exports", "golden-export-basic.deckpkg"));
       expect(exported.artifacts.notes).toBe(path.join(projectPath, "exports", "notes.json"));
+      expect(exported.metadata.manifest).toBe(path.join(projectPath, EXPORT_MANIFEST_PROJECT_PATH));
+      expect(exported.artifacts).not.toHaveProperty("manifest");
       expect(exported.artifacts.thumbnails).toHaveLength(2);
       expect(exported.artifacts.thumbnailCache).toHaveLength(2);
 
@@ -229,6 +241,43 @@ describe("exportDeck", () => {
         DECK_PACKAGE_SCHEMA_VERSION
       );
       expect(readPngSize(await zipBytes(deckpkg, "thumbnails/001-title.png"))).toEqual({ width: 960, height: 540 });
+
+      const exportManifest = ExportManifestSchema.parse(
+        JSON.parse(await readFile(exported.metadata.manifest, "utf8"))
+      );
+      expect(exportManifest).toMatchObject({
+        compilerVersion: HTMLSLIDE_APP_VERSION,
+        hashAlgorithm: "sha256",
+        sourceDigest: fingerprintEntriesDigest(exportManifest.sources)
+      });
+      expect(exportManifest.sources.map((entry) => entry.path)).toEqual([
+        "assets/accent.svg",
+        "deck.json",
+        "notes/001-title.md",
+        "notes/002-artifacts.md",
+        "slides/001-title.html",
+        "slides/002-artifacts.html",
+        "theme/theme.css"
+      ]);
+      expect(exportManifest.artifacts.map((entry) => ({
+        kind: entry.kind,
+        path: entry.path,
+        slideId: entry.slideId
+      }))).toEqual([
+        { kind: "deckpkg", path: "exports/golden-export-basic.deckpkg", slideId: undefined },
+        { kind: "html", path: "exports/golden-export-basic.html", slideId: undefined },
+        { kind: "pdf", path: "exports/golden-export-basic.pdf", slideId: undefined },
+        { kind: "notes", path: "exports/notes.json", slideId: undefined },
+        { kind: "thumbnail", path: "exports/thumbnails/001-title.png", slideId: "001-title" },
+        { kind: "thumbnail", path: "exports/thumbnails/002-artifacts.png", slideId: "002-artifacts" }
+      ]);
+      for (const artifact of exportManifest.artifacts) {
+        expect(await fingerprintProjectFile(projectPath, artifact.path)).toEqual({
+          path: artifact.path,
+          sha256: artifact.sha256,
+          sizeBytes: artifact.sizeBytes
+        });
+      }
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -369,6 +418,185 @@ describe("exportDeck", () => {
       const first = await artifactHashes(project);
       const second = await artifactHashes(project);
       expect(second).toEqual(first);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("commits partial exports as an exact artifact set and removes previously owned outputs", async () => {
+    const { root, project, projectPath } = await copyCompilerFixture(basicFixtureName);
+    try {
+      const complete = await exportDeck(project);
+      const manualArtifact = path.join(projectPath, "exports", "manual-user-file.txt");
+      await writeFile(manualArtifact, "not compiler owned");
+
+      const partial = await exportDeck(project, {
+        pdf: false,
+        html: true,
+        deckpkg: false,
+        thumbnails: false
+      });
+      const manifest = ExportManifestSchema.parse(JSON.parse(await readFile(partial.metadata.manifest, "utf8")));
+
+      expect(manifest.artifacts.map((artifact) => ({ kind: artifact.kind, path: artifact.path }))).toEqual([
+        { kind: "html", path: "exports/golden-export-basic.html" },
+        { kind: "notes", path: "exports/notes.json" }
+      ]);
+      expect(partial.artifacts).toMatchObject({
+        html: path.join(projectPath, "exports", "golden-export-basic.html"),
+        notes: path.join(projectPath, "exports", "notes.json")
+      });
+      expect(partial.artifacts.pdf).toBeUndefined();
+      expect(partial.artifacts.deckpkg).toBeUndefined();
+      expect(partial.artifacts.thumbnails).toBeUndefined();
+      await expect(access(complete.artifacts.pdf!)).rejects.toThrow();
+      await expect(access(complete.artifacts.deckpkg!)).rejects.toThrow();
+      for (const thumbnailPath of complete.artifacts.thumbnails ?? []) {
+        await expect(access(thumbnailPath)).rejects.toThrow();
+      }
+      await expect(access(manualArtifact)).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("serializes concurrent exports with a project lock", async () => {
+    const { root, project } = await copyCompilerFixture(basicFixtureName);
+    try {
+      const results = await Promise.allSettled([exportDeck(project), exportDeck(project)]);
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      const rejection = results.find((result) => result.status === "rejected");
+      expect(rejection).toMatchObject({ status: "rejected" });
+      expect(String(rejection && rejection.status === "rejected" ? rejection.reason : "")).toContain(
+        "already running"
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers a lock owned by a dead process", async () => {
+    const { root, project, projectPath } = await copyCompilerFixture(basicFixtureName);
+    try {
+      const cachePath = path.join(projectPath, ".htmlslide", "cache");
+      const lockPath = path.join(cachePath, "export.lock");
+      await mkdir(cachePath, { recursive: true });
+      await writeFile(lockPath, `${JSON.stringify({ pid: 2_147_483_647, token: "dead-owner" })}\n`);
+
+      await expect(exportDeck(project)).resolves.toMatchObject({ projectPath });
+      await expect(access(lockPath)).rejects.toThrow();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("allows only one exporter to recover the same stale lock", async () => {
+    const { root, project, projectPath } = await copyCompilerFixture(basicFixtureName);
+    try {
+      const cachePath = path.join(projectPath, ".htmlslide", "cache");
+      await mkdir(cachePath, { recursive: true });
+      await writeFile(
+        path.join(cachePath, "export.lock"),
+        `${JSON.stringify({ pid: 2_147_483_647, token: "shared-dead-owner" })}\n`
+      );
+
+      const results = await Promise.allSettled([exportDeck(project), exportDeck(project)]);
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+      const manifest = ExportManifestSchema.parse(
+        JSON.parse(await readFile(path.join(projectPath, EXPORT_MANIFEST_PROJECT_PATH), "utf8"))
+      );
+      expect(manifest.artifacts).toHaveLength(6);
+      expect((await readdir(cachePath)).filter((entry) => entry.startsWith("export.lock"))).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("cleans its lock and staging directory after a source snapshot failure", async () => {
+    const { root, project, projectPath } = await copyCompilerFixture(basicFixtureName);
+    const sourcePath = path.join(projectPath, "slides", "001-title.html");
+    const sourceBytes = await readFile(sourcePath);
+    const outsidePath = path.join(root, "outside-slide.html");
+    try {
+      await writeFile(outsidePath, sourceBytes);
+      await rm(sourcePath);
+      await symlink(outsidePath, sourcePath);
+
+      await expect(exportDeck(project)).rejects.toThrow("must be a regular file");
+      await expect(access(path.join(projectPath, ".htmlslide", "cache", "export.lock"))).rejects.toThrow();
+      const stagingParent = path.join(projectPath, ".htmlslide", "cache", "export-staging");
+      expect(await readdir(stagingParent)).toEqual([]);
+
+      await rm(sourcePath);
+      await writeFile(sourcePath, sourceBytes);
+      await expect(exportDeck(project)).resolves.toMatchObject({ projectPath });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses an exports directory symlink without writing outside the project", async () => {
+    const { root, project, projectPath } = await copyCompilerFixture(basicFixtureName);
+    const outsideExports = path.join(root, "outside-exports");
+    try {
+      await mkdir(outsideExports);
+      await symlink(outsideExports, path.join(projectPath, "exports"));
+
+      await expect(exportDeck(project)).rejects.toThrow("must not be a symlink or file");
+      expect(await readdir(outsideExports)).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to clean compiler-owned artifacts through a symlinked parent directory", async () => {
+    const { root, project, projectPath } = await copyCompilerFixture(basicFixtureName);
+    const outsideThumbnails = path.join(root, "outside-thumbnails");
+    const outsideThumbnail = path.join(outsideThumbnails, "001-title.png");
+    try {
+      await exportDeck(project);
+      await rm(path.join(projectPath, "exports", "thumbnails"), { recursive: true, force: true });
+      await mkdir(outsideThumbnails);
+      await writeFile(outsideThumbnail, "outside thumbnail");
+      await symlink(outsideThumbnails, path.join(projectPath, "exports", "thumbnails"));
+
+      await expect(exportDeck(project, {
+        pdf: false,
+        html: true,
+        deckpkg: false,
+        thumbnails: false
+      })).rejects.toThrow("must not be a symlink or file");
+      expect(await readFile(outsideThumbnail, "utf8")).toBe("outside thumbnail");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves the previous committed export when a new artifact target fails preflight", async () => {
+    const { root, project, projectPath } = await copyCompilerFixture(basicFixtureName);
+    try {
+      const previous = await exportDeck(project);
+      const previousManifest = await readFile(previous.metadata.manifest, "utf8");
+      const recorded = ExportManifestSchema.parse(JSON.parse(previousManifest));
+      const deckPath = path.join(projectPath, "deck.json");
+      const deck = JSON.parse(await readFile(deckPath, "utf8")) as DeckJson;
+      deck.title = "Renamed Deck";
+      await writeFile(deckPath, `${JSON.stringify(deck, null, 2)}\n`);
+      await mkdir(path.join(projectPath, "exports", "renamed-deck.html"));
+
+      await expect(exportDeck(project, {
+        pdf: false,
+        html: true,
+        deckpkg: false,
+        thumbnails: false
+      })).rejects.toThrow("must be a regular file");
+
+      expect(await readFile(previous.metadata.manifest, "utf8")).toBe(previousManifest);
+      for (const artifact of recorded.artifacts) {
+        const actual = await fingerprintProjectFile(projectPath, artifact.path);
+        expect(actual).toMatchObject({ sha256: artifact.sha256, sizeBytes: artifact.sizeBytes });
+      }
     } finally {
       await rm(root, { recursive: true, force: true });
     }

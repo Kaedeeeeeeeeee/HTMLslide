@@ -1,8 +1,28 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { deflateSync } from "node:zlib";
 import JSZip from "jszip";
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import {
+  changedFingerprintPaths,
+  compareFingerprintPaths,
+  createExportManifest,
+  ExportManifestSchema,
+  EXPORT_MANIFEST_FILE_NAME,
+  EXPORT_MANIFEST_PROJECT_PATH,
+  fingerprintBytes,
+  fingerprintProjectFile,
+  fingerprintProjectFiles,
+  loadDeckProject,
+  MAX_EXPORT_MANIFEST_BYTES,
+  readProjectFileSnapshot,
+  toFingerprintProjectPath,
+  type ExportArtifactFingerprint,
+  type ExportArtifactKind,
+  type ExportFileFingerprint,
+  type ExportManifest
+} from "@htmlslide/core";
 import { DECK_PACKAGE_SCHEMA_VERSION } from "@htmlslide/core/version";
 import { buildDeckHtml, type RenderDeck } from "@htmlslide/renderer";
 
@@ -29,6 +49,7 @@ export type CompilerProjectInput = {
     left: number;
   };
   themeCssPath?: string;
+  themeTokensPath?: string;
   slides: CompilerSlideInput[];
 };
 
@@ -61,6 +82,9 @@ export type ExportResult = {
     thumbnails?: string[];
     thumbnailCache?: string[];
     notes?: string;
+  };
+  metadata: {
+    manifest: string;
   };
   verification: ExportVerification;
 };
@@ -125,7 +149,8 @@ type PreparedSlide = CompilerSlideInput & {
 type PreparedProject = {
   renderable: RenderDeck;
   packageRenderable: RenderDeck;
-  packageAssetPaths: Set<string>;
+  packageAssets: PackageAssetEntry[];
+  sourceFingerprints: ExportFileFingerprint[];
   slides: PreparedSlide[];
 };
 
@@ -133,6 +158,7 @@ type ThumbnailEntry = {
   slideId: string;
   packagePath: string;
   exportPath: string;
+  stagingPath: string;
   cachePath: string;
   bytes: Buffer;
 };
@@ -140,6 +166,19 @@ type ThumbnailEntry = {
 type PackageAssetEntry = {
   packagePath: string;
   bytes: Uint8Array;
+};
+
+type StagedArtifact = {
+  finalPath: string;
+  fingerprint: ExportArtifactFingerprint;
+  projectPath: string;
+  stagingPath: string;
+};
+
+type ExportArtifactBackup = {
+  backupPath: string;
+  finalPath: string;
+  projectPath: string;
 };
 
 const DEFAULT_OPTIONS = {
@@ -171,14 +210,6 @@ const PACKAGE_NOTES_PATH = "notes.json";
 const PACKAGE_PRESENTER_SETTINGS_PATH = "presenter-settings.json";
 const PROJECT_TOP_LEVEL_DIRS = new Set(["assets", "slides", "notes", "theme", "skills", ".htmlslide"]);
 const PACKAGE_ASSET_TOP_LEVEL_DIRS = new Set(["assets", "slides", "theme"]);
-
-const fileExistsText = async (filePath: string): Promise<string> => {
-  try {
-    return await readFile(filePath, "utf8");
-  } catch {
-    return "";
-  }
-};
 
 const slugFileName = (value: string): string =>
   value
@@ -331,11 +362,37 @@ const rewriteCssUrlsForPackage = (sourcePath: string, css: string, assetPaths: S
     return `url(${quote}${rewrittenValue}${quote})`;
   });
 
-const buildPreparedProject = async (project: CompilerProjectInput): Promise<PreparedProject> => {
+const buildPreparedProject = async (
+  project: CompilerProjectInput,
+  initialFingerprints: readonly ExportFileFingerprint[] = []
+): Promise<PreparedProject> => {
   const packageAssetPaths = new Set<string>();
-  const rawThemeCss = project.themeCssPath
-    ? await fileExistsText(path.resolve(project.projectPath, project.themeCssPath))
+  const sourceFingerprints = new Map<string, ExportFileFingerprint>();
+  const addSourceFingerprint = (fingerprint: ExportFileFingerprint): void => {
+    const existing = sourceFingerprints.get(fingerprint.path);
+    if (existing && (existing.sha256 !== fingerprint.sha256 || existing.sizeBytes !== fingerprint.sizeBytes)) {
+      throw new Error(`Project source changed between snapshot reads: ${fingerprint.path}`);
+    }
+    sourceFingerprints.set(fingerprint.path, fingerprint);
+  };
+  initialFingerprints.forEach(addSourceFingerprint);
+  const themeSnapshot = project.themeCssPath
+    ? await readProjectFileSnapshot(
+        project.projectPath,
+        toFingerprintProjectPath(project.projectPath, project.themeCssPath)
+      )
     : undefined;
+  if (themeSnapshot) {
+    addSourceFingerprint(themeSnapshot.fingerprint);
+  }
+  if (project.themeTokensPath) {
+    const tokensSnapshot = await readProjectFileSnapshot(
+      project.projectPath,
+      toFingerprintProjectPath(project.projectPath, project.themeTokensPath)
+    );
+    addSourceFingerprint(tokensSnapshot.fingerprint);
+  }
+  const rawThemeCss = themeSnapshot?.bytes.toString("utf8");
   const themeCss = project.themeCssPath
     ? rewriteCssUrlsForExport(project.themeCssPath, rawThemeCss ?? "")
     : undefined;
@@ -343,24 +400,46 @@ const buildPreparedProject = async (project: CompilerProjectInput): Promise<Prep
     ? rewriteCssUrlsForPackage(project.themeCssPath, rawThemeCss ?? "", packageAssetPaths)
     : undefined;
 
-  const slides = await Promise.all(
-    project.slides.map(async (slide, index): Promise<PreparedSlide> => {
-      const sourcePath = path.resolve(project.projectPath, slide.sourcePath);
-      const sourceHtml = await readFile(sourcePath, "utf8");
-      const notes = slide.notesPath ? await fileExistsText(path.resolve(project.projectPath, slide.notesPath)) : "";
+  const slides: PreparedSlide[] = [];
+  for (const [index, slide] of project.slides.entries()) {
+    const sourceSnapshot = await readProjectFileSnapshot(
+      project.projectPath,
+      toFingerprintProjectPath(project.projectPath, slide.sourcePath)
+    );
+    addSourceFingerprint(sourceSnapshot.fingerprint);
+    const notesSnapshot = slide.notesPath
+      ? await readProjectFileSnapshot(
+          project.projectPath,
+          toFingerprintProjectPath(project.projectPath, slide.notesPath)
+        )
+      : undefined;
+    if (notesSnapshot) {
+      addSourceFingerprint(notesSnapshot.fingerprint);
+    }
+    const sourceHtml = sourceSnapshot.bytes.toString("utf8");
+    const notes = notesSnapshot?.bytes.toString("utf8") ?? "";
 
-      return {
-        ...slide,
-        index,
-        pdfPage: index + 1,
-        durationSec: slide.durationSec ?? 60,
-        sourceHtml,
-        exportHtml: rewriteHtmlUrlsForExport(slide.sourcePath, sourceHtml),
-        packageHtml: rewriteHtmlUrlsForPackage(slide.sourcePath, sourceHtml, packageAssetPaths),
-        notes
-      };
-    })
-  );
+    slides.push({
+      ...slide,
+      index,
+      pdfPage: index + 1,
+      durationSec: slide.durationSec ?? 60,
+      sourceHtml,
+      exportHtml: rewriteHtmlUrlsForExport(slide.sourcePath, sourceHtml),
+      packageHtml: rewriteHtmlUrlsForPackage(slide.sourcePath, sourceHtml, packageAssetPaths),
+      notes
+    });
+  }
+
+  const packageAssets: PackageAssetEntry[] = [];
+  for (const assetPath of [...packageAssetPaths].sort()) {
+    if (!isSafePackageAssetPath(assetPath)) {
+      throw new Error(`Unsafe package asset path: ${assetPath}`);
+    }
+    const assetSnapshot = await readProjectFileSnapshot(project.projectPath, assetPath);
+    addSourceFingerprint(assetSnapshot.fingerprint);
+    packageAssets.push({ packagePath: assetPath, bytes: assetSnapshot.bytes });
+  }
 
   return {
     renderable: {
@@ -389,7 +468,10 @@ const buildPreparedProject = async (project: CompilerProjectInput): Promise<Prep
         notes: slide.notes
       }))
     },
-    packageAssetPaths,
+    packageAssets,
+    sourceFingerprints: [...sourceFingerprints.values()].sort((left, right) =>
+      compareFingerprintPaths(left.path, right.path)
+    ),
     slides
   };
 };
@@ -457,12 +539,6 @@ export const buildDeckPackageManifest = (
       durationSec: slide.durationSec ?? 60
     }))
   };
-};
-
-const writeJson = async (filePath: string, value: unknown): Promise<string> => {
-  const json = `${JSON.stringify(value, null, 2)}\n`;
-  await writeFile(filePath, json);
-  return json;
 };
 
 const htmlToText = (html: string): string =>
@@ -801,24 +877,28 @@ export const readPdfPageCount = async (input: string | Uint8Array): Promise<numb
 const writeThumbnails = async (
   project: CompilerProjectInput,
   prepared: PreparedProject,
-  exportsPath: string,
+  stagingExportsPath: string,
+  finalExportsPath: string,
   size: ThumbnailSize
 ): Promise<ThumbnailEntry[]> => {
-  const thumbnailsPath = path.join(exportsPath, "thumbnails");
+  const stagingThumbnailsPath = path.join(stagingExportsPath, "thumbnails");
+  const finalThumbnailsPath = path.join(finalExportsPath, "thumbnails");
   const cachePath = path.join(project.projectPath, ".htmlslide", "cache", "thumbnails");
-  await Promise.all([mkdir(thumbnailsPath, { recursive: true }), mkdir(cachePath, { recursive: true })]);
+  await mkdir(stagingThumbnailsPath, { recursive: true });
 
   const entries: ThumbnailEntry[] = [];
   for (const slide of prepared.slides) {
     const bytes = renderThumbnailPng(project, slide, size);
     const fileName = `${slide.id}.png`;
-    const exportPath = path.join(thumbnailsPath, fileName);
+    const stagingPath = path.join(stagingThumbnailsPath, fileName);
+    const exportPath = path.join(finalThumbnailsPath, fileName);
     const cacheThumbnailPath = path.join(cachePath, fileName);
-    await Promise.all([writeFile(exportPath, bytes), writeFile(cacheThumbnailPath, bytes)]);
+    await writeFile(stagingPath, bytes);
     entries.push({
       slideId: slide.id,
       packagePath: `thumbnails/${fileName}`,
       exportPath,
+      stagingPath,
       cachePath: cacheThumbnailPath,
       bytes
     });
@@ -851,37 +931,6 @@ const addZipDirectory = (zip: JSZip, directoryPath: string): void => {
   });
 };
 
-const readPackageAssetEntries = async (
-  projectPath: string,
-  assetPaths: Iterable<string>
-): Promise<PackageAssetEntry[]> => {
-  const root = path.resolve(projectPath);
-  const entries: PackageAssetEntry[] = [];
-
-  for (const assetPath of [...assetPaths].sort()) {
-    if (!isSafePackageAssetPath(assetPath)) {
-      throw new Error(`Unsafe package asset path: ${assetPath}`);
-    }
-
-    const resolvedAssetPath = path.resolve(root, assetPath);
-    if (resolvedAssetPath !== root && !resolvedAssetPath.startsWith(`${root}${path.sep}`)) {
-      throw new Error(`Package asset escapes project root: ${assetPath}`);
-    }
-
-    try {
-      entries.push({
-        packagePath: assetPath,
-        bytes: await readFile(resolvedAssetPath)
-      });
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : "Unknown read failure.";
-      throw new Error(`Unable to read package asset ${assetPath}: ${detail}`);
-    }
-  }
-
-  return entries;
-};
-
 const isSafePackageAssetPath = (assetPath: string): boolean => {
   if (assetPath.length === 0 || assetPath.includes("\\") || path.posix.isAbsolute(assetPath)) {
     return false;
@@ -912,9 +961,489 @@ const addZipFileWithDirectories = (zip: JSZip, filePath: string, content: string
   addZipFile(zip, filePath, content);
 };
 
+const loadCompilerProjectSnapshot = async (
+  inputPath: string
+): Promise<{ project: CompilerProjectInput; deckFingerprint: ExportFileFingerprint }> => {
+  const firstLoad = await loadDeckProject(inputPath);
+  const firstDeckSnapshot = await readProjectFileSnapshot(firstLoad.projectRoot, "deck.json");
+  const secondLoad = await loadDeckProject(firstLoad.projectRoot);
+  const secondDeckSnapshot = await readProjectFileSnapshot(secondLoad.projectRoot, "deck.json");
+
+  if (
+    firstDeckSnapshot.fingerprint.sha256 !== secondDeckSnapshot.fingerprint.sha256 ||
+    JSON.stringify(firstLoad.deck) !== JSON.stringify(secondLoad.deck)
+  ) {
+    throw new Error("deck.json changed while the export snapshot was being loaded; retry the export.");
+  }
+
+  return {
+    project: {
+      projectPath: secondLoad.projectRoot,
+      title: secondLoad.deck.title,
+      language: secondLoad.deck.language,
+      viewport: secondLoad.deck.viewport,
+      safeArea: secondLoad.deck.safeArea,
+      themeCssPath: secondLoad.deck.theme?.css,
+      themeTokensPath: secondLoad.deck.theme?.tokens,
+      slides: secondLoad.deck.slides.map((slide) => ({
+        id: slide.id,
+        title: slide.title,
+        sourcePath: slide.source,
+        notesPath: slide.notes,
+        durationSec: slide.durationSec
+      }))
+    },
+    deckFingerprint: secondDeckSnapshot.fingerprint
+  };
+};
+
+const stageExportArtifact = async (input: {
+  bytes: Uint8Array | string;
+  finalExportsPath: string;
+  kind: ExportArtifactKind;
+  projectPath: string;
+  slideId?: string;
+  stagingExportsPath: string;
+}): Promise<StagedArtifact> => {
+  if (!input.projectPath.startsWith("exports/")) {
+    throw new Error(`Staged artifact must be under exports/: ${input.projectPath}`);
+  }
+  const relativeArtifactPath = input.projectPath.slice("exports/".length);
+  const stagingPath = path.join(input.stagingExportsPath, ...relativeArtifactPath.split("/"));
+  const finalPath = path.join(input.finalExportsPath, ...relativeArtifactPath.split("/"));
+  await mkdir(path.dirname(stagingPath), { recursive: true });
+  await writeFile(stagingPath, input.bytes);
+  return {
+    finalPath,
+    fingerprint: {
+      ...fingerprintBytes(input.projectPath, input.bytes),
+      kind: input.kind,
+      ...(input.slideId ? { slideId: input.slideId } : {})
+    },
+    projectPath: input.projectPath,
+    stagingPath
+  };
+};
+
+const commitStagedExports = async (input: {
+  manifestJson: string;
+  projectRoot: string;
+  sourceFingerprints: ExportFileFingerprint[];
+  stagedArtifacts: StagedArtifact[];
+  stagingManifestPath: string;
+}): Promise<void> => {
+  await ensureSafeProjectDirectory(input.projectRoot, "exports");
+  const currentManifest = await readExistingExportManifest(input.projectRoot);
+
+  for (const artifact of input.stagedArtifacts) {
+    const stagingProjectPath = toFingerprintProjectPath(input.projectRoot, artifact.stagingPath);
+    const stagedFingerprint = await fingerprintProjectFile(input.projectRoot, stagingProjectPath);
+    if (
+      stagedFingerprint.sha256 !== artifact.fingerprint.sha256 ||
+      stagedFingerprint.sizeBytes !== artifact.fingerprint.sizeBytes
+    ) {
+      throw new Error(`Staged export changed before commit: ${artifact.projectPath}`);
+    }
+  }
+  if ((await readFile(input.stagingManifestPath, "utf8")) !== input.manifestJson) {
+    throw new Error("Staged export manifest changed before commit.");
+  }
+
+  await preflightExportCommit(input.projectRoot, input.stagedArtifacts, currentManifest);
+  const backupRoot = path.join(path.dirname(path.dirname(input.stagingManifestPath)), "backup");
+  const backups: ExportArtifactBackup[] = [];
+  const committedArtifacts: StagedArtifact[] = [];
+
+  try {
+    for (const oldArtifact of currentManifest?.artifacts ?? []) {
+      await ensureSafeProjectDirectory(input.projectRoot, path.posix.dirname(oldArtifact.path));
+      const finalPath = path.join(input.projectRoot, ...oldArtifact.path.split("/"));
+      const info = await lstatIfExists(finalPath);
+      if (!info) {
+        continue;
+      }
+      if (info.isSymbolicLink() || !info.isFile()) {
+        throw new Error(`Export artifact changed after preflight: ${oldArtifact.path}`);
+      }
+      const backupPath = path.join(backupRoot, ...oldArtifact.path.split("/"));
+      await mkdir(path.dirname(backupPath), { recursive: true });
+      await rename(finalPath, backupPath);
+      backups.push({ backupPath, finalPath, projectPath: oldArtifact.path });
+    }
+
+    for (const artifact of [...input.stagedArtifacts].sort((left, right) =>
+      compareFingerprintPaths(left.projectPath, right.projectPath)
+    )) {
+      await replaceStagedFile(input.projectRoot, artifact.stagingPath, artifact.projectPath, { requireMissing: true });
+      committedArtifacts.push(artifact);
+    }
+    for (const artifact of input.stagedArtifacts) {
+      const committedFingerprint = await fingerprintProjectFile(input.projectRoot, artifact.projectPath);
+      if (
+        committedFingerprint.sha256 !== artifact.fingerprint.sha256 ||
+        committedFingerprint.sizeBytes !== artifact.fingerprint.sizeBytes
+      ) {
+        throw new Error(`Committed export changed before manifest commit: ${artifact.projectPath}`);
+      }
+    }
+    const committedSourceFingerprints = await fingerprintProjectFiles(
+      input.projectRoot,
+      input.sourceFingerprints.map((entry) => entry.path)
+    );
+    const changedSources = changedFingerprintPaths(committedSourceFingerprints, input.sourceFingerprints);
+    if (changedSources.length > 0) {
+      throw new Error(`Project sources changed before manifest commit: ${changedSources.join(", ")}. Retry the export.`);
+    }
+    await replaceStagedFile(input.projectRoot, input.stagingManifestPath, EXPORT_MANIFEST_PROJECT_PATH);
+  } catch (error) {
+    await rollbackExportCommit(input.projectRoot, committedArtifacts, backups, error);
+    throw error;
+  }
+};
+
+const preflightExportCommit = async (
+  projectRoot: string,
+  stagedArtifacts: readonly StagedArtifact[],
+  currentManifest: ExportManifest | undefined
+): Promise<void> => {
+  const ownedPaths = new Set(currentManifest?.artifacts.map((artifact) => artifact.path) ?? []);
+  const stagedPaths = new Set(stagedArtifacts.map((artifact) => artifact.projectPath));
+  const pathsToInspect = new Set([
+    EXPORT_MANIFEST_PROJECT_PATH,
+    ...ownedPaths,
+    ...stagedArtifacts.map((artifact) => artifact.projectPath)
+  ]);
+
+  for (const projectPath of [...pathsToInspect].sort(compareFingerprintPaths)) {
+    await ensureSafeProjectDirectory(projectRoot, path.posix.dirname(projectPath));
+    const finalPath = path.join(projectRoot, ...projectPath.split("/"));
+    const info = await lstatIfExists(finalPath);
+    if (!info) {
+      continue;
+    }
+    if (info.isSymbolicLink() || !info.isFile()) {
+      throw new Error(`Export destination must be a regular file: ${projectPath}`);
+    }
+    if (
+      projectPath !== EXPORT_MANIFEST_PROJECT_PATH &&
+      stagedPaths.has(projectPath) &&
+      !ownedPaths.has(projectPath)
+    ) {
+      throw new Error(`Refusing to replace an untracked export file: ${projectPath}`);
+    }
+  }
+};
+
+const rollbackExportCommit = async (
+  projectRoot: string,
+  committedArtifacts: readonly StagedArtifact[],
+  backups: readonly ExportArtifactBackup[],
+  originalError: unknown
+): Promise<void> => {
+  const rollbackErrors: unknown[] = [];
+  for (const artifact of [...committedArtifacts].reverse()) {
+    try {
+      await removeOwnedExportPath(projectRoot, artifact.projectPath);
+    } catch (error) {
+      rollbackErrors.push(error);
+    }
+  }
+  for (const backup of [...backups].reverse()) {
+    try {
+      await ensureSafeProjectDirectory(projectRoot, path.posix.dirname(backup.projectPath));
+      if (await lstatIfExists(backup.finalPath)) {
+        throw new Error(`Rollback destination is no longer empty: ${backup.projectPath}`);
+      }
+      await rename(backup.backupPath, backup.finalPath);
+    } catch (error) {
+      rollbackErrors.push(error);
+    }
+  }
+  if (rollbackErrors.length > 0) {
+    throw new AggregateError(
+      [originalError, ...rollbackErrors],
+      "Export commit failed and the previous artifact set could not be fully restored."
+    );
+  }
+};
+
+const readExistingExportManifest = async (projectRoot: string): Promise<ExportManifest | undefined> => {
+  try {
+    const manifestPath = path.join(projectRoot, ...EXPORT_MANIFEST_PROJECT_PATH.split("/"));
+    const info = await lstat(manifestPath);
+    if (info.isSymbolicLink() || !info.isFile() || info.size > MAX_EXPORT_MANIFEST_BYTES) {
+      return undefined;
+    }
+    const snapshot = await readProjectFileSnapshot(projectRoot, EXPORT_MANIFEST_PROJECT_PATH);
+    const raw = snapshot.bytes.toString("utf8");
+    const parsed = ExportManifestSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const replaceStagedFile = async (
+  projectRoot: string,
+  stagingPath: string,
+  projectPath: string,
+  options: { requireMissing?: boolean } = {}
+): Promise<void> => {
+  const finalPath = path.join(projectRoot, ...projectPath.split("/"));
+  const parentProjectPath = path.posix.dirname(projectPath);
+  await ensureSafeProjectDirectory(projectRoot, parentProjectPath);
+  const existing = await lstatIfExists(finalPath);
+  if (existing?.isSymbolicLink() || (existing && !existing.isFile())) {
+    throw new Error(`Export destination must be a regular file: ${projectPath}`);
+  }
+  if (options.requireMissing && existing) {
+    throw new Error(`Export destination changed after preflight: ${projectPath}`);
+  }
+  await rename(stagingPath, finalPath);
+};
+
+const removeOwnedExportPath = async (projectRoot: string, projectPath: string): Promise<void> => {
+  if (!projectPath.startsWith("exports/") || projectPath === EXPORT_MANIFEST_PROJECT_PATH) {
+    throw new Error(`Refusing to remove non-artifact export path: ${projectPath}`);
+  }
+  await ensureSafeProjectDirectory(projectRoot, path.posix.dirname(projectPath));
+  const absolutePath = path.join(projectRoot, ...projectPath.split("/"));
+  const info = await lstatIfExists(absolutePath);
+  if (!info) {
+    return;
+  }
+  if (info.isSymbolicLink() || !info.isFile()) {
+    throw new Error(`Refusing to remove a non-regular export artifact: ${projectPath}`);
+  }
+  await rm(absolutePath, { force: true });
+};
+
+const writeThumbnailCache = async (projectRoot: string, entries: ThumbnailEntry[]): Promise<void> => {
+  if (entries.length === 0) {
+    return;
+  }
+  const cacheProjectPath = ".htmlslide/cache/thumbnails";
+  const cachePath = await ensureSafeProjectDirectory(projectRoot, cacheProjectPath);
+  const expectedNames = new Set(entries.map((entry) => path.basename(entry.cachePath)));
+  for (const existingName of await readdir(cachePath)) {
+    if (existingName.endsWith(".png") && !expectedNames.has(existingName)) {
+      const existingPath = path.join(cachePath, existingName);
+      const info = await lstatIfExists(existingPath);
+      if (info && !info.isDirectory()) {
+        await rm(existingPath, { force: true });
+      }
+    }
+  }
+  for (const entry of entries) {
+    const temporaryPath = `${entry.cachePath}.${process.pid}-${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporaryPath, entry.bytes);
+      const existing = await lstatIfExists(entry.cachePath);
+      if (existing?.isDirectory()) {
+        throw new Error(`Thumbnail cache destination is a directory: ${entry.cachePath}`);
+      }
+      if (existing?.isSymbolicLink()) {
+        await rm(entry.cachePath, { force: true });
+      }
+      try {
+        await rename(temporaryPath, entry.cachePath);
+      } catch (error) {
+        if (!existing || !["EEXIST", "EPERM"].includes(errorCode(error) ?? "")) {
+          throw error;
+        }
+        await rm(entry.cachePath, { force: true });
+        await rename(temporaryPath, entry.cachePath);
+      }
+    } finally {
+      await rm(temporaryPath, { force: true });
+    }
+  }
+};
+
+type ExportLockOwner = {
+  pid: number;
+  token: string;
+};
+
+const EXPORT_LOCK_INITIALIZATION_GRACE_MS = 30_000;
+const EXPORT_LOCK_TOKEN_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
+
+const acquireExportLock = async (projectRoot: string): Promise<() => Promise<void>> => {
+  const cachePath = await ensureSafeProjectDirectory(projectRoot, ".htmlslide/cache");
+  const lockPath = path.join(cachePath, "export.lock");
+  const owner: ExportLockOwner = { pid: process.pid, token: randomUUID() };
+
+  try {
+    await writeFile(lockPath, `${JSON.stringify(owner)}\n`, { flag: "wx" });
+    return releaseExportLock(lockPath, owner);
+  } catch (error) {
+    if (!["EEXIST", "EISDIR"].includes(errorCode(error) ?? "")) {
+      throw error;
+    }
+  }
+
+  const currentOwner = await readLockOwner(lockPath);
+  if (currentOwner?.pid && isProcessAlive(currentOwner.pid)) {
+    throw new Error(`Another HTMLslide export is already running for ${projectRoot}.`);
+  }
+  const lockInfo = await lstatIfExists(lockPath);
+  if (!currentOwner) {
+    if (lockInfo && Date.now() - Number(lockInfo.mtimeMs) < EXPORT_LOCK_INITIALIZATION_GRACE_MS) {
+      throw new Error(`Another HTMLslide export is initializing for ${projectRoot}.`);
+    }
+    throw new Error(`Invalid stale export lock requires manual removal: ${lockPath}.`);
+  }
+  if (lockInfo?.isDirectory()) {
+    throw new Error(`Legacy stale export lock requires manual removal: ${lockPath}.`);
+  }
+  return takeOverStaleExportLock(lockPath, currentOwner, owner, projectRoot);
+};
+
+const takeOverStaleExportLock = async (
+  lockPath: string,
+  staleOwner: ExportLockOwner,
+  owner: ExportLockOwner,
+  projectRoot: string
+): Promise<() => Promise<void>> => {
+  const recoveryPath = `${lockPath}.recover-${staleOwner.token}`;
+  const replacementPath = `${lockPath}.${owner.token}.tmp`;
+  try {
+    await writeFile(recoveryPath, `${JSON.stringify(owner)}\n`, { flag: "wx" });
+  } catch (error) {
+    if (errorCode(error) === "EEXIST") {
+      throw new Error(`Another HTMLslide export is recovering a stale lock for ${projectRoot}.`);
+    }
+    throw error;
+  }
+
+  try {
+    const currentOwner = await readLockOwner(lockPath);
+    if (
+      !currentOwner ||
+      currentOwner.pid !== staleOwner.pid ||
+      currentOwner.token !== staleOwner.token ||
+      isProcessAlive(currentOwner.pid)
+    ) {
+      throw new Error(`HTMLslide export lock changed while stale recovery was starting for ${projectRoot}.`);
+    }
+    const lockInfo = await lstat(lockPath);
+    if (lockInfo.isSymbolicLink() || !lockInfo.isFile()) {
+      throw new Error(`Stale export lock must be a regular file: ${lockPath}.`);
+    }
+    await writeFile(replacementPath, `${JSON.stringify(owner)}\n`, { flag: "wx" });
+    await rename(replacementPath, lockPath);
+    return releaseExportLock(lockPath, owner);
+  } finally {
+    await rm(replacementPath, { force: true });
+    await rm(recoveryPath, { force: true });
+  }
+};
+
+const releaseExportLock = (lockPath: string, owner: ExportLockOwner): (() => Promise<void>) =>
+  async () => {
+    const currentOwner = await readLockOwner(lockPath);
+    if (currentOwner?.token === owner.token) {
+      await rm(lockPath, { force: true });
+    }
+  };
+
+const ensureSafeProjectDirectory = async (projectRoot: string, projectPath: string): Promise<string> => {
+  const root = path.resolve(projectRoot);
+  const segments = projectPath.split("/").filter(Boolean);
+  let current = root;
+  for (const segment of segments) {
+    if (segment === "." || segment === "..") {
+      throw new Error(`Unsafe project directory path: ${projectPath}`);
+    }
+    current = path.join(current, segment);
+    let info = await lstatIfExists(current);
+    if (!info) {
+      try {
+        await mkdir(current);
+      } catch (error) {
+        if (errorCode(error) !== "EEXIST") {
+          throw error;
+        }
+      }
+      info = await lstat(current);
+    }
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new Error(`Project runtime directory must not be a symlink or file: ${projectPath}`);
+    }
+  }
+
+  const [rootRealPath, directoryRealPath] = await Promise.all([realpath(root), realpath(current)]);
+  const relativePath = path.relative(rootRealPath, directoryRealPath);
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    throw new Error(`Project runtime directory escapes project root: ${projectPath}`);
+  }
+  return current;
+};
+
+const lstatIfExists = async (filePath: string): Promise<Awaited<ReturnType<typeof lstat>> | undefined> => {
+  try {
+    return await lstat(filePath);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+};
+
+const readLockOwner = async (lockPath: string): Promise<ExportLockOwner | undefined> => {
+  try {
+    const info = await lstat(lockPath);
+    if (info.isSymbolicLink()) {
+      return undefined;
+    }
+    const ownerPath = info.isDirectory() ? path.join(lockPath, "owner.json") : lockPath;
+    const ownerInfo = await lstat(ownerPath);
+    if (ownerInfo.isSymbolicLink() || !ownerInfo.isFile() || ownerInfo.size > 4_096) {
+      return undefined;
+    }
+    const owner = JSON.parse(await readFile(ownerPath, "utf8")) as { pid?: unknown; token?: unknown };
+    if (typeof owner.pid !== "number" || !Number.isInteger(owner.pid) || owner.pid <= 0) {
+      return undefined;
+    }
+    const token = typeof owner.token === "string" ? owner.token : "legacy-lock";
+    return EXPORT_LOCK_TOKEN_PATTERN.test(token) ? { pid: owner.pid, token } : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const isProcessAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return errorCode(error) !== "ESRCH";
+  }
+};
+
+const errorCode = (error: unknown): string | undefined =>
+  typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+    ? error.code
+    : undefined;
+
 export const exportDeck = async (
-  project: CompilerProjectInput,
+  inputProject: CompilerProjectInput,
   options: ExportOptions = DEFAULT_OPTIONS
+): Promise<ExportResult> => {
+  const discoveredProject = await loadDeckProject(inputProject.projectPath, { verifyFiles: false });
+  const projectRoot = await realpath(discoveredProject.projectRoot);
+  const releaseLock = await acquireExportLock(projectRoot);
+  try {
+    return await exportDeckLocked(discoveredProject.projectRoot, options);
+  } finally {
+    await releaseLock();
+  }
+};
+
+const exportDeckLocked = async (
+  projectRoot: string,
+  options: ExportOptions
 ): Promise<ExportResult> => {
   const resolvedOptions = {
     pdf: options.pdf ?? DEFAULT_OPTIONS.pdf,
@@ -923,104 +1452,188 @@ export const exportDeck = async (
     thumbnails: options.thumbnails ?? DEFAULT_OPTIONS.thumbnails,
     thumbnailSize: options.thumbnailSize ?? DEFAULT_THUMBNAIL_SIZE
   };
+  const { project, deckFingerprint } = await loadCompilerProjectSnapshot(projectRoot);
   const exportsPath = path.join(project.projectPath, "exports");
-  await mkdir(exportsPath, { recursive: true });
+  const stagingRoot = path.join(
+    project.projectPath,
+    ".htmlslide",
+    "cache",
+    "export-staging",
+    `${process.pid}-${randomUUID()}`
+  );
+  const stagingExportsPath = path.join(stagingRoot, "exports");
+  const stagingParent = await ensureSafeProjectDirectory(project.projectPath, ".htmlslide/cache/export-staging");
+  await mkdir(path.join(stagingParent, path.basename(stagingRoot)));
+  await mkdir(stagingExportsPath);
 
-  const baseName = slugFileName(project.title);
-  const prepared = await buildPreparedProject(project);
-  const html = buildStandaloneHtml(prepared.renderable);
-  const packageHtml = resolvedOptions.deckpkg ? buildStandaloneHtml(prepared.packageRenderable) : undefined;
-  const notesSidecar = buildNotesSidecarFromPrepared(project, prepared);
-  const notesPath = path.join(exportsPath, "notes.json");
-  const notesJson = await writeJson(notesPath, notesSidecar);
-  const artifacts: ExportResult["artifacts"] = {
-    notes: notesPath
-  };
-  const verification: ExportVerification = {
-    expectedPageCount: prepared.slides.length
-  };
+  try {
+    const baseName = slugFileName(project.title);
+    const prepared = await buildPreparedProject(project, [deckFingerprint]);
+    const html = buildStandaloneHtml(prepared.renderable);
+    const packageHtml = resolvedOptions.deckpkg ? buildStandaloneHtml(prepared.packageRenderable) : undefined;
+    const notesSidecar = buildNotesSidecarFromPrepared(project, prepared);
+    const notesJson = `${JSON.stringify(notesSidecar, null, 2)}\n`;
+    const artifacts: ExportResult["artifacts"] = {};
+    const stagedArtifacts: StagedArtifact[] = [];
+    const verification: ExportVerification = {
+      expectedPageCount: prepared.slides.length
+    };
 
-  if (resolvedOptions.html || resolvedOptions.deckpkg) {
-    if (resolvedOptions.html) {
-      const htmlPath = path.join(exportsPath, `${baseName}.html`);
-      await writeFile(htmlPath, html);
-      artifacts.html = htmlPath;
-    }
-  }
-
-  let pdfBytes: Uint8Array | undefined;
-  if (resolvedOptions.pdf || resolvedOptions.deckpkg) {
-    pdfBytes = await buildPdfBytes(project, prepared);
-    verification.pdfPageCount = await readPdfPageCount(pdfBytes);
-    verification.pdfPageCountMatches = verification.pdfPageCount === verification.expectedPageCount;
-    if (!verification.pdfPageCountMatches) {
-      throw new Error(
-        `PDF page count mismatch: expected ${verification.expectedPageCount}, got ${verification.pdfPageCount}.`
-      );
-    }
-
-    if (resolvedOptions.pdf) {
-      const pdfPath = path.join(exportsPath, `${baseName}.pdf`);
-      await writeFile(pdfPath, pdfBytes);
-      artifacts.pdf = pdfPath;
-    }
-  }
-
-  let thumbnailEntries: ThumbnailEntry[] = [];
-  if (resolvedOptions.thumbnails || resolvedOptions.deckpkg) {
-    thumbnailEntries = await writeThumbnails(project, prepared, exportsPath, resolvedOptions.thumbnailSize);
-    artifacts.thumbnails = thumbnailEntries.map((entry) => entry.exportPath);
-    artifacts.thumbnailCache = thumbnailEntries.map((entry) => entry.cachePath);
-  }
-
-  if (resolvedOptions.deckpkg) {
-    if (!pdfBytes) {
-      throw new Error("deckpkg export requires a PDF artifact.");
-    }
-    if (thumbnailEntries.length !== prepared.slides.length) {
-      throw new Error("deckpkg export requires one thumbnail per slide.");
-    }
-
-    const packageAssets = await readPackageAssetEntries(project.projectPath, prepared.packageAssetPaths);
-    const zip = new JSZip();
-    const packageDirectories = new Set<string>();
-    const manifest = buildDeckPackageManifest(project, {
-      thumbnailSize: resolvedOptions.thumbnailSize,
-      pageCount: verification.pdfPageCount
+    const notesArtifact = await stageExportArtifact({
+      bytes: notesJson,
+      finalExportsPath: exportsPath,
+      kind: "notes",
+      projectPath: "exports/notes.json",
+      stagingExportsPath
     });
-    addZipFile(zip, "manifest.json", `${JSON.stringify(manifest, null, 2)}\n`);
-    addZipFile(zip, PACKAGE_HTML_PATH, packageHtml ?? html);
-    addZipFile(zip, PACKAGE_PDF_PATH, pdfBytes);
-    addZipFile(zip, PACKAGE_NOTES_PATH, notesJson);
-    addZipFile(zip, PACKAGE_PRESENTER_SETTINGS_PATH, `${JSON.stringify(presenterSettings, null, 2)}\n`);
-    addZipDirectory(zip, "thumbnails");
-    packageDirectories.add("thumbnails");
-    for (const thumbnail of thumbnailEntries) {
-      addZipFile(zip, thumbnail.packagePath, thumbnail.bytes);
-    }
-    for (const asset of packageAssets) {
-      addZipFileWithDirectories(zip, asset.packagePath, asset.bytes, packageDirectories);
+    stagedArtifacts.push(notesArtifact);
+    artifacts.notes = notesArtifact.finalPath;
+
+    if (resolvedOptions.html) {
+      const htmlArtifact = await stageExportArtifact({
+        bytes: html,
+        finalExportsPath: exportsPath,
+        kind: "html",
+        projectPath: `exports/${baseName}.html`,
+        stagingExportsPath
+      });
+      stagedArtifacts.push(htmlArtifact);
+      artifacts.html = htmlArtifact.finalPath;
     }
 
-    const deckpkgPath = path.join(exportsPath, `${baseName}.deckpkg`);
-    await writeFile(
-      deckpkgPath,
-      await zip.generateAsync({
+    let pdfBytes: Uint8Array | undefined;
+    if (resolvedOptions.pdf || resolvedOptions.deckpkg) {
+      pdfBytes = await buildPdfBytes(project, prepared);
+      verification.pdfPageCount = await readPdfPageCount(pdfBytes);
+      verification.pdfPageCountMatches = verification.pdfPageCount === verification.expectedPageCount;
+      if (!verification.pdfPageCountMatches) {
+        throw new Error(
+          `PDF page count mismatch: expected ${verification.expectedPageCount}, got ${verification.pdfPageCount}.`
+        );
+      }
+
+      if (resolvedOptions.pdf) {
+        const pdfArtifact = await stageExportArtifact({
+          bytes: pdfBytes,
+          finalExportsPath: exportsPath,
+          kind: "pdf",
+          projectPath: `exports/${baseName}.pdf`,
+          stagingExportsPath
+        });
+        stagedArtifacts.push(pdfArtifact);
+        artifacts.pdf = pdfArtifact.finalPath;
+      }
+    }
+
+    let thumbnailEntries: ThumbnailEntry[] = [];
+    if (resolvedOptions.thumbnails || resolvedOptions.deckpkg) {
+      thumbnailEntries = await writeThumbnails(
+        project,
+        prepared,
+        stagingExportsPath,
+        exportsPath,
+        resolvedOptions.thumbnailSize
+      );
+      for (const entry of thumbnailEntries) {
+        stagedArtifacts.push({
+          finalPath: entry.exportPath,
+          fingerprint: {
+            ...fingerprintBytes(toFingerprintProjectPath(project.projectPath, entry.exportPath), entry.bytes),
+            kind: "thumbnail",
+            slideId: entry.slideId
+          },
+          projectPath: toFingerprintProjectPath(project.projectPath, entry.exportPath),
+          stagingPath: entry.stagingPath
+        });
+      }
+      artifacts.thumbnails = thumbnailEntries.map((entry) => entry.exportPath);
+      artifacts.thumbnailCache = thumbnailEntries.map((entry) => entry.cachePath);
+    }
+
+    if (resolvedOptions.deckpkg) {
+      if (!pdfBytes) {
+        throw new Error("deckpkg export requires a PDF artifact.");
+      }
+      if (thumbnailEntries.length !== prepared.slides.length) {
+        throw new Error("deckpkg export requires one thumbnail per slide.");
+      }
+
+      const zip = new JSZip();
+      const packageDirectories = new Set<string>();
+      const manifest = buildDeckPackageManifest(project, {
+        thumbnailSize: resolvedOptions.thumbnailSize,
+        pageCount: verification.pdfPageCount
+      });
+      addZipFile(zip, "manifest.json", `${JSON.stringify(manifest, null, 2)}\n`);
+      addZipFile(zip, PACKAGE_HTML_PATH, packageHtml ?? html);
+      addZipFile(zip, PACKAGE_PDF_PATH, pdfBytes);
+      addZipFile(zip, PACKAGE_NOTES_PATH, notesJson);
+      addZipFile(zip, PACKAGE_PRESENTER_SETTINGS_PATH, `${JSON.stringify(presenterSettings, null, 2)}\n`);
+      addZipDirectory(zip, "thumbnails");
+      packageDirectories.add("thumbnails");
+      for (const thumbnail of thumbnailEntries) {
+        addZipFile(zip, thumbnail.packagePath, thumbnail.bytes);
+      }
+      for (const asset of prepared.packageAssets) {
+        addZipFileWithDirectories(zip, asset.packagePath, asset.bytes, packageDirectories);
+      }
+
+      const deckpkgBytes = await zip.generateAsync({
         type: "nodebuffer",
         compression: "DEFLATE",
         compressionOptions: {
           level: 9
         },
         platform: "UNIX"
-      })
-    );
-    artifacts.deckpkg = deckpkgPath;
-  }
+      });
+      const deckpkgArtifact = await stageExportArtifact({
+        bytes: deckpkgBytes,
+        finalExportsPath: exportsPath,
+        kind: "deckpkg",
+        projectPath: `exports/${baseName}.deckpkg`,
+        stagingExportsPath
+      });
+      stagedArtifacts.push(deckpkgArtifact);
+      artifacts.deckpkg = deckpkgArtifact.finalPath;
+    }
 
-  return {
-    projectPath: project.projectPath,
-    exportsPath,
-    artifacts,
-    verification
-  };
+    const currentSourceFingerprints = await fingerprintProjectFiles(
+      project.projectPath,
+      prepared.sourceFingerprints.map((entry) => entry.path)
+    );
+    const changedSources = changedFingerprintPaths(currentSourceFingerprints, prepared.sourceFingerprints);
+    if (changedSources.length > 0) {
+      throw new Error(`Project sources changed during export: ${changedSources.join(", ")}. Retry the export.`);
+    }
+
+    const exportManifest = createExportManifest({
+      sources: prepared.sourceFingerprints,
+      artifacts: stagedArtifacts.map((artifact) => artifact.fingerprint)
+    });
+    const manifestJson = `${JSON.stringify(exportManifest, null, 2)}\n`;
+    if (Buffer.byteLength(manifestJson) > MAX_EXPORT_MANIFEST_BYTES) {
+      throw new Error(`Export manifest exceeds ${MAX_EXPORT_MANIFEST_BYTES} bytes.`);
+    }
+    const stagingManifestPath = path.join(stagingExportsPath, EXPORT_MANIFEST_FILE_NAME);
+    await writeFile(stagingManifestPath, manifestJson);
+    await writeThumbnailCache(project.projectPath, thumbnailEntries);
+    await commitStagedExports({
+      manifestJson,
+      projectRoot: project.projectPath,
+      sourceFingerprints: prepared.sourceFingerprints,
+      stagedArtifacts,
+      stagingManifestPath
+    });
+    return {
+      projectPath: project.projectPath,
+      exportsPath,
+      artifacts,
+      metadata: {
+        manifest: path.join(project.projectPath, ...EXPORT_MANIFEST_PROJECT_PATH.split("/"))
+      },
+      verification
+    };
+  } finally {
+    await rm(stagingRoot, { recursive: true, force: true });
+  }
 };

@@ -19,6 +19,7 @@ These gates are expected before each alpha candidate:
 | Public docs contract | Required alpha docs exist and avoid over-promising claims. | `pnpm docs:check` |
 | Docs site | Static GitHub Pages site builds with valid local links. | `pnpm docs:build` |
 | Version contract | App, packages, and schema constants remain aligned. | `pnpm version:check` |
+| Export integrity | Compiler exports use one source snapshot, token-safe project locking, staged rollback, manifest-last commit, partial-export cleanup, and fail-closed validation for invalid manifests. | `pnpm test` |
 | Code quality | Lint, typecheck, unit tests, compiler regression, CLI tests, and desktop service tests pass. | `pnpm lint`, `pnpm typecheck`, `pnpm test` |
 | Performance guardrails | Preview, PDF export, checker, and presenter state smoke metrics stay under guardrails. | `pnpm perf:smoke` |
 | Security baseline | Source secret scan and high-severity dependency audit pass. | `pnpm security:check` |
@@ -49,6 +50,7 @@ These gates are expected before each alpha candidate:
 | App shell accessibility | Desktop accessibility E2E covers onboarding, Project Library, New Deck gating, QA Panel, presenter rehearsal, Settings, and official skills chrome while excluding user-authored slide fragments. |
 | PDF page count is correct | Compiler tests cover PDF export metadata and page count. |
 | PNG thumbnails are produced | Compiler tests and export fixtures cover deterministic thumbnails. |
+| Export integrity metadata is enforced | Core/compiler/linter tests cover deterministic SHA-256 metadata, lock and staging cleanup, partial exports, legacy missing-manifest fallback, artifact edits, and invalid or truncated manifests failing closed. |
 | `deckpkg` can open | Presenter tests, Electron E2E, and package smoke cover package opening through direct launch arguments, Electron `open-file` handling, and macOS LaunchServices `open -a` against the packaged app. |
 | Rehearsal mode works | Presenter tests and Electron E2E cover single-screen rehearsal. |
 | Fake external adapter automation | Agent adapter tests, desktop service tests, and Electron E2E cover saving a Generic command, running it from New Deck and opened-workspace paths, applying reported source writes, check/export gating, diff review, and checkpoint revert. |

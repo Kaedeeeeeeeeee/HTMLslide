@@ -248,12 +248,14 @@ describe("macOS alpha packaging contract", () => {
     expect(versionSource).toContain("HTMLSLIDE_APP_VERSION");
     expect(versionSource).toContain("DECK_SCHEMA_VERSION");
     expect(versionSource).toContain("DECK_PACKAGE_SCHEMA_VERSION");
+    expect(versionSource).toContain("EXPORT_MANIFEST_SCHEMA_VERSION");
     expect(versionSource).toContain("CHECK_REPORT_SCHEMA_VERSION");
     expect(versionSource).toContain("AGENT_RUN_REPORT_SCHEMA_VERSION");
     expect(versionSource).toContain("CHECKPOINT_SCHEMA_VERSION");
     expect(checkScript).toContain("HTMLSLIDE_APP_VERSION");
     expect(checkScript).toContain("DECK_SCHEMA_VERSION");
     expect(checkScript).toContain("DECK_PACKAGE_SCHEMA_VERSION");
+    expect(checkScript).toContain("EXPORT_MANIFEST_SCHEMA_VERSION");
     expect(checkScript).toContain("package.json version");
     expect(checkScript).toContain("Release tag");
     expect(checkScript).toContain("GITHUB_REF_TYPE");

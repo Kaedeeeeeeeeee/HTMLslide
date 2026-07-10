@@ -1,9 +1,19 @@
-import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  changedFingerprintPaths,
+  ExportManifestSchema,
+  EXPORT_MANIFEST_PROJECT_PATH,
+  fingerprintEntriesDigest,
+  fingerprintProjectFile,
+  fingerprintProjectFiles,
+  MAX_EXPORT_MANIFEST_BYTES,
+  readProjectFileSnapshot,
+  sha256Hex,
   statusFromIssueSummary,
   summarizeIssues,
   tryLoadDeckProject,
+  type ExportManifest,
   type HtmlslideIssue as CoreIssue,
   type IssueSeverity as CoreIssueSeverity,
   type IssueStatus,
@@ -147,6 +157,11 @@ type ExportExpectation = {
   artifactKind: "deckpkg" | "html" | "notes" | "pdf" | "thumbnail";
   slideId: string;
 };
+
+type ExportManifestLoadResult =
+  | { status: "missing" }
+  | { status: "invalid"; reason: string }
+  | { status: "valid"; manifest: ExportManifest; rawSha256: string };
 
 const REPORT_SCHEMA_VERSION = CHECK_REPORT_SCHEMA_VERSION;
 const DEFAULT_REPORT_FILE_NAMES = ["report.json", "check-report.json"] as const;
@@ -728,35 +743,266 @@ const remoteResourceIssue = (
 
 const checkExports = async (project: LoadedDeckProject, localAssetPaths: string[]): Promise<HtmlslideIssue[]> => {
   const expectations = exportExpectations(project);
-  if (expectations.length === 0) {
-    return [];
+  let observedValidManifest = false;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const manifestState = await loadExportManifest(project.projectRoot);
+    if (manifestState.status === "missing") {
+      if (observedValidManifest) {
+        return [
+          exportManifestIssue(
+            "export-integrity-unverified",
+            "Compiler export metadata disappeared while artifacts were being verified.",
+            "A valid manifest was observed earlier in the same verification attempt.",
+            "error"
+          )
+        ];
+      }
+      return expectations.length === 0 ? [] : checkLegacyExports(project, localAssetPaths, expectations);
+    }
+    if (manifestState.status === "invalid") {
+      return [
+        exportManifestIssue(
+          "export-manifest-invalid",
+          `Compiler export metadata is invalid: ${manifestState.reason}`,
+          manifestState.reason,
+          "error"
+        ),
+        ...(await checkExpectedArtifactPresence(expectations))
+      ];
+    }
+
+    observedValidManifest = true;
+    const issues = await checkManifestExports(project.projectRoot, expectations, manifestState.manifest);
+    const finalManifestState = await loadExportManifest(project.projectRoot);
+    if (
+      finalManifestState.status === "valid" &&
+      finalManifestState.rawSha256 === manifestState.rawSha256
+    ) {
+      return issues;
+    }
   }
 
+  return [
+    exportManifestIssue(
+      "export-integrity-unverified",
+      "Compiler export metadata changed while artifacts were being verified.",
+      "The manifest did not remain stable across two verification attempts.",
+      "error"
+    )
+  ];
+};
+
+const checkManifestExports = async (
+  projectRoot: string,
+  expectations: readonly ExportExpectation[],
+  manifest: ExportManifest
+): Promise<HtmlslideIssue[]> => {
   const issues: HtmlslideIssue[] = [];
-  const sourceMtimeMs = await newestSourceMtime(project, localAssetPaths);
+  let sourceComparison: { changedPaths: string[]; currentDigest: string; outdated: boolean } | undefined;
+
+  try {
+    const currentSources = await fingerprintProjectFiles(
+      projectRoot,
+      manifest.sources.map((entry) => entry.path)
+    );
+    const currentDigest = fingerprintEntriesDigest(currentSources);
+    sourceComparison = {
+      changedPaths: changedFingerprintPaths(currentSources, manifest.sources),
+      currentDigest,
+      outdated: currentDigest !== manifest.sourceDigest
+    };
+  } catch (error) {
+    issues.push(
+      exportManifestIssue(
+        "export-integrity-unverified",
+        "Deck sources could not be verified against compiler export metadata.",
+        errorMessage(error),
+        "error"
+      )
+    );
+  }
+
+  const manifestArtifacts = new Map(manifest.artifacts.map((artifact) => [artifact.path, artifact]));
+  for (const artifact of manifest.artifacts) {
+    const inspectedArtifact = await inspectExportPath(path.join(projectRoot, ...artifact.path.split("/")));
+    if (inspectedArtifact.error) {
+      issues.push(exportIntegrityIssue(artifact.path, artifact.slideId ?? "deck", inspectedArtifact.error));
+      continue;
+    }
+    const artifactInfo = inspectedArtifact.info;
+    if (!artifactInfo) {
+      issues.push(exportMissingIssue({
+        artifactPath: path.join(projectRoot, ...artifact.path.split("/")),
+        artifactProjectPath: artifact.path,
+        artifactKind: artifact.kind,
+        slideId: artifact.slideId ?? "deck"
+      }));
+      continue;
+    }
+    if (artifactInfo.isSymbolicLink() || !artifactInfo.isFile()) {
+      issues.push(exportIntegrityIssue(
+        artifact.path,
+        artifact.slideId ?? "deck",
+        `${artifact.kind} export is not a regular project-local file.`
+      ));
+      continue;
+    }
+
+    try {
+      const actualArtifact = await fingerprintProjectFile(projectRoot, artifact.path);
+      if (actualArtifact.sha256 !== artifact.sha256 || actualArtifact.sizeBytes !== artifact.sizeBytes) {
+        issues.push(
+          makeIssue({
+            slideId: artifact.slideId ?? "deck",
+            severity: "warning",
+            type: "export-modified",
+            path: artifact.path,
+            message: `${artifact.kind} export bytes do not match compiler metadata.`,
+            measurement: {
+              actualSha256: actualArtifact.sha256,
+              actualSizeBytes: actualArtifact.sizeBytes,
+              artifactKind: artifact.kind,
+              recordedSha256: artifact.sha256,
+              recordedSizeBytes: artifact.sizeBytes
+            },
+            suggestedFix: "Regenerate exports instead of editing compiler-owned artifacts.",
+            agentInstruction: `Run htmlslide export to replace the modified ${artifact.path}.`
+          })
+        );
+      }
+    } catch (error) {
+      issues.push(exportIntegrityIssue(artifact.path, artifact.slideId ?? "deck", errorMessage(error)));
+    }
+
+    if (sourceComparison?.outdated) {
+      issues.push(
+        makeIssue({
+          slideId: artifact.slideId ?? "deck",
+          severity: "warning",
+          type: "export-outdated",
+          path: artifact.path,
+          message: `${artifact.kind} export was generated from different deck source bytes.`,
+          measurement: {
+            artifactKind: artifact.kind,
+            changedSourceCount: sourceComparison.changedPaths.length,
+            currentSourceDigest: sourceComparison.currentDigest,
+            firstChangedSourcePath: sourceComparison.changedPaths[0] ?? "unknown",
+            recordedSourceDigest: manifest.sourceDigest
+          },
+          suggestedFix: "Regenerate exports after source changes.",
+          agentInstruction: `Run htmlslide export to refresh ${artifact.path} after the source edits.`
+        })
+      );
+    }
+  }
 
   for (const expectation of expectations) {
-    const artifactStat = await statIfExists(expectation.artifactPath);
-    if (!artifactStat) {
+    const inspectedArtifact = await inspectExportPath(expectation.artifactPath);
+    if (inspectedArtifact.error) {
+      if (!manifestArtifacts.has(expectation.artifactProjectPath)) {
+        issues.push(exportIntegrityIssue(
+          expectation.artifactProjectPath,
+          expectation.slideId,
+          inspectedArtifact.error
+        ));
+      }
+      continue;
+    }
+    const artifactInfo = inspectedArtifact.info;
+    if (!artifactInfo) {
+      if (!manifestArtifacts.has(expectation.artifactProjectPath)) {
+        issues.push(exportMissingIssue(expectation));
+      }
+      continue;
+    }
+    if (artifactInfo.isSymbolicLink() || !artifactInfo.isFile()) {
+      if (!manifestArtifacts.has(expectation.artifactProjectPath)) {
+        issues.push(exportIntegrityIssue(
+          expectation.artifactProjectPath,
+          expectation.slideId,
+          `${expectation.artifactKind} export is not a regular project-local file.`
+        ));
+      }
+      continue;
+    }
+
+    const manifestArtifact = manifestArtifacts.get(expectation.artifactProjectPath);
+    const expectedSlideId = expectation.artifactKind === "thumbnail" ? expectation.slideId : undefined;
+
+    if (!manifestArtifact) {
       issues.push(
         makeIssue({
           slideId: expectation.slideId,
           severity: "warning",
-          type: "export-missing",
+          type: "export-untracked",
           path: expectation.artifactProjectPath,
-          message: `Expected ${expectation.artifactKind} export is missing: ${expectation.artifactProjectPath}.`,
+          message: `${expectation.artifactKind} export is not recorded in ${EXPORT_MANIFEST_PROJECT_PATH}.`,
           measurement: {
             artifactKind: expectation.artifactKind,
-            artifactPath: expectation.artifactProjectPath
+            artifactPath: expectation.artifactProjectPath,
+            manifestPath: EXPORT_MANIFEST_PROJECT_PATH
           },
-          suggestedFix: "Run htmlslide export for the requested artifact type.",
-          agentInstruction: `Run htmlslide export for this project so ${expectation.artifactProjectPath} is regenerated.`
+          suggestedFix: "Regenerate the requested exports so the compiler records their fingerprints.",
+          agentInstruction: `Run htmlslide export to regenerate ${expectation.artifactProjectPath} and ${EXPORT_MANIFEST_PROJECT_PATH}.`
         })
       );
-      continue;
+    } else if (manifestArtifact.kind !== expectation.artifactKind || manifestArtifact.slideId !== expectedSlideId) {
+      issues.push(
+        makeIssue({
+          slideId: expectation.slideId,
+          severity: "warning",
+          type: "export-manifest-mismatch",
+          path: expectation.artifactProjectPath,
+          message: `${expectation.artifactKind} export metadata does not match the expected artifact contract.`,
+          measurement: {
+            actualArtifactKind: manifestArtifact.kind,
+            actualSlideId: manifestArtifact.slideId ?? "deck",
+            expectedArtifactKind: expectation.artifactKind,
+            expectedSlideId: expectedSlideId ?? "deck"
+          },
+          suggestedFix: "Regenerate exports with the current HTMLslide compiler.",
+          agentInstruction: `Run htmlslide export to rebuild ${expectation.artifactProjectPath} with matching metadata.`
+        })
+      );
     }
 
-    if (sourceMtimeMs > artifactStat.mtimeMs + EXPORT_MTIME_TOLERANCE_MS) {
+  }
+
+  return issues;
+};
+
+const checkLegacyExports = async (
+  project: LoadedDeckProject,
+  localAssetPaths: string[],
+  expectations: readonly ExportExpectation[]
+): Promise<HtmlslideIssue[]> => {
+  const issues = [exportManifestIssue("export-manifest-missing", "Compiler export metadata is missing.")];
+  const sourceMtimeMs = await newestSourceMtime(project, localAssetPaths);
+  for (const expectation of expectations) {
+    const inspectedArtifact = await inspectExportPath(expectation.artifactPath);
+    if (inspectedArtifact.error) {
+      issues.push(exportIntegrityIssue(
+        expectation.artifactProjectPath,
+        expectation.slideId,
+        inspectedArtifact.error
+      ));
+      continue;
+    }
+    const artifactInfo = inspectedArtifact.info;
+    if (!artifactInfo) {
+      issues.push(exportMissingIssue(expectation));
+      continue;
+    }
+    if (artifactInfo.isSymbolicLink() || !artifactInfo.isFile()) {
+      issues.push(exportIntegrityIssue(
+        expectation.artifactProjectPath,
+        expectation.slideId,
+        `${expectation.artifactKind} export is not a regular project-local file.`
+      ));
+      continue;
+    }
+    if (sourceMtimeMs > Number(artifactInfo.mtimeMs) + EXPORT_MTIME_TOLERANCE_MS) {
       issues.push(
         makeIssue({
           slideId: expectation.slideId,
@@ -766,7 +1012,7 @@ const checkExports = async (project: LoadedDeckProject, localAssetPaths: string[
           message: `${expectation.artifactKind} export is older than deck sources: ${expectation.artifactProjectPath}.`,
           measurement: {
             artifactKind: expectation.artifactKind,
-            artifactMtimeMs: Math.floor(artifactStat.mtimeMs),
+            artifactMtimeMs: Math.floor(Number(artifactInfo.mtimeMs)),
             newestSourceMtimeMs: Math.floor(sourceMtimeMs)
           },
           suggestedFix: "Regenerate exports after source changes.",
@@ -775,9 +1021,127 @@ const checkExports = async (project: LoadedDeckProject, localAssetPaths: string[
       );
     }
   }
-
   return issues;
 };
+
+const checkExpectedArtifactPresence = async (
+  expectations: readonly ExportExpectation[]
+): Promise<HtmlslideIssue[]> => {
+  const issues: HtmlslideIssue[] = [];
+  for (const expectation of expectations) {
+    const inspectedArtifact = await inspectExportPath(expectation.artifactPath);
+    if (inspectedArtifact.error) {
+      issues.push(exportIntegrityIssue(
+        expectation.artifactProjectPath,
+        expectation.slideId,
+        inspectedArtifact.error
+      ));
+      continue;
+    }
+    const info = inspectedArtifact.info;
+    if (!info) {
+      issues.push(exportMissingIssue(expectation));
+    } else if (info.isSymbolicLink() || !info.isFile()) {
+      issues.push(exportIntegrityIssue(
+        expectation.artifactProjectPath,
+        expectation.slideId,
+        `${expectation.artifactKind} export is not a regular project-local file.`
+      ));
+    }
+  }
+  return issues;
+};
+
+const exportMissingIssue = (expectation: ExportExpectation): HtmlslideIssue =>
+  makeIssue({
+    slideId: expectation.slideId,
+    severity: "warning",
+    type: "export-missing",
+    path: expectation.artifactProjectPath,
+    message: `Expected ${expectation.artifactKind} export is missing: ${expectation.artifactProjectPath}.`,
+    measurement: {
+      artifactKind: expectation.artifactKind,
+      artifactPath: expectation.artifactProjectPath
+    },
+    suggestedFix: "Run htmlslide export for the requested artifact type.",
+    agentInstruction: `Run htmlslide export for this project so ${expectation.artifactProjectPath} is regenerated.`
+  });
+
+const exportIntegrityIssue = (artifactPath: string, slideId: string, reason: string): HtmlslideIssue =>
+  makeIssue({
+    slideId,
+    severity: "error",
+    type: "export-integrity-unverified",
+    path: artifactPath,
+    message: `Export integrity could not be verified: ${reason}`,
+    measurement: { artifactPath, reason },
+    suggestedFix: "Remove unsafe export paths and regenerate exports with the current compiler.",
+    agentInstruction: `Inspect ${artifactPath}, remove any symlink or non-file destination, then run htmlslide export again.`
+  });
+
+const loadExportManifest = async (projectRoot: string): Promise<ExportManifestLoadResult> => {
+  const manifestPath = path.join(projectRoot, ...EXPORT_MANIFEST_PROJECT_PATH.split("/"));
+  let info: Awaited<ReturnType<typeof lstat>>;
+  try {
+    info = await lstat(manifestPath);
+  } catch (error) {
+    return errorCode(error) === "ENOENT"
+      ? { status: "missing" }
+      : { status: "invalid", reason: errorMessage(error) };
+  }
+  if (info.isSymbolicLink() || !info.isFile()) {
+    return { status: "invalid", reason: "Export manifest must be a regular project-local file." };
+  }
+  if (Number(info.size) > MAX_EXPORT_MANIFEST_BYTES) {
+    return { status: "invalid", reason: `Export manifest exceeds ${MAX_EXPORT_MANIFEST_BYTES} bytes.` };
+  }
+
+  let rawManifest: string;
+  try {
+    rawManifest = (await readProjectFileSnapshot(projectRoot, EXPORT_MANIFEST_PROJECT_PATH)).bytes.toString("utf8");
+  } catch (error) {
+    return { status: "invalid", reason: errorMessage(error) };
+  }
+
+  let value: unknown;
+  try {
+    value = JSON.parse(rawManifest);
+  } catch (error) {
+    return {
+      status: "invalid",
+      reason: error instanceof Error ? error.message : "Unable to parse export manifest JSON."
+    };
+  }
+
+  const parsed = ExportManifestSchema.safeParse(value);
+  if (!parsed.success) {
+    return {
+      status: "invalid",
+      reason: parsed.error.issues[0]?.message ?? "Export manifest schema validation failed."
+    };
+  }
+  return { status: "valid", manifest: parsed.data, rawSha256: sha256Hex(rawManifest) };
+};
+
+const exportManifestIssue = (
+  type: string,
+  message: string,
+  reason?: string,
+  severity: IssueSeverity = "warning"
+): HtmlslideIssue =>
+  makeIssue({
+    slideId: "deck",
+    severity,
+    type,
+    path: EXPORT_MANIFEST_PROJECT_PATH,
+    message,
+    measurement: {
+      manifestPath: EXPORT_MANIFEST_PROJECT_PATH,
+      ...(reason ? { reason } : {})
+    },
+    suggestedFix: "Run htmlslide export to create fresh compiler-owned artifact metadata.",
+    agentInstruction: `Run htmlslide export to regenerate ${EXPORT_MANIFEST_PROJECT_PATH}.`
+  });
 
 const normalizeCoreIssues = (issues: readonly CoreIssue[], projectPath: string): HtmlslideIssue[] =>
   issues.map((issue) =>
@@ -904,7 +1268,7 @@ const issueSlideRank = (issue: HtmlslideIssue, slideOrder: ReadonlyMap<string, n
   slideOrder.get(issue.slideId) ?? Number.MAX_SAFE_INTEGER;
 
 const compareStrings = (left: string | undefined, right: string | undefined): number =>
-  (left ?? "").localeCompare(right ?? "");
+  Buffer.compare(Buffer.from(left ?? "", "utf8"), Buffer.from(right ?? "", "utf8"));
 
 const slideContextFromCoreSlide = (slide: ResolvedProjectSlide): SlideCheckContext => ({
   index: slide.index,
@@ -1631,6 +1995,34 @@ const newestSourceMtime = async (project: LoadedDeckProject, localAssetPaths: st
   }
   return newest;
 };
+
+const lstatIfExists = async (filePath: string): Promise<Awaited<ReturnType<typeof lstat>> | undefined> => {
+  try {
+    return await lstat(filePath);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+};
+
+const inspectExportPath = async (
+  filePath: string
+): Promise<{ info?: Awaited<ReturnType<typeof lstat>>; error?: string }> => {
+  try {
+    return { info: await lstatIfExists(filePath) };
+  } catch (error) {
+    return { error: errorMessage(error) };
+  }
+};
+
+const errorCode = (error: unknown): string | undefined =>
+  typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+    ? error.code
+    : undefined;
+
+const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
 const slugFileName = (value: string): string =>
   value

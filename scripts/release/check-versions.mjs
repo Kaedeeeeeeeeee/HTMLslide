@@ -48,7 +48,7 @@ if (failures.length > 0) {
   process.exitCode = 1;
 } else {
   process.stdout.write(
-    `Version contract passed: app ${versionConstants.HTMLSLIDE_APP_VERSION}, deck schema ${versionConstants.DECK_SCHEMA_VERSION}, ${packagePaths.length + 1} package manifests.\n`
+    `Version contract passed: app ${versionConstants.HTMLSLIDE_APP_VERSION}, deck schema ${versionConstants.DECK_SCHEMA_VERSION}, export manifest schema ${versionConstants.EXPORT_MANIFEST_SCHEMA_VERSION}, ${packagePaths.length + 1} package manifests.\n`
   );
 }
 
@@ -64,6 +64,7 @@ async function readVersionConstants() {
     CHECK_REPORT_SCHEMA_VERSION: readExportedString(source, "CHECK_REPORT_SCHEMA_VERSION"),
     DECK_PACKAGE_SCHEMA_VERSION: readExportedString(source, "DECK_PACKAGE_SCHEMA_VERSION"),
     DECK_SCHEMA_VERSION: readExportedString(source, "DECK_SCHEMA_VERSION"),
+    EXPORT_MANIFEST_SCHEMA_VERSION: readExportedString(source, "EXPORT_MANIFEST_SCHEMA_VERSION"),
     HTMLSLIDE_APP_VERSION: readExportedString(source, "HTMLSLIDE_APP_VERSION")
   };
 }

@@ -41,7 +41,18 @@ Every checker-produced issue must include `slideId`, `severity`, `type`, `messag
 - Core project checks: `deck.json` schema, duplicate slide ids, safe project paths, and referenced slide, notes, and theme files via `@htmlslide/core`.
 - Source checks: `data-slide-id` mismatch, safe area violation, text overflow, low contrast inline text, remote asset, remote font, remote script, missing local asset, title too long, and body too dense.
 - Notes checks: missing notes references and notes files that are too short for a useful talk track.
-- Export checks: requested PDF, HTML, deckpkg, speaker notes, and thumbnail artifacts are reported when missing or older than deck sources.
+- Export checks: requested PDF, HTML, deckpkg, speaker notes, and thumbnail artifacts are checked against the compiler-owned SHA-256 commit marker. The checker reports missing, untracked, metadata-mismatched, manually modified, or source-outdated exports. Projects created before export metadata existed receive an actionable warning and retain the legacy mtime fallback until the next successful export.
+
+Export issue types are stable:
+
+- `export-manifest-missing`: requested exports exist without `exports/export-manifest.json`; this is a warning for legacy projects and enables the mtime fallback.
+- `export-manifest-invalid`: the manifest is malformed, truncated, unsupported, or internally inconsistent; this is an error and fails closed without an mtime fallback.
+- `export-untracked`: an expected artifact exists but is absent from the latest compiler manifest.
+- `export-manifest-mismatch`: artifact kind or thumbnail slide metadata does not match the expected export contract.
+- `export-modified`: current artifact bytes differ from the recorded size or SHA-256.
+- `export-outdated`: current source fingerprints differ from the recorded source digest, or the legacy mtime fallback finds newer sources when the manifest is missing.
+
+A manifest that is present but cannot be parsed and validated must never be treated like a missing legacy manifest. The checker must return a failed report with `export-manifest-invalid`; timestamps cannot re-establish integrity after a corrupt or partially written commit marker.
 
 The Alpha layout checkers are static and deterministic. The safe-area checker reports `safe-area-violation` for
 absolute or fixed positioned elements with inline pixel geometry that cross `deck.json` safe area bounds. The
@@ -59,6 +70,8 @@ Issues are sorted deterministically by severity (`error`, `warning`, `info`), sl
 
 The current layout checkers are static Alpha passes, not full browser geometry passes. They are designed to catch
 deterministic fixed-text-box and positioned-element failures in CI; full DOM geometry checks should replace or
-supplement them when the checker owns a renderer/browser execution path. The current export checker uses file mtimes
-and expected compiler paths. It can flag missing or stale exports, but it cannot prove whether a generated export was
-manually edited after the latest source change without compiler-owned artifact metadata.
+supplement them when the checker owns a renderer/browser execution path. Export fingerprints detect ordinary source
+changes and artifact edits but are SHA-256 integrity metadata, not digital signatures; a user who deliberately rewrites
+both an artifact and its compiler-owned manifest can still manufacture a matching local state. Verification describes
+a bounded filesystem scan; a separate same-user process that changes a file immediately after it is hashed can make the
+report stale as soon as it returns, just as with other local lint tools.

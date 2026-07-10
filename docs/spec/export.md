@@ -10,10 +10,57 @@ For the default export path, the compiler writes:
 - `exports/<deck-slug>.pdf`
 - `exports/<deck-slug>.deckpkg`
 - `exports/notes.json`
+- `exports/export-manifest.json`
 - `exports/thumbnails/<slide-id>.png`
 - `.htmlslide/cache/thumbnails/<slide-id>.png`
 
 Generated filenames are deterministic for the same deck title and slide ids.
+
+## Export Fingerprint Manifest
+
+`exports/export-manifest.json` is compiler-owned integrity metadata and the commit marker for a completed export. It is deterministic and contains no wall-clock timestamp. A present, valid manifest describes one fully committed export invocation; it is not an editable project source file. The manifest records:
+
+- `schemaVersion` and `compilerVersion`
+- `hashAlgorithm: "sha256"`
+- a canonical `sourceDigest`
+- sorted source fingerprints for `deck.json`, slide HTML, notes, theme CSS/tokens, and referenced local assets
+- sorted artifact fingerprints for the files actually written by that export invocation
+
+Each fingerprint includes a POSIX project-relative `path`, `sizeBytes`, and lowercase SHA-256 digest. Artifact entries also include `kind` and a `slideId` for thumbnails. Cache thumbnails under `.htmlslide/cache/` are not export artifacts and are not recorded. These hashes detect accidental or ordinary local changes; they are integrity metadata, not digital signatures or proof of authorship.
+
+## Export Transaction
+
+The compiler must serialize exports for the same project with a project-level lock under `.htmlslide/cache/`. Lock creation is exclusive. A dead-owner lock is replaced atomically only by the exporter that acquires the old lock token's recovery claim, so concurrent recovery attempts cannot remove a new owner's lock. An export captures one source snapshot, and rendering, packaging, and source fingerprinting must use the same captured file handles and bytes. Verification reads may detect concurrent source changes, but bytes from different source generations must not be mixed into one committed invocation.
+
+The compiler writes the complete invocation to a private staging directory under `.htmlslide/cache/`. Before changing `exports/`, it preflights every destination and refuses directories, symlinks, and untracked files that would be overwritten. Files owned by the previous valid manifest move into a private transaction backup; new artifacts then move into place and are verified. The compiler rechecks source fingerprints and atomically replaces `exports/export-manifest.json` last, so the new manifest is the commit marker for the new artifact generation. A failure before that marker restores the backup, removes files committed by the failed invocation, releases the lock, removes staging data, and does not publish a new manifest.
+
+Partial exports replace the manifest with exactly the artifacts produced by that invocation. Before publishing the new commit marker, the compiler removes artifacts owned by the previous valid manifest that the new invocation omits. It must not remove untracked files merely because they are under `exports/`.
+
+Static symlinks and symlinks introduced during file reads are rejected, and source reads bind validation and bytes to the same open file handle. HTMLslide assumes the project directory is controlled by the current user and does not claim to sandbox a separate malicious same-user process that continuously swaps parent directories during individual filesystem syscalls. Such a process already has the user's direct filesystem permissions; export untrusted projects only from a directory not being concurrently mutated by another process.
+
+```json
+{
+  "schemaVersion": "0.1.0",
+  "compilerVersion": "0.1.0",
+  "hashAlgorithm": "sha256",
+  "sourceDigest": "<64 lowercase hex characters>",
+  "sources": [
+    {
+      "path": "deck.json",
+      "sizeBytes": 1234,
+      "sha256": "<64 lowercase hex characters>"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "exports/example.pdf",
+      "kind": "pdf",
+      "sizeBytes": 5678,
+      "sha256": "<64 lowercase hex characters>"
+    }
+  ]
+}
+```
 
 ## Standalone HTML
 

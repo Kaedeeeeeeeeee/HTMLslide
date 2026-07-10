@@ -14,6 +14,8 @@ my-talk/
   skills/
   .htmlslide/
     cache/
+      export.lock
+      export-staging/
     checkpoints/
     logs/
     reports/
@@ -34,9 +36,12 @@ my-talk/
 - `exports/*.pdf`
 - `exports/*.deckpkg`
 - `exports/*.html`
+- `exports/export-manifest.json`: compiler-owned commit marker for the latest completed export invocation.
 - `exports/thumbnails/`
 
 Agents should edit source areas. The compiler owns artifact areas.
+
+The compiler also owns transient export coordination state under `.htmlslide/cache/`. The project-level export lock serializes compiler writes for one project, and private staging directories hold uncommitted bytes. Staged files are not exports. The compiler commits artifacts first and atomically replaces `exports/export-manifest.json` last.
 
 ## Project Loading
 

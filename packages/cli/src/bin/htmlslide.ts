@@ -118,6 +118,19 @@ const fail = (error: unknown, json = false): never => {
   process.exit(exitCode);
 };
 
+const exportFailure = (error: unknown): CliError => {
+  if (error instanceof Error && typeof (error as CliError).exitCode === "number") {
+    return error as CliError;
+  }
+  return Object.assign(new Error(error instanceof Error ? error.message : String(error), {
+    cause: error
+  }), {
+    code: "EXPORT_FAILED",
+    exitCode: EXIT_CODES.exportFailed,
+    suggestedFix: "Resolve the reported export filesystem or concurrency issue, then rerun htmlslide export."
+  });
+};
+
 const failStdioStartup = (error: unknown): never => {
   const message = error instanceof Error ? error.message : String(error);
   const details = error instanceof Error ? (error as CliError) : undefined;
@@ -274,7 +287,7 @@ program
       });
       writeResult({ status: "passed", ...result }, json);
     } catch (error) {
-      fail(error, json);
+      fail(exportFailure(error), json);
     }
   });
 

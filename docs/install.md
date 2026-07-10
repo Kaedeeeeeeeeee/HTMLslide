@@ -10,7 +10,9 @@ The alpha package workflow creates:
 - `HTMLslide-<version>-unsigned-alpha-<arch>.zip`
 - `HTMLslide-<version>-unsigned-alpha-<arch>.json`
 
-The current alpha is not Developer ID signed, not notarized, and not stapled. Gatekeeper can warn on first launch. Treat these artifacts as internal/tester artifacts until a signed release workflow is available.
+The hosted workflow currently runs on Apple Silicon and publishes `arm64` artifacts. Intel macOS packages are not part of the current alpha channel.
+
+The current alpha is not Developer ID signed, not notarized, and not stapled. Gatekeeper can warn on first launch. Treat these artifacts as internal/tester artifacts until a signed, notarized release candidate has been produced and validated.
 
 ## Install
 

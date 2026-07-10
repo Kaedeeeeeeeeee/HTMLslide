@@ -11,7 +11,7 @@ HTMLslide is a local-first desktop workbench and CLI for AI-agent-native HTML/PD
 
 ## Current alpha status
 
-The current alpha path is useful for testing and contribution, but public production distribution is not complete. Current alpha artifacts are unsigned alpha builds: they are not Developer ID signed, not notarized, and may trigger Gatekeeper warnings.
+The current alpha path is useful for testing and contribution, but public production distribution is not complete. Current hosted alpha artifacts target Apple Silicon (`arm64`) and are unsigned alpha builds: they are not Developer ID signed, not notarized, and may trigger Gatekeeper warnings.
 
 Automated CI covers unit tests, desktop Electron E2E, package smoke, CLI provisioning, official skills installation, deckpkg opening, and mock/fake provider paths. Real BYOK provider credentials and real Claude/Codex/Gemini integrations require manual validation before release claims.
 

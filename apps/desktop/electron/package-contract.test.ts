@@ -1,8 +1,11 @@
+import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
+const execFileAsync = promisify(execFile);
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(currentDir, "..", "..", "..");
 
@@ -125,7 +128,7 @@ describe("macOS alpha packaging contract", () => {
     const packageIndex = workflow.indexOf("run: pnpm package:alpha");
     const smokeIndex = workflow.indexOf("run: pnpm smoke:package:alpha");
 
-    expect(workflow).toContain("runs-on: macos-latest");
+    expect(workflow).toContain("runs-on: macos-26");
     expect(workflow).toContain("CSC_IDENTITY_AUTO_DISCOVERY: \"false\"");
     expect(workflow).toContain("'docs:check', 'docs:build'");
     expect(workflow).toContain("version:check");
@@ -161,7 +164,7 @@ describe("macOS alpha packaging contract", () => {
     const installChromiumIndex = workflow.indexOf("run: pnpm exec playwright install chromium");
     const testIndex = workflow.indexOf("run: pnpm test");
 
-    expect(workflow).toContain("runs-on: macos-latest");
+    expect(workflow).toContain("runs-on: macos-26");
     expect(workflow).toContain("fetch-depth: 0");
     expect(workflow).toContain("contents: write");
     expect(workflow).toContain("docs:build");
@@ -206,6 +209,37 @@ describe("macOS alpha packaging contract", () => {
     expect(workflow).toContain("run: pnpm version:check");
   });
 
+  it("keeps GitHub Actions on Node 24 runtimes and pins hosted runner images", async () => {
+    const workflowPaths = [
+      ".github/workflows/ci.yml",
+      ".github/workflows/docs-pages.yml",
+      ".github/workflows/alpha-package.yml",
+      ".github/workflows/release-macos.yml"
+    ];
+    const workflows = await Promise.all(workflowPaths.map((workflowPath) => readText(workflowPath)));
+
+    for (const workflow of workflows) {
+      expect(workflow).toContain("actions/checkout@v7");
+      expect(workflow).toContain("actions/setup-node@v6");
+      expect(workflow).toContain("pnpm/action-setup@v6");
+      expect(workflow).not.toMatch(/actions\/checkout@v[1-6]\b/);
+      expect(workflow).not.toMatch(/actions\/setup-node@v[1-5]\b/);
+      expect(workflow).not.toMatch(/pnpm\/action-setup@v[1-5]\b/);
+      expect(workflow).not.toMatch(/actions\/upload-artifact@v[1-6]\b/);
+    }
+
+    for (const workflow of [workflows[0], workflows[2], workflows[3]]) {
+      expect(workflow).not.toContain("macos-latest");
+      expect(workflow).toContain("actions/upload-artifact@v7");
+    }
+    for (const workflow of workflows) {
+      expect(workflow).not.toContain("ubuntu-latest");
+    }
+    expect(workflows[0]?.match(/runs-on: macos-26/g)).toHaveLength(2);
+    expect(workflows[0]?.match(/runs-on: ubuntu-24\.04/g)).toHaveLength(2);
+    expect(workflows[1]).toContain("runs-on: ubuntu-24.04");
+  });
+
   it("keeps release version checks anchored to core constants", async () => {
     const versionSource = await readText("packages/core/src/version.ts");
     const checkScript = await readText("scripts/release/check-versions.mjs");
@@ -239,6 +273,12 @@ describe("macOS alpha packaging contract", () => {
     expect(buildScript).toContain("!file.endsWith(\".md\")");
   });
 
+  it("builds the hidden Pages marker required by the deployed artifact", async () => {
+    await execFileAsync(process.execPath, ["scripts/docs/build-docs-site.mjs"], { cwd: root });
+
+    await expect(readText("dist/docs-site/.nojekyll")).resolves.toBe("");
+  });
+
   it("keeps the docs Pages workflow deployable", async () => {
     const workflow = await readText(".github/workflows/docs-pages.yml");
 
@@ -252,10 +292,11 @@ describe("macOS alpha packaging contract", () => {
     expect(workflow).toContain("name: github-pages");
     expect(workflow).toContain("run: pnpm docs:check");
     expect(workflow).toContain("run: pnpm docs:build");
-    expect(workflow).toContain("actions/configure-pages@v5");
-    expect(workflow).toContain("enablement: true");
-    expect(workflow).toContain("actions/upload-pages-artifact@v3");
+    expect(workflow).toContain("actions/configure-pages@v6");
+    expect(workflow).toContain("actions/upload-pages-artifact@v5");
     expect(workflow).toContain("path: dist/docs-site");
-    expect(workflow).toContain("actions/deploy-pages@v4");
+    expect(workflow).toContain("include-hidden-files: true");
+    expect(workflow).not.toContain("enablement: true");
+    expect(workflow).toContain("actions/deploy-pages@v5");
   });
 });

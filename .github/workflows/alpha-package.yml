@@ -18,12 +18,12 @@ concurrency:
 jobs:
   unsigned-alpha:
     name: Build unsigned alpha artifact
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 60
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Validate release package contract
         shell: bash
@@ -57,12 +57,12 @@ jobs:
           NODE
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           run_install: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: pnpm
@@ -99,7 +99,7 @@ jobs:
 
       - name: Upload visual regression artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: visual-regression-${{ github.job }}-${{ github.run_attempt }}
           path: dist/visual-regression/**
@@ -173,7 +173,7 @@ jobs:
           find alpha-artifacts -type f -print | sort
 
       - name: Upload unsigned alpha artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: htmlslide-unsigned-alpha-${{ github.run_number }}
           path: alpha-artifacts/*

@@ -13,6 +13,8 @@ HTMLslide uses SemVer for app releases and a separate schema version for deck fo
 - `Alpha Package`: runs on manual dispatch, nightly schedule, and `v*` tags. It repeats the CI checks including `pnpm docs:build`, `pnpm version:check`, `pnpm perf:smoke`, and `pnpm security:check`, runs macOS desktop Electron E2E and desktop accessibility E2E before packaging, runs `pnpm package:alpha`, smokes the generated package, and uploads unsigned artifacts.
 - `Release macOS`: runs on manual dispatch and `v*` tags. It repeats docs check/docs build/version check/lint/typecheck/test/perf/security/build/Electron E2E/desktop accessibility E2E, imports a Developer ID certificate from GitHub Actions secrets, runs `pnpm package:release:macos`, notarizes and staples the DMG, generates release notes from git history with `pnpm release:notes`, uploads signed artifacts, and attaches them to the matching GitHub Release for tag builds.
 
+GitHub-hosted action implementations use Node 24 runtimes, while HTMLslide project commands continue to run on the declared Node 22 toolchain. Validation, documentation, and security jobs pin the `ubuntu-24.04` OS label; Electron E2E, accessibility, alpha packaging, and signed release jobs pin the currently verified Apple Silicon `macos-26` OS label. This prevents `*-latest` from silently changing the OS major or architecture, but GitHub can still update Xcode, browsers, and other software within each image line.
+
 Both workflows intentionally fail early if the root package scaffold is missing required scripts. Add those scripts in the app scaffold rather than weakening workflow checks.
 
 ## Versioning Contract
@@ -98,6 +100,8 @@ The release script uses `build/package/release-macos.json` and writes:
 
 - `dist/release/HTMLslide-<version>-signed-notarized-<arch>.dmg`
 - `dist/release/HTMLslide-<version>-signed-notarized-<arch>.json`
+
+The hosted signed release workflow currently publishes Apple Silicon (`arm64`) artifacts only. Intel and universal macOS release artifacts are not yet part of the production workflow.
 
 The release manifest uses the same per-artifact filename, byte size, and SHA-256 metadata as alpha builds.
 Manual `workflow_dispatch` runs can pass the optional `release_tag` input to label the uploaded RC checklist. Tag-triggered runs always use the pushed tag. Manual runs without an input use `manual-<run_number>` so checklist metadata remains run-bound instead of `TODO`.

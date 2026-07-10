@@ -21,12 +21,12 @@ concurrency:
 jobs:
   signed-notarized:
     name: Build signed notarized macOS artifact
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 90
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -80,12 +80,12 @@ jobs:
           echo "Signed release contract is present."
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           run_install: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: pnpm
@@ -257,7 +257,7 @@ jobs:
           pnpm release:notes -- --tag "${GITHUB_REF_NAME}" --output release-artifacts/RELEASE_NOTES.md
 
       - name: Upload signed notarized artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: htmlslide-signed-notarized-${{ github.run_number }}
           path: release-artifacts/*

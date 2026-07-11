@@ -307,12 +307,17 @@ describe("macOS alpha packaging contract", () => {
 
   it("keeps CI building the publishable docs site", async () => {
     const workflow = await readText(".github/workflows/ci.yml");
+    const desktopE2eBlock = workflow.slice(
+      workflow.indexOf("  desktop-e2e:"),
+      workflow.indexOf("  desktop-a11y:")
+    );
 
     expect(workflow).toContain("'docs:check', 'docs:build'");
     expect(workflow).toContain("version:check");
     expect(workflow).toContain("run: pnpm docs:check");
     expect(workflow).toContain("run: pnpm docs:build");
     expect(workflow).toContain("run: pnpm version:check");
+    expect(desktopE2eBlock).toContain("run: pnpm exec playwright install chromium");
   });
 
   it("keeps GitHub Actions on Node 24 runtimes and pins hosted runner images", async () => {

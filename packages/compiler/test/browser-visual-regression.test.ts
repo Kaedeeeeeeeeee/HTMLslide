@@ -82,10 +82,18 @@ const copyCompilerFixture = async (
   };
 };
 
-const assertGoldenExists = async (goldenPath: string): Promise<void> => {
+const assertGoldenExists = async (
+  goldenPath: string,
+  actualPath?: string,
+  artifactName?: string
+): Promise<void> => {
   try {
     await access(goldenPath);
   } catch {
+    if (actualPath && artifactName) {
+      await mkdir(browserVisualDiffOutputPath, { recursive: true });
+      await copyFile(actualPath, path.join(browserVisualDiffOutputPath, `${artifactName}-after.png`));
+    }
     throw new Error(
       `Missing browser visual golden: ${goldenPath}. Run HTMLSLIDE_UPDATE_BROWSER_GOLDENS=1 pnpm test -- packages/compiler/test/browser-visual-regression.test.ts to refresh baselines.`
     );
@@ -205,7 +213,11 @@ describe("browser-rendered visual regression", () => {
             await mkdir(path.dirname(thumbnailGoldenPath), { recursive: true });
             await copyFile(thumbnailPath!, thumbnailGoldenPath);
           } else {
-            await assertGoldenExists(thumbnailGoldenPath);
+            await assertGoldenExists(
+              thumbnailGoldenPath,
+              thumbnailPath!,
+              `${name}-${slideId}-thumbnail`
+            );
             const thumbnailResult = await comparePngWithGolden({
               actualPath: thumbnailPath!,
               goldenPath: thumbnailGoldenPath,

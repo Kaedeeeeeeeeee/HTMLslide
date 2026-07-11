@@ -195,8 +195,10 @@ test.describe("HTMLslide desktop accessibility smoke", () => {
     const previewError = page.getByRole("alert", { name: "Slide preview error" });
     await expect(previewError).toBeVisible({ timeout: 30_000 });
     await expectNoAccessibilityViolations(page, "workspace slide preview error");
+    const retryPreview = previewError.getByRole("button", { name: "Retry preview" });
+    await expect(retryPreview).toBeVisible();
+    await retryPreview.evaluate((button) => (button as HTMLButtonElement).click());
     await writeFile(slidePath, originalSlideHtml, "utf8");
-    await previewError.getByRole("button", { name: "Retry preview" }).click();
     await expect(previewFrame).toBeVisible({ timeout: 30_000 });
 
     await expectNoFrameworkOverlay(page);

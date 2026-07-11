@@ -185,12 +185,12 @@ ${commitLines}
 
 - CI workflow: required.
 - Release macOS workflow: required for signed/notarized artifacts.
-- Manual RC acceptance: required for clean account install, BYOK when available, fake external agent, real Claude/Codex/Gemini claim validation or explicit no-claim N/A, external monitor presenter test, reopen, revert, CLI uninstall, and cleanup evidence.
+- Manual RC acceptance: required for clean account install, BYOK when available, fake external agents, real Claude/Codex compatibility validation or explicit no-claim N/A, Gemini detection-only confirmation, external monitor presenter test, reopen, revert, CLI uninstall, and cleanup evidence.
 
 ## Known Limitations
 
 - Unsigned alpha artifacts are tester-only and may trigger Gatekeeper warnings.
-- Real provider keys, physical display behavior, and real Claude/Codex/Gemini support claims require manual validation before being described as supported.
+- Real provider keys, physical display behavior, and validated real-account Claude/Codex compatibility require manual RC evidence before being described as supported. Gemini headless editing remains unavailable.
 `;
 }
 

@@ -53,8 +53,9 @@ describe("release evidence scripts", () => {
     expect(checklist).toContain("pnpm version:check");
     expect(checklist).toContain("pnpm security:check");
     expect(checklist).toContain("pnpm e2e:desktop:a11y");
-    expect(checklist).toContain("Validate Real Claude/Codex/Gemini Claim");
-    expect(checklist).toContain("If direct support is not claimed, mark N/A");
+    expect(checklist).toContain("Validate Real Claude/Codex Compatibility And Gemini Boundary");
+    expect(checklist).toContain("If compatibility is not claimed, mark N/A");
+    expect(checklist).toContain("Gemini CLI remains detection-only");
     expect(checklist).toContain("htmlslide agent validate-provider");
     expect(checklist).not.toContain("Release macOS completed with signed, notarized, stapled manifest.");
   });

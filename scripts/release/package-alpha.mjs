@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -174,7 +174,8 @@ async function pruneCliRuntime(cliRuntimePath) {
     path.join(cliRuntimePath, "src"),
     path.join(cliRuntimePath, "test"),
     path.join(cliRuntimePath, "tsconfig.json"),
-    path.join(cliRuntimePath, "tsconfig.tsbuildinfo")
+    path.join(cliRuntimePath, "tsconfig.tsbuildinfo"),
+    path.join(cliRuntimePath, "node_modules", ".pnpm", "node_modules", "@htmlslide", "cli")
   ];
 
   for (const packageName of packageNames) {
@@ -211,8 +212,29 @@ async function deployCliRuntime(appResourcesPath) {
       verbatimSymlinks: true
     });
     await requirePath(path.join(cliRuntimePath, "dist", "bin", "htmlslide.js"), "Packaged CLI runtime");
+    await assertNoBrokenSymlinks(cliRuntimePath);
   } finally {
     await rm(temporaryParentPath, { recursive: true, force: true });
+  }
+}
+
+async function assertNoBrokenSymlinks(rootPath) {
+  const pending = [rootPath];
+  while (pending.length > 0) {
+    const currentPath = pending.pop();
+    const entries = await readdir(currentPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const entryPath = path.join(currentPath, entry.name);
+      if (entry.isSymbolicLink()) {
+        try {
+          await stat(entryPath);
+        } catch {
+          fail(`Packaged runtime contains a broken symlink: ${entryPath}`);
+        }
+      } else if (entry.isDirectory()) {
+        pending.push(entryPath);
+      }
+    }
   }
 }
 
@@ -363,6 +385,7 @@ function signAppBundle(appPath, config) {
 
   if (config.adHocSign && process.env.HTMLSLIDE_ALPHA_SKIP_ADHOC_SIGN !== "1") {
     run("codesign", ["--force", "--deep", "--sign", "-", appPath]);
+    run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath]);
     return "ad-hoc";
   }
 

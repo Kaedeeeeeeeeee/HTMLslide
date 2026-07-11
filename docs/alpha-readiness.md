@@ -26,6 +26,7 @@ These gates are expected before each alpha candidate:
 | Canonical preview isolation | Desktop preview uses the shared renderer in a sandboxed, scriptless iframe with deny-by-default CSP, inline local assets, dynamic manifest-viewport scaling, and hostile-content coverage. | `pnpm test`, `pnpm e2e:desktop`, `CI` |
 | Desktop UX smoke | New Deck, Project Library, QA, export, presenter, CLI integration, and official skills flows pass in Electron. | `pnpm e2e:desktop` |
 | Desktop accessibility smoke | First-run, Project Library, New Deck gating, QA Panel, presenter, Settings, and official skills chrome pass WCAG A/AA axe checks plus role semantics. | `pnpm e2e:desktop:a11y`, `CI` |
+| Built-in external adapter contract | Fake Claude/Codex runners verify fixed argv, isolated temporary cwd, command-contract probing, permission flags, bounded metadata-only logs, process-group cancellation, conflict-safe source application, checkpoint diff, and Check/Export gating. Shared external-run E2E covers retry; the built-in Codex E2E covers review and revert. | `pnpm test`, `pnpm e2e:desktop`, `CI` |
 | Alpha package | Unsigned DMG/ZIP/manifest plus artifact SHA-256 metadata and a prefilled RC acceptance template are created and smoked from the packaged app, packaged CLI, and packaged MCP diagnostics. | `pnpm verify:package:alpha`, `Alpha Package` |
 | Remote CI | Main branch CI and Docs Pages complete for the candidate commit. | GitHub Actions `CI`, `Docs Pages` |
 
@@ -58,7 +59,9 @@ These gates are expected before each alpha candidate:
 | `deckpkg` can open | Presenter tests, Electron E2E, and package smoke cover package opening through direct launch arguments, Electron `open-file` handling, and macOS LaunchServices `open -a` against the packaged app. |
 | Malicious or oversized `deckpkg` is rejected | Presenter tests cover archive byte, entry count, per-entry and total uncompressed limits, encryption, unsafe paths, and malformed package metadata before presenter asset expansion. |
 | Rehearsal mode works | Presenter tests and Electron E2E cover single-screen rehearsal. |
-| Fake external adapter automation | Agent adapter tests, desktop service tests, and Electron E2E cover saving a Generic command, running it from New Deck and opened-workspace paths, applying reported source writes, check/export gating, diff review, and checkpoint revert. |
+| Fake built-in Claude/Codex automation | Injected runners and fake executables cover install/auth/flag detection, exact built-in arguments, adapter identity, isolated temporary cwd, source-only application, concurrent-edit and symlink rejection, bounded metadata-only output, timeout/cancel, checkpoint diff, Check/Export gating, diff review, and revert. Shared registry tests cover retry across external runs. This proves HTMLslide's adapter contract only. |
+| Fake Generic external adapter automation | Agent adapter tests, desktop service tests, and Electron E2E cover saving a Generic command, running it from New Deck and opened-workspace paths, validating the write manifest, applying reported source writes, Check/Export gating, diff review, and checkpoint revert. |
+| Gemini detection-only boundary | Detector and renderer tests may prove command discovery and that Gemini remains ineligible for headless runs; they must not synthesize authenticated or runnable Gemini status. |
 | Unit, CLI, compiler, Electron, and packaging tests pass | Covered by local commands and CI workflows. |
 
 ## Manual Release-Candidate Evidence
@@ -70,7 +73,9 @@ These items require human evidence for the exact artifact before an alpha build 
 | Clean macOS install | Completed checklist from `pnpm rc:checklist` on a clean account or isolated machine. |
 | Gatekeeper behavior | Screenshot or note confirming expected unsigned alpha warning or signed release behavior. |
 | Real BYOK provider | At least one real provider account with `htmlslide agent validate-provider --json` evidence, test prompt, generated deck, check/export result, and secret-safety review. |
-| Real Claude, Codex, or Gemini claim | Detection plus a manually validated real integration path before support is claimed. |
+| Real Claude Code compatibility claim | The exact packaged RC runs a deck edit through the tester's own authenticated Claude Code installation; evidence includes detected version/auth state, permission summary, completed edit, cancellation behavior, diff review, Check/Export result, revert result, and secret-safety review. |
+| Real Codex compatibility claim | The exact packaged RC runs a deck edit through the tester's own authenticated Codex installation; evidence includes detected version and `codex login status`, sandbox/permission summary, completed edit, cancellation behavior, diff review, Check/Export result, revert result, and secret-safety review. |
+| Gemini CLI status | Detection may be recorded, but Gemini remains detection-only. A headless editing claim is not permitted until a separate non-interactive authentication and permission contract is implemented, tested, and manually validated. |
 | Physical dual-screen presenter | HDMI, USB-C, or AirPlay presentation with speaker screen, audience window, navigation, timer, and sync evidence. |
 | Finder default deckpkg ownership | User-level double-click behavior against the installed app, confirming the temporary or release install is the default handler on the tester machine. |
 | Post-delete cleanup | Notes showing no unexpected files outside user data, chosen workspace, and intentionally installed CLI/skills artifacts. |
@@ -91,12 +96,15 @@ htmlslide agent validate-provider --provider openai --model <model-id> --api-key
 
 The JSON output is release evidence only after confirming it does not include the API key value.
 
+Fake Claude/Codex executables in unit, service, Electron, or packaging tests are automated evidence. They do not satisfy either real-account row above. Manual evidence is valid only for the exact packaged artifact named in the checklist; a result from a source checkout, a different build, or another tester's login does not transfer to the candidate.
+
 ## Not Yet Claimed
 
 The alpha docs and release notes must not claim:
 
 - production-ready signed distribution while artifacts are unsigned alpha builds;
-- full Claude Code, Codex, or Gemini CLI headless deck editing before real adapter validation is complete;
+- validated real-account Claude Code or Codex compatibility for a candidate that lacks completed manual RC evidence for the exact packaged artifact;
+- Gemini CLI headless deck editing while Gemini remains detection-only;
 - physical dual-screen reliability from Electron E2E alone;
 - real provider safety from fake-fetch tests alone.
 

@@ -301,11 +301,19 @@ describe("external agent status detection", () => {
         };
       }
 
-      if (invocation.command === "codex" && invocation.args.join(" ") === "auth status") {
+      if (invocation.command === "codex" && invocation.args.join(" ") === "login status") {
         return {
           exitCode: 1,
           stderr: "login required\n",
           stdout: ""
+        };
+      }
+
+      if (invocation.command === "codex" && invocation.args.join(" ") === "exec --help") {
+        return {
+          exitCode: 0,
+          stderr: "",
+          stdout: "--sandbox --ephemeral --ignore-user-config --skip-git-repo-check --json\n"
         };
       }
 
@@ -337,6 +345,7 @@ describe("external agent status detection", () => {
       status: "not-authenticated",
       version: "codex 1.2.3"
     });
+    expect(statuses.find((status) => status.id === "codex-cli")?.capabilities.headlessRun).toBe(true);
     expect(statuses.find((status) => status.id === "gemini-cli")).toMatchObject({
       authenticated: false,
       installed: true,
@@ -350,5 +359,79 @@ describe("external agent status detection", () => {
       status: "unavailable"
     });
     expect(statuses.find((status) => status.id === "generic")?.capabilities.detectAuthenticated).toBe(false);
+  });
+
+  it("marks Claude and Codex ready only after their fixed headless flags are verified", async () => {
+    const invocations: string[] = [];
+    const runner: ExternalAgentDetectorRunner = async (invocation) => {
+      const args = invocation.args.join(" ");
+      invocations.push(`${invocation.command} ${args}`);
+      if (args === "--version") {
+        return { exitCode: 0, stderr: "", stdout: `${invocation.command} 9.9.9\n` };
+      }
+      if (invocation.command === "claude" && args === "auth status") {
+        return { exitCode: 0, stderr: "", stdout: "authenticated\n" };
+      }
+      if (invocation.command === "claude" && args === "--help") {
+        return {
+          exitCode: 0,
+          stderr: "",
+          stdout: "--setting-sources --strict-mcp-config --disable-slash-commands --no-chrome --no-session-persistence\n"
+        };
+      }
+      if (invocation.command === "codex" && args === "login status") {
+        return { exitCode: 0, stderr: "", stdout: "authenticated\n" };
+      }
+      if (invocation.command === "codex" && args === "exec --help") {
+        return {
+          exitCode: 0,
+          stderr: "",
+          stdout: "--sandbox --ephemeral --ignore-user-config --skip-git-repo-check --json\n"
+        };
+      }
+      throw new Error(`Unexpected detector invocation: ${invocation.command} ${args}`);
+    };
+
+    const statuses = await detectExternalAgentStatuses({ runner });
+
+    expect(statuses.find((status) => status.id === "claude-code")).toMatchObject({
+      authenticated: true,
+      status: "ready"
+    });
+    expect(statuses.find((status) => status.id === "codex-cli")).toMatchObject({
+      authenticated: true,
+      status: "ready"
+    });
+    expect(invocations).toContain("claude --help");
+    expect(invocations).toContain("codex exec --help");
+  });
+
+  it("keeps an authenticated CLI unavailable when required headless flags are missing", async () => {
+    const runner: ExternalAgentDetectorRunner = async (invocation) => {
+      const args = invocation.args.join(" ");
+      if (invocation.command === "claude") {
+        throw Object.assign(new Error("spawn claude ENOENT"), { code: "ENOENT" });
+      }
+      if (invocation.command === "codex" && args === "--version") {
+        return { exitCode: 0, stderr: "", stdout: "codex 0.1.0\n" };
+      }
+      if (invocation.command === "codex" && args === "login status") {
+        return { exitCode: 0, stderr: "", stdout: "authenticated\n" };
+      }
+      if (invocation.command === "codex" && args === "exec --help") {
+        return { exitCode: 0, stderr: "", stdout: "old exec help\n" };
+      }
+      if (invocation.command === "gemini" && args === "--version") {
+        return { exitCode: 0, stderr: "", stdout: "gemini 0.9.0\n" };
+      }
+      throw new Error(`Unexpected detector invocation: ${invocation.command} ${args}`);
+    };
+
+    const statuses = await detectExternalAgentStatuses({ runner });
+    const codex = statuses.find((status) => status.id === "codex-cli");
+
+    expect(codex).toMatchObject({ authenticated: true, status: "unavailable" });
+    expect(codex?.capabilities.headlessRun).toBe(false);
+    expect(codex?.summary).toContain("missing required headless flags");
   });
 });

@@ -271,6 +271,13 @@ export function sanitizeProviderText(value: string, secrets: readonly string[] =
   let sanitized = value
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gu, "Bearer [redacted]")
     .replace(/\bsk-[A-Za-z0-9_-]{6,}\b/gu, "sk-[redacted]")
+    .replace(/\bgithub_pat_[A-Za-z0-9_]{20,}\b/gu, "github_pat_[redacted]")
+    .replace(/\bgh[pousr]_[A-Za-z0-9]{20,}\b/gu, "gh_[redacted]")
+    .replace(/\bglpat-[A-Za-z0-9_-]{20,}\b/gu, "glpat-[redacted]")
+    .replace(/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/gu, "xox-[redacted]")
+    .replace(/\bnpm_[A-Za-z0-9]{20,}\b/gu, "npm_[redacted]")
+    .replace(/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/gu, "AWS_[redacted]")
+    .replace(/\bAIza[0-9A-Za-z_-]{20,}\b/gu, "AIza[redacted]")
     .replace(/\b(api[_-]?key|access[_-]?token|token|secret)=([^\s"'&]+)/giu, "$1=[redacted]");
 
   for (const secret of secrets) {

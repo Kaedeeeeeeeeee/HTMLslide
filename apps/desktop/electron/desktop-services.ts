@@ -1,13 +1,20 @@
+import { createHash } from "node:crypto";
 import { constants as fsConstants, existsSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  CLAUDE_HEADLESS_CONTRACT_ARGS,
+  CLAUDE_HEADLESS_CONTRACT_FLAGS,
+  CODEX_HEADLESS_CONTRACT_ARGS,
+  CODEX_HEADLESS_CONTRACT_FLAGS,
+  runBuiltInExternalAgentAdapter,
   createCapabilitySet,
   readJsonFileWriteManifest,
   runCommand,
   runGenericAgentAdapter,
   type AgentAdapterRunResult,
+  type BuiltInExternalAgentKind,
   type CommandRunner,
   type GenericAgentAdapterConfig
 } from "@htmlslide/agent-adapters";
@@ -418,7 +425,7 @@ export type DesktopExternalAgentRunSummary = {
 
 export type DesktopExternalAgentRunResult = {
   ok: boolean;
-  providerId: "external-generic";
+  providerId: "external-agent";
   projectPath: string;
   stages: DesktopMockAgentStageSummary[];
   events: AgentRunEvent[];
@@ -539,6 +546,7 @@ export type DesktopExternalAgentRunnerOptions = {
   settings?: DesktopAiEngineSettings;
   settingsPath?: string;
   agentRunner?: CommandRunner;
+  externalAgentStatuses?: DesktopExternalAgentStatus[];
   timeoutMs?: number;
   signal?: AbortSignal;
   onEvent?: (event: AgentRunEvent) => void | Promise<void>;
@@ -667,15 +675,33 @@ const DEFAULT_AGENT_CAPABILITIES = {
 const EXTERNAL_AGENT_SPECS = [
   {
     authArgs: ["auth", "status"] as const,
+    capabilities: {
+      ...DEFAULT_AGENT_CAPABILITIES,
+      cancelRun: true,
+      headlessRun: true,
+      readDiff: true,
+      streamLogs: true
+    },
     command: "claude",
+    contractArgs: CLAUDE_HEADLESS_CONTRACT_ARGS,
+    contractFlags: CLAUDE_HEADLESS_CONTRACT_FLAGS,
     id: "claude-code",
     kind: "claude-code",
     label: "Claude Code",
     versionArgs: ["--version"] as const
   },
   {
-    authArgs: ["auth", "status"] as const,
+    authArgs: ["login", "status"] as const,
+    capabilities: {
+      ...DEFAULT_AGENT_CAPABILITIES,
+      cancelRun: true,
+      headlessRun: true,
+      readDiff: true,
+      streamLogs: true
+    },
     command: "codex",
+    contractArgs: CODEX_HEADLESS_CONTRACT_ARGS,
+    contractFlags: CODEX_HEADLESS_CONTRACT_FLAGS,
     id: "codex-cli",
     kind: "codex-cli",
     label: "Codex CLI",
@@ -685,6 +711,8 @@ const EXTERNAL_AGENT_SPECS = [
     authArgs: undefined,
     capabilities: { ...DEFAULT_AGENT_CAPABILITIES, detectAuthenticated: false },
     command: "gemini",
+    contractArgs: undefined,
+    contractFlags: undefined,
     id: "gemini-cli",
     kind: "gemini-cli",
     label: "Gemini CLI",
@@ -695,6 +723,8 @@ const EXTERNAL_AGENT_SPECS = [
   authArgs?: readonly string[];
   capabilities?: Record<string, boolean>;
   command: string;
+  contractArgs?: readonly string[];
+  contractFlags?: readonly string[];
   id: DesktopExternalAgentId;
   kind: DesktopExternalAgentId;
   label: string;
@@ -1013,6 +1043,7 @@ export async function detectExternalAgentStatuses({
       if (authResult.result.exitCode !== 0) {
         return externalAgentStatus({
           checkedAt: now,
+          capabilities: spec.capabilities,
           command: spec.command,
           id: spec.id,
           installed: true,
@@ -1023,9 +1054,48 @@ export async function detectExternalAgentStatuses({
         });
       }
 
+      if (spec.contractArgs && spec.contractFlags) {
+        const contractResult = await runDetectorSafely(runner, {
+          args: spec.contractArgs,
+          command: spec.command,
+          cwd,
+          timeoutMs: 3_000
+        });
+        const contractOutput = contractResult.kind === "result"
+          ? `${contractResult.result.stdout}\n${contractResult.result.stderr}`
+          : "";
+        const missingFlags = spec.contractFlags.filter((flag) => !contractOutput.includes(flag));
+        if (
+          contractResult.kind !== "result" ||
+          contractResult.result.exitCode !== 0 ||
+          missingFlags.length > 0
+        ) {
+          return externalAgentStatus({
+            authenticated: true,
+            checkedAt: now,
+            capabilities: {
+              ...spec.capabilities,
+              headlessRun: false,
+              readDiff: false,
+              streamLogs: false
+            },
+            command: spec.command,
+            id: spec.id,
+            installed: true,
+            label: spec.label,
+            status: "unavailable",
+            summary: missingFlags.length > 0
+              ? `Installed CLI is missing required headless flags: ${missingFlags.join(", ")}`
+              : "Installed CLI headless contract could not be verified.",
+            version
+          });
+        }
+      }
+
       return externalAgentStatus({
         authenticated: true,
         checkedAt: now,
+        capabilities: spec.capabilities,
         command: spec.command,
         id: spec.id,
         installed: true,
@@ -2226,11 +2296,12 @@ export async function runDesktopExternalAgent(
     });
   }
 
-  if (settings.externalAgent.selectedId !== "generic") {
+  const selectedAgentId = settings.externalAgent.selectedId;
+  if (selectedAgentId === "gemini-cli") {
     return externalAgentFailureResult({
       addEvent,
       addLog,
-      error: "Only Generic command headless runs are enabled in this milestone.",
+      error: "Gemini CLI remains detection-only until its non-interactive authentication and permission contract is tested.",
       events,
       logs,
       projectPath,
@@ -2240,7 +2311,7 @@ export async function runDesktopExternalAgent(
   }
 
   const commandTemplate = settings.externalAgent.customCommand.trim();
-  if (commandTemplate.length === 0) {
+  if (selectedAgentId === "generic" && commandTemplate.length === 0) {
     return externalAgentFailureResult({
       addEvent,
       addLog,
@@ -2253,13 +2324,42 @@ export async function runDesktopExternalAgent(
     });
   }
 
+  const adapterLabel = selectedAgentId === "claude-code"
+    ? "Claude Code"
+    : selectedAgentId === "codex-cli"
+      ? "Codex CLI"
+      : "Generic command";
+
+  if (selectedAgentId === "claude-code" || selectedAgentId === "codex-cli") {
+    const statuses = options.externalAgentStatuses ?? await detectExternalAgentStatuses({ cwd: projectPath });
+    const selectedStatus = statuses.find((status) => status.id === selectedAgentId);
+    const ready =
+      selectedStatus?.status === "ready" &&
+      selectedStatus.installed &&
+      selectedStatus.authenticated &&
+      selectedStatus.capabilities.headlessRun === true &&
+      selectedStatus.capabilities.readDiff === true;
+    if (!ready) {
+      return externalAgentFailureResult({
+        addEvent,
+        addLog,
+        error: selectedStatus?.summary ?? `${adapterLabel} readiness could not be verified.`,
+        events,
+        logs,
+        projectPath,
+        runId,
+        stage: "brief"
+      });
+    }
+  }
+
   const checkpoint = await createFileCopyCheckpoint({
     projectRoot: projectPath,
     runId
   });
   addEvent("brief", "succeeded", "External agent checkpoint created.", "checkpoint-created", {
     checkpointId: checkpoint.id,
-    nextAction: "Run generic command"
+    nextAction: `Run ${adapterLabel}`
   });
 
   if (options.signal?.aborted) {
@@ -2276,17 +2376,65 @@ export async function runDesktopExternalAgent(
   }
 
   const runDirectory = path.join(projectPath, ".htmlslide", "runs", runId);
-  const promptFile = path.join(runDirectory, "prompt.md");
   const writeManifest = path.join(runDirectory, "writes.json");
-  await fs.mkdir(runDirectory, { recursive: true });
-  await fs.writeFile(promptFile, externalAgentPrompt({
-    brief: brief.length > 0 ? brief : "Create or revise this HTMLslide deck.",
-    projectPath,
-    writeManifest
-  }), "utf8");
-  await fs.writeFile(writeManifest, `${JSON.stringify({ writes: [] }, null, 2)}\n`, "utf8");
+  const builtIn = selectedAgentId !== "generic";
+  let builtInWorkspace: string | undefined;
+  if (builtIn) {
+    const candidate = await fs.mkdtemp(path.join(os.tmpdir(), "htmlslide-agent-workspace-"));
+    try {
+      await copyBuiltInAgentWorkspace(projectPath, candidate);
+      await createFileCopyCheckpoint({
+        projectRoot: candidate,
+        runId
+      });
+      builtInWorkspace = candidate;
+    } catch (error) {
+      await cleanupBuiltInAgentWorkspace(candidate);
+      return externalAgentFailureResult({
+        addEvent,
+        addLog,
+        error: error instanceof Error ? error.message : String(error),
+        events,
+        logs,
+        projectPath,
+        runId,
+        stage: "brief"
+      });
+    }
+  }
+  const agentProjectPath = builtInWorkspace ?? projectPath;
+  const promptFile = builtIn
+    ? path.join(agentProjectPath, ".htmlslide-task.md")
+    : path.join(runDirectory, "prompt.md");
+
+  if (builtInWorkspace === undefined) {
+    await fs.mkdir(runDirectory, { recursive: true });
+  }
+  try {
+    await fs.writeFile(promptFile, externalAgentPrompt({
+      brief: brief.length > 0 ? brief : "Create or revise this HTMLslide deck.",
+      projectPath: agentProjectPath,
+      writeManifest: selectedAgentId === "generic" ? writeManifest : undefined
+    }), "utf8");
+    if (!builtIn) {
+      await fs.writeFile(writeManifest, `${JSON.stringify({ writes: [] }, null, 2)}\n`, "utf8");
+    }
+  } catch (error) {
+    await cleanupBuiltInAgentWorkspace(builtInWorkspace);
+    return externalAgentFailureResult({
+      addEvent,
+      addLog,
+      error: error instanceof Error ? error.message : String(error),
+      events,
+      logs,
+      projectPath,
+      runId,
+      stage: "brief"
+    });
+  }
 
   if (options.signal?.aborted) {
+    await cleanupBuiltInAgentWorkspace(builtInWorkspace);
     return externalAgentCancellationResult({
       addEvent,
       addLog,
@@ -2299,23 +2447,33 @@ export async function runDesktopExternalAgent(
     });
   }
 
-  const adapterConfig: GenericAgentAdapterConfig = {
-    id: "generic-command",
-    label: "Generic command",
-    kind: "generic",
-    commandTemplate,
-    capabilities: createCapabilitySet(["headlessRun", "streamLogs", "cancelRun", "readDiff"]),
-    pathVariables: ["projectRoot", "projectPath", "promptFile", "writeManifest"],
-    timeoutMs: options.timeoutMs ?? 120_000
-  };
-
-  addEvent("build", "running", "Running Generic command external agent.", "stage-started", {
-    nextAction: "Wait for reported writes"
+  addEvent("build", "running", `Running ${adapterLabel} external agent.`, "stage-started", {
+    nextAction: "Wait for source changes"
   });
 
   const outputBuffer = createDesktopExternalAgentOutputBuffer(addLog);
-  const adapter = sanitizeAgentAdapterRunResult(
-    await runGenericAgentAdapter({
+  const onOutput = (chunk: { stream: "stdout" | "stderr"; text: string }): void => {
+    if (builtIn) {
+      outputBuffer.push(
+        chunk.stream,
+        `${adapterLabel} emitted a ${chunk.stream === "stdout" ? "progress" : "diagnostic"} event.\n`
+      );
+      return;
+    }
+    outputBuffer.push(chunk.stream, chunk.text);
+  };
+  let rawAdapter: AgentAdapterRunResult;
+  if (selectedAgentId === "generic") {
+    const adapterConfig: GenericAgentAdapterConfig = {
+      id: "generic-command",
+      label: adapterLabel,
+      kind: "generic",
+      commandTemplate,
+      capabilities: createCapabilitySet(["headlessRun", "streamLogs", "cancelRun", "readDiff"]),
+      pathVariables: ["projectRoot", "projectPath", "promptFile", "writeManifest"],
+      timeoutMs: options.timeoutMs ?? 120_000
+    };
+    rawAdapter = await runGenericAgentAdapter({
       adapter: adapterConfig,
       projectRoot: projectPath,
       promptFile,
@@ -2323,15 +2481,27 @@ export async function runDesktopExternalAgent(
         writeManifest
       },
       signal: options.signal,
-      onOutput: (chunk) => outputBuffer.push(chunk.stream, chunk.text),
+      onOutput,
       runner: options.agentRunner,
       timeoutMs: options.timeoutMs,
       readReportedFileWrites: () => readJsonFileWriteManifest(projectPath, writeManifest)
-    })
-  );
+    });
+  } else {
+    rawAdapter = await runBuiltInExternalAgentAdapter({
+      kind: selectedAgentId satisfies BuiltInExternalAgentKind,
+      projectRoot: agentProjectPath,
+      promptFile,
+      signal: options.signal,
+      onOutput,
+      runner: options.agentRunner,
+      timeoutMs: options.timeoutMs ?? 120_000
+    });
+  }
+  const adapter = sanitizeAgentAdapterRunResult(rawAdapter);
   outputBuffer.flush();
 
   if (!adapter.ok) {
+    await cleanupBuiltInAgentWorkspace(builtInWorkspace);
     const error = adapter.failure.detail ?? adapter.failure.message;
     addEvent("build", adapter.status === "cancelled" ? "cancelled" : "failed", adapter.failure.message, adapter.status === "cancelled" ? "run-cancelled" : "stage-failed", {
       nextAction: adapter.failure.remediation
@@ -2342,7 +2512,7 @@ export async function runDesktopExternalAgent(
 
     return {
       ok: false,
-      providerId: "external-generic",
+      providerId: "external-agent",
       projectPath,
       stages: summarizeAgentStages(events),
       events,
@@ -2353,21 +2523,97 @@ export async function runDesktopExternalAgent(
     };
   }
 
-  const filesChanged = adapter.reportedWrites.map((reportedWrite) => projectRelativeSourcePath(projectPath, reportedWrite));
-  if (options.signal?.aborted) {
-    return externalAgentCancellationResult({
-      addEvent,
-      addLog,
-      adapter,
-      events,
-      filesChanged,
-      logs,
-      projectPath,
-      runId,
-      signal: options.signal,
-      stage: "build"
-    });
+  if (builtInWorkspace !== undefined) {
+    try {
+      await assertBuiltInAgentWorkspaceHasNoSymlinks(builtInWorkspace);
+      const stagedDiff = await diffFileCopyCheckpoint({
+        projectRoot: builtInWorkspace,
+        runId
+      });
+      const liveProjectDiff = await diffFileCopyCheckpoint({ projectRoot: projectPath, runId });
+      const concurrentChanges = checkpointChangedPaths(liveProjectDiff);
+      if (concurrentChanges.length > 0) {
+        const error = `Project source changed while ${adapterLabel} was running; no agent changes were applied. Review external changes and retry.`;
+        addEvent("build", "failed", error, "stage-failed", {
+          filesChanged: concurrentChanges,
+          nextAction: "Review external changes and retry"
+        });
+        addLog("warning", error, "build", { filesChanged: concurrentChanges });
+        return {
+          ok: false,
+          providerId: "external-agent",
+          projectPath,
+          stages: summarizeAgentStages(events),
+          events,
+          logs,
+          adapter,
+          error,
+          summary: summarizeDesktopExternalAgentRun(runId, events, undefined, undefined, [])
+        };
+      }
+      try {
+        await assertRealProjectMatchesAgentBaseline(
+          projectPath,
+          stagedDiff,
+          new Map(liveProjectDiff.unchanged.map((file) => [file.path, file.currentDigest ?? file.digest]))
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        addEvent("build", "failed", message, "stage-failed", {
+          nextAction: "Review external changes and retry"
+        });
+        addLog("warning", message, "build");
+        return {
+          ok: false,
+          providerId: "external-agent",
+          projectPath,
+          stages: summarizeAgentStages(events),
+          events,
+          logs,
+          adapter,
+          error: message,
+          summary: summarizeDesktopExternalAgentRun(runId, events, undefined, undefined, [])
+        };
+      }
+      await applyBuiltInAgentWorkspaceDiff(projectPath, builtInWorkspace, stagedDiff);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const partialDiff = await diffFileCopyCheckpoint({ projectRoot: projectPath, runId });
+      const partialFilesChanged = checkpointChangedPaths(partialDiff);
+      if (partialFilesChanged.length > 0) {
+        await recordCheckpointChanges({
+          projectRoot: projectPath,
+          runId,
+          filesChanged: partialFilesChanged
+        });
+      }
+      const checkpointDiff = partialFilesChanged.length > 0
+        ? await diffFileCopyCheckpoint({ projectRoot: projectPath, runId })
+        : undefined;
+      addEvent("build", "failed", message, "stage-failed", {
+        ...(partialFilesChanged.length > 0 ? { filesChanged: partialFilesChanged } : {}),
+        nextAction: "Review agent output and retry"
+      });
+      addLog("error", message, "build");
+      return {
+        ok: false,
+        providerId: "external-agent",
+        projectPath,
+        stages: summarizeAgentStages(events),
+        events,
+        logs,
+        adapter,
+        ...(checkpointDiff ? { checkpointDiff } : {}),
+        error: message,
+        summary: summarizeDesktopExternalAgentRun(runId, events, undefined, undefined, partialFilesChanged)
+      };
+    } finally {
+      await cleanupBuiltInAgentWorkspace(builtInWorkspace);
+    }
   }
+
+  const initialCheckpointDiff = await diffFileCopyCheckpoint({ projectRoot: projectPath, runId });
+  const filesChanged = checkpointChangedPaths(initialCheckpointDiff);
   await recordCheckpointChanges({
     projectRoot: projectPath,
     runId,
@@ -2378,11 +2624,27 @@ export async function runDesktopExternalAgent(
     runId
   });
 
-  addEvent("build", "succeeded", `External agent reported ${filesChanged.length} source file writes.`, "stage-completed", {
+  if (options.signal?.aborted) {
+    return externalAgentCancellationResult({
+      addEvent,
+      addLog,
+      adapter,
+      checkpointDiff,
+      events,
+      filesChanged,
+      logs,
+      projectPath,
+      runId,
+      signal: options.signal,
+      stage: "build"
+    });
+  }
+
+  addEvent("build", "succeeded", `${adapterLabel} changed ${filesChanged.length} source files.`, "stage-completed", {
     filesChanged,
     nextAction: "Run htmlslide check"
   });
-  addLog("info", "Generic command completed.", "build", {
+  addLog("info", `${adapterLabel} completed.`, "build", {
     filesChanged
   });
 
@@ -2519,7 +2781,7 @@ export async function runDesktopExternalAgent(
 
   return {
     ok,
-    providerId: "external-generic",
+    providerId: "external-agent",
     projectPath,
     stages: summarizeAgentStages(events),
     events,
@@ -2729,7 +2991,7 @@ function externalAgentStatus({
     kind: id,
     label,
     status,
-    summary: collapseWhitespace(summary),
+    summary: sanitizeDesktopAgentText(collapseWhitespace(summary)),
     version
   };
 }
@@ -3781,11 +4043,12 @@ async function waitForDesktopAgentOperation<T>(
 }
 
 function sanitizeAgentAdapterRunResult(adapter: AgentAdapterRunResult): AgentAdapterRunResult {
+  const builtIn = adapter.adapter.kind === "claude-code" || adapter.adapter.kind === "codex-cli";
   if (adapter.ok) {
     return {
       ...adapter,
-      stderr: sanitizeDesktopAgentText(adapter.stderr),
-      stdout: sanitizeDesktopAgentText(adapter.stdout)
+      stderr: builtIn && adapter.stderr.length > 0 ? "[built-in diagnostic output omitted]" : sanitizeDesktopAgentText(adapter.stderr),
+      stdout: builtIn && adapter.stdout.length > 0 ? "[built-in structured output omitted]" : sanitizeDesktopAgentText(adapter.stdout)
     };
   }
 
@@ -3793,11 +4056,23 @@ function sanitizeAgentAdapterRunResult(adapter: AgentAdapterRunResult): AgentAda
     ...adapter,
     failure: {
       ...adapter.failure,
-      detail: adapter.failure.detail === undefined ? undefined : sanitizeDesktopAgentText(adapter.failure.detail),
+      detail: adapter.failure.detail === undefined
+        ? undefined
+        : builtIn
+          ? "Built-in agent diagnostic output omitted."
+          : sanitizeDesktopAgentText(adapter.failure.detail),
       message: sanitizeDesktopAgentText(adapter.failure.message)
     },
-    stderr: adapter.stderr === undefined ? undefined : sanitizeDesktopAgentText(adapter.stderr),
-    stdout: adapter.stdout === undefined ? undefined : sanitizeDesktopAgentText(adapter.stdout)
+    stderr: adapter.stderr === undefined
+      ? undefined
+      : builtIn && adapter.stderr.length > 0
+        ? "[built-in diagnostic output omitted]"
+        : sanitizeDesktopAgentText(adapter.stderr),
+    stdout: adapter.stdout === undefined
+      ? undefined
+      : builtIn && adapter.stdout.length > 0
+        ? "[built-in structured output omitted]"
+        : sanitizeDesktopAgentText(adapter.stdout)
   };
 }
 
@@ -3828,7 +4103,7 @@ function externalAgentFailureResult({
 
   return {
     ok: false,
-    providerId: "external-generic",
+    providerId: "external-agent",
     projectPath,
     stages: summarizeAgentStages(events),
     events,
@@ -3875,7 +4150,7 @@ function externalAgentCancellationResult({
 
   return {
     ok: false,
-    providerId: "external-generic",
+    providerId: "external-agent",
     projectPath,
     stages: summarizeAgentStages(events),
     events,
@@ -4343,9 +4618,9 @@ function externalAgentPrompt({
 }: {
   brief: string;
   projectPath: string;
-  writeManifest: string;
+  writeManifest?: string;
 }): string {
-  return [
+  const lines = [
     "# HTMLslide External Agent Task",
     "",
     `Project root: ${projectPath}`,
@@ -4355,26 +4630,228 @@ function externalAgentPrompt({
     "",
     "## Required boundaries",
     "- Edit only deck source files: deck.json, slides/, notes/, theme/, or assets/.",
-    "- Do not edit exports/ or .htmlslide/ except for the write manifest below.",
+    writeManifest === undefined
+      ? "- Do not edit exports/ or .htmlslide/."
+      : "- Do not edit exports/ or .htmlslide/ except for the write manifest below.",
     "- Keep slide content as fixed 16:9 HTML fragments; do not add responsive reflow.",
     "- Preserve project-relative paths in deck.json.",
-    "",
-    "## Write manifest",
-    `After editing, write JSON to: ${writeManifest}`,
-    "",
-    "Use either of these shapes:",
-    "",
-    "```json",
-    "{ \"writes\": [\"slides/001-title.html\", \"notes/001-title.md\"] }",
-    "```",
-    "",
-    "or:",
-    "",
-    "```json",
-    "[\"slides/001-title.html\", \"notes/001-title.md\"]",
-    "```",
     ""
-  ].join("\n");
+  ];
+
+  if (writeManifest !== undefined) {
+    lines.push(
+      "## Write manifest",
+      `After editing, write JSON to: ${writeManifest}`,
+      "",
+      "Use either of these shapes:",
+      "",
+      "```json",
+      "{ \"writes\": [\"slides/001-title.html\", \"notes/001-title.md\"] }",
+      "```",
+      "",
+      "or:",
+      "",
+      "```json",
+      "[\"slides/001-title.html\", \"notes/001-title.md\"]",
+      "```",
+      ""
+    );
+  }
+
+  return lines.join("\n");
+}
+
+const builtInAgentWorkspaceEntries = [
+  "deck.json",
+  "slides",
+  "notes",
+  "theme",
+  "assets",
+  "AGENTS.md",
+  "CLAUDE.md",
+  "README.md",
+  "skills",
+  ".agents",
+  ".claude"
+] as const;
+
+async function copyBuiltInAgentWorkspace(projectPath: string, workspacePath: string): Promise<void> {
+  for (const entry of builtInAgentWorkspaceEntries) {
+    await copyBuiltInAgentWorkspaceEntry(
+      path.join(projectPath, entry),
+      path.join(workspacePath, entry),
+      entry === "deck.json"
+    );
+  }
+}
+
+async function copyBuiltInAgentWorkspaceEntry(
+  sourcePath: string,
+  destinationPath: string,
+  required = false
+): Promise<void> {
+  let stat;
+  try {
+    stat = await fs.lstat(sourcePath);
+  } catch (error) {
+    if (!required && (error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+
+  if (stat.isSymbolicLink()) {
+    throw new Error(`Built-in external agent workspaces do not follow symlinks: ${sourcePath}`);
+  }
+
+  if (stat.isDirectory()) {
+    await fs.mkdir(destinationPath, { recursive: true });
+    const entries = await fs.readdir(sourcePath, { withFileTypes: true });
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      await copyBuiltInAgentWorkspaceEntry(
+        path.join(sourcePath, entry.name),
+        path.join(destinationPath, entry.name)
+      );
+    }
+    return;
+  }
+
+  if (!stat.isFile()) {
+    throw new Error(`Built-in external agent workspaces accept only regular files: ${sourcePath}`);
+  }
+
+  await fs.mkdir(path.dirname(destinationPath), { recursive: true });
+  await fs.copyFile(sourcePath, destinationPath);
+}
+
+async function applyBuiltInAgentWorkspaceDiff(
+  projectPath: string,
+  workspacePath: string,
+  diff: FileCopyCheckpointDiff
+): Promise<void> {
+  for (const file of [...diff.changed, ...diff.added]) {
+    const sourcePath = resolveBuiltInAgentSourcePath(workspacePath, file.path);
+    const destinationPath = resolveBuiltInAgentSourcePath(projectPath, file.path);
+    await assertNoSymlinkPathComponents(workspacePath, file.path);
+    const stat = await fs.lstat(sourcePath);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new Error(`Built-in external agent produced a non-regular source file: ${file.path}`);
+    }
+    await fs.mkdir(path.dirname(destinationPath), { recursive: true });
+    await fs.copyFile(sourcePath, destinationPath);
+  }
+
+  for (const file of diff.deleted) {
+    await fs.rm(resolveBuiltInAgentSourcePath(projectPath, file.path), { force: true });
+  }
+}
+
+async function assertBuiltInAgentWorkspaceHasNoSymlinks(workspacePath: string): Promise<void> {
+  for (const entry of ["deck.json", "slides", "notes", "theme", "assets"] as const) {
+    await assertWorkspaceEntryHasNoSymlinks(path.join(workspacePath, entry));
+  }
+}
+
+async function assertWorkspaceEntryHasNoSymlinks(entryPath: string): Promise<void> {
+  let stat;
+  try {
+    stat = await fs.lstat(entryPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+
+  if (stat.isSymbolicLink()) {
+    throw new Error(`Built-in external agent produced a symlinked source path: ${entryPath}`);
+  }
+  if (!stat.isDirectory()) {
+    return;
+  }
+
+  const entries = await fs.readdir(entryPath);
+  for (const child of entries.sort((left, right) => left.localeCompare(right))) {
+    await assertWorkspaceEntryHasNoSymlinks(path.join(entryPath, child));
+  }
+}
+
+async function assertRealProjectMatchesAgentBaseline(
+  projectPath: string,
+  diff: FileCopyCheckpointDiff,
+  baselineDigests: ReadonlyMap<string, string | undefined>
+): Promise<void> {
+  for (const file of [...diff.changed, ...diff.added, ...diff.deleted]) {
+    await assertRealSourceDigest(projectPath, file.path, baselineDigests.get(file.path));
+  }
+}
+
+async function assertRealSourceDigest(
+  projectPath: string,
+  relativePath: string,
+  expectedDigest: string | undefined
+): Promise<void> {
+  await assertNoSymlinkPathComponents(projectPath, relativePath);
+  const absolutePath = resolveBuiltInAgentSourcePath(projectPath, relativePath);
+  let actualDigest: string | undefined;
+  try {
+    const stat = await fs.lstat(absolutePath);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new Error(`Project source is no longer a regular file: ${relativePath}`);
+    }
+    actualDigest = createHash("sha256").update(await fs.readFile(absolutePath)).digest("hex");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  if (actualDigest !== expectedDigest) {
+    throw new Error(`Project source changed during the external agent run: ${relativePath}`);
+  }
+}
+
+async function assertNoSymlinkPathComponents(rootPath: string, relativePath: string): Promise<void> {
+  const parts = relativePath.split("/").filter(Boolean);
+  let current = path.resolve(rootPath);
+  for (const part of parts) {
+    current = path.join(current, part);
+    try {
+      const stat = await fs.lstat(current);
+      if (stat.isSymbolicLink()) {
+        throw new Error(`External agent source path contains a symlink: ${relativePath}`);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return;
+      }
+      throw error;
+    }
+  }
+}
+
+function checkpointChangedPaths(diff: FileCopyCheckpointDiff): string[] {
+  return uniqueStrings([
+    ...diff.changed.map((file) => file.path),
+    ...diff.added.map((file) => file.path),
+    ...diff.deleted.map((file) => file.path)
+  ]).sort((left, right) => left.localeCompare(right));
+}
+
+function resolveBuiltInAgentSourcePath(projectPath: string, relativePath: string): string {
+  const root = path.resolve(projectPath);
+  const resolved = path.resolve(root, relativePath);
+  const relative = path.relative(root, resolved);
+  if (relative.length === 0 || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`Built-in external agent source path escapes the workspace: ${relativePath}`);
+  }
+  return resolved;
+}
+
+async function cleanupBuiltInAgentWorkspace(workspacePath: string | undefined): Promise<void> {
+  if (workspacePath !== undefined) {
+    await fs.rm(workspacePath, { recursive: true, force: true });
+  }
 }
 
 function normalizeExternalAgentRunId(runId: string | undefined): string {
@@ -4386,14 +4863,6 @@ function normalizeDesktopAgentRunId(runId: string | undefined, fallbackPrefix = 
   const raw = typeof runId === "string" && runId.trim().length > 0 ? runId.trim() : fallback;
   const normalized = raw.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 96);
   return normalized.length > 0 && normalized !== "." && normalized !== ".." ? normalized : fallback;
-}
-
-function projectRelativeSourcePath(projectPath: string, filePath: string): string {
-  const relativePath = path.relative(path.resolve(projectPath), path.resolve(filePath)).split(path.sep).join(path.posix.sep);
-  if (relativePath.length === 0 || relativePath.startsWith("../") || path.posix.isAbsolute(relativePath)) {
-    throw new Error(`Reported write is outside the project: ${filePath}`);
-  }
-  return relativePath;
 }
 
 function checkIssueCount(check: CliRunResult): number {

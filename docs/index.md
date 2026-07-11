@@ -17,9 +17,9 @@ This is the public alpha documentation for HTMLslide.
 - [No AI](getting-started.md#no-ai-path)
 - [BYOK](byok.md)
 - [External agents](ai-engines.md#external-agent-mode)
-- [Connect Claude Code](connect-claude-code.md)
-- [Connect Codex](connect-codex.md)
-- [Connect Gemini CLI](connect-gemini.md)
+- [Built-in Claude Code adapter](connect-claude-code.md)
+- [Built-in Codex CLI adapter](connect-codex.md)
+- [Gemini CLI detection](connect-gemini.md)
 
 ## Product Surfaces
 

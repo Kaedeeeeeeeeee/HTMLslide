@@ -386,13 +386,28 @@ async function writeReadyCodexCli(commandPath: string): Promise<void> {
   await writeFile(
     commandPath,
     `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
 const args = process.argv.slice(2);
 if (args.includes("--version")) {
   console.log("codex 9.9.9");
   process.exit(0);
 }
-if (args[0] === "auth" && args[1] === "status") {
+if (args[0] === "login" && args[1] === "status") {
   console.log("authenticated");
+  process.exit(0);
+}
+if (args[0] === "exec" && args[1] === "--help") {
+  console.log("--sandbox --ephemeral --ignore-user-config --skip-git-repo-check --json");
+  process.exit(0);
+}
+if (args[0] === "exec") {
+  const slideFile = path.join(process.cwd(), "slides", "001-title.html");
+  fs.writeFileSync(
+    slideFile,
+    '<section class="slide title-slide" data-slide-id="001-title"><p class="eyebrow">Built-in Codex adapter</p><h1>Codex E2E complete</h1><p class="subtitle">Checkpoint, check, export, and diff review completed.</p></section>\\n'
+  );
+  console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "Codex edit complete" } }));
   process.exit(0);
 }
 console.error("unexpected codex e2e invocation: " + args.join(" "));
@@ -986,7 +1001,7 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(diffReview.getByText("Files changed")).toBeVisible();
     await expect(diffReview.locator(".agent-diff-file-list").filter({ hasText: "Files changed" }).getByText("slides/001-title.html")).toBeVisible();
     await expect(diffReview.locator(".agent-text-diff__title").getByText("slides/001-title.html")).toBeVisible();
-    const buildStage = page.locator(".agent-stage").filter({ hasText: "External agent reported 1 source file writes." });
+    const buildStage = page.locator(".agent-stage").filter({ hasText: "Generic command changed 1 source files." });
     await buildStage.getByText("Logs").click();
     await expect(buildStage.getByText("generic external agent wrote slides/001-title.html")).toBeVisible();
     await expect(buildStage.getByText("generic external agent manifest recorded")).toBeVisible();
@@ -1231,7 +1246,7 @@ test.describe("HTMLslide desktop smoke", () => {
     expect(browserErrors).toEqual([]);
   });
 
-  test("keeps detected Codex CLI scoped to manual validation in the new deck wizard", async () => {
+  test("runs a detected Codex CLI through the built-in adapter from the new deck wizard", async () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
     const homeDir = path.join(tempRoot, "home");
     const userDataDir = path.join(tempRoot, "user-data");
@@ -1270,21 +1285,51 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(codexAgentButton).toContainText("ready", { timeout: 30_000 });
     await codexAgentButton.click();
     const connectionGuide = page.getByRole("region", { name: "External agent connection guide" });
-    await expect(connectionGuide).toContainText("Detected for manual validation");
-    await expect(connectionGuide).toContainText("direct headless deck editing is not enabled");
+    await expect(connectionGuide).toContainText("Ready for HTMLslide runs");
+    await expect(connectionGuide).toContainText("Built-in agents are user-authorized local tools");
 
     await page.getByRole("button", { name: "Recent", exact: true }).click();
     await page.locator(".library-main").getByRole("button", { name: "New Deck", exact: true }).first().click();
-    const newDeckPanel = page.locator(".new-deck-panel");
-    await expect(newDeckPanel).toBeVisible();
-    await newDeckPanel.getByLabel("Deck title").fill("Codex Manual Validation Demo");
-    await newDeckPanel.getByLabel("Brief").fill("This should not run through Codex until a tested template exists.");
+    let newDeckPanel = page.locator(".new-deck-panel");
+    await newDeckPanel.getByLabel("Deck title").fill("Unsaved Agent Mode");
+    await newDeckPanel.getByLabel("Brief").fill("This must remain blocked until Coding Agent mode is saved.");
     await newDeckPanel.getByRole("button", { name: /Coding Agent/ }).click();
-    await expect(newDeckPanel.getByText("Codex CLI is detected for manual validation.")).toBeVisible();
     await expect(newDeckPanel.getByRole("alert")).toHaveText(
-      "Configure a ready Generic command in AI Engines before using Coding Agent generation."
+      "Connect an authenticated Claude Code or Codex CLI, or configure a ready Generic command, before using Coding Agent generation."
     );
     await expect(newDeckPanel.getByRole("button", { name: "Create & Generate", exact: true })).toBeDisabled();
+    await newDeckPanel.getByRole("button", { name: "Cancel", exact: true }).click();
+
+    await page.getByRole("button", { name: "AI Engines", exact: true }).click();
+    await page.locator(".ai-settings__modes").getByRole("button", { name: /Coding Agent/ }).click();
+    await page.locator(".external-agent-list").getByRole("button", { name: /Codex CLI/ }).click();
+    await page.getByRole("button", { name: "Save Selection", exact: true }).click();
+    await expect(page.getByText("AI engine settings saved", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Recent", exact: true }).click();
+    await page.locator(".library-main").getByRole("button", { name: "New Deck", exact: true }).first().click();
+    newDeckPanel = page.locator(".new-deck-panel");
+    await expect(newDeckPanel).toBeVisible();
+    await newDeckPanel.getByLabel("Deck title").fill("Codex Built In Demo");
+    await newDeckPanel.getByLabel("Brief").fill("Run the tested built-in Codex adapter and revise the title slide.");
+    await newDeckPanel.getByRole("button", { name: /Coding Agent/ }).click();
+    await expect(newDeckPanel.getByText("Codex CLI is ready for New Deck and existing workspace runs.")).toBeVisible();
+    await newDeckPanel.getByRole("button", { name: "Create & Generate", exact: true }).click();
+    await expect(page.getByText("External agent completed check and export", { exact: true })).toBeVisible({
+      timeout: 30_000
+    });
+    await expect(page.getByRole("heading", { name: "Review changes", exact: true })).toBeVisible();
+    const projectPath = path.join(workspaceDir, "codex-built-in-demo");
+    await expect(readFile(path.join(projectPath, "slides", "001-title.html"), "utf8")).resolves.toContain(
+      "Codex E2E complete"
+    );
+    page.once("dialog", async (dialog) => {
+      await dialog.accept();
+    });
+    await page.getByRole("button", { name: "Revert changes", exact: true }).click();
+    await expect(page.getByText("Checkpoint reverted", { exact: true })).toBeVisible({ timeout: 30_000 });
+    const revertedSource = await readFile(path.join(projectPath, "slides", "001-title.html"), "utf8");
+    expect(revertedSource).not.toContain("Codex E2E complete");
 
     await expectNoFrameworkOverlay(page);
     expect(browserErrors).toEqual([]);

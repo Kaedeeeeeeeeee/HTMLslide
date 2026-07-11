@@ -286,7 +286,8 @@ function RecentProjects({
   const [draft, setDraft] = useState<NewDeckDraft>(() => createDefaultNewDeckDraft());
   const [folderEdited, setFolderEdited] = useState(false);
   const selectedExternalStatus = selectedExternalAgentStatus(aiEngineSettings, externalAgentStatuses);
-  const selectedExternalRunnable = isExternalAgentRunnableByHtmlslide(selectedExternalStatus);
+  const selectedExternalRunnable =
+    aiEngineSettings.mode === "external-agent" && isExternalAgentRunnableByHtmlslide(selectedExternalStatus);
   const validationMessage = validateNewDeckDraft(draft, {
     hasApiKey: aiEngineSettings.apiKey.hasKey,
     selectedExternalReady: selectedExternalRunnable
@@ -788,7 +789,7 @@ function validateNewDeckDraft(
   if (draft.generationMode === "external-agent") {
     return options.selectedExternalReady
       ? undefined
-      : "Configure a ready Generic command in AI Engines before using Coding Agent generation.";
+      : "Connect an authenticated Claude Code or Codex CLI, or configure a ready Generic command, before using Coding Agent generation.";
   }
 
   if (draft.outputs.length === 0) {
@@ -880,7 +881,7 @@ function externalAgentDeckCreationDetail(
   }
 
   if (selectedExternalStatus.status === "ready") {
-    return `${selectedExternalStatus.label} is detected for manual validation. Configure Generic command mode before HTMLslide can run external generation.`;
+    return `${selectedExternalStatus.label} is detected, but this build does not expose the capabilities required for HTMLslide generation.`;
   }
 
   return `${selectedExternalStatus.label} is ${selectedExternalStatus.status.replace("-", " ")}. Refresh or configure it in AI Engines.`;

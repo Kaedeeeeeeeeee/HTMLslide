@@ -183,6 +183,7 @@ describe("AI engine settings model", () => {
     });
     expect(status.capabilities.headlessRun).toBe(true);
     expect(status.capabilities.readDiff).toBe(true);
+    expect(status.capabilities.cancelRun).toBe(true);
   });
 
   it("builds readiness guidance for a configured Generic command", () => {
@@ -207,30 +208,131 @@ describe("AI engine settings model", () => {
     expect(readiness.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ label: "HTMLslide run", tone: "success", value: "Enabled" }),
-        expect.objectContaining({ label: "Diff review", tone: "success", value: "Enabled" })
+        expect.objectContaining({ label: "Diff review", tone: "success", value: "Enabled" }),
+        expect.objectContaining({ label: "Permissions", value: "User-defined command" }),
+        expect.objectContaining({ label: "Cancel", tone: "success", value: "Enabled" })
       ])
     );
   });
 
-  it("keeps detected Codex readiness scoped to manual validation until templates exist", () => {
+  it.each([
+    ["claude-code", "Claude Code"],
+    ["codex-cli", "Codex CLI"]
+  ] as const)("marks a capable authenticated %s installation as built-in ready", (id, label) => {
+    const baseStatus = createDefaultExternalAgentStatuses().find((item) => item.id === id)!;
     const status = {
-      ...createDefaultExternalAgentStatuses().find((item) => item.id === "codex-cli")!,
+      ...baseStatus,
       authenticated: true,
-      checkedAt: "2026-07-09T00:13:00.000Z",
+      capabilities: {
+        ...baseStatus.capabilities,
+        cancelRun: true,
+        headlessRun: true,
+        readDiff: true
+      },
+      checkedAt: "2026-07-11T00:13:00.000Z",
       installed: true,
       status: "ready" as const,
       summary: "Detected and authenticated",
-      version: "codex 1.2.3"
+      version: `${baseStatus.command} 1.2.3`
+    };
+    const readiness = buildExternalAgentReadiness(status);
+
+    expect(isExternalAgentRunnableByHtmlslide(status)).toBe(true);
+    expect(readiness.title).toBe("Ready for HTMLslide runs");
+    expect(readiness.detail).toContain(`built-in ${label} adapter`);
+    expect(readiness.detail).toContain("keep a checkpoint");
+    expect(readiness.nextStep).toContain("review the checkpoint diff");
+    expect(readiness.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "Auth", tone: "success", value: "Authenticated" }),
+        expect.objectContaining({ label: "HTMLslide run", tone: "success", value: "Enabled" }),
+        expect.objectContaining({ label: "Diff review", tone: "success", value: "Enabled" }),
+        expect.objectContaining({
+          label: "Permissions",
+          value: id === "claude-code" ? "Read/write tools only" : "Isolated workspace-write"
+        }),
+        expect.objectContaining({ label: "Cancel", tone: "success", value: "Enabled" })
+      ])
+    );
+  });
+
+  it("requires both built-in run capabilities", () => {
+    const baseStatus = createDefaultExternalAgentStatuses().find((item) => item.id === "codex-cli")!;
+    const status = {
+      ...baseStatus,
+      authenticated: true,
+      capabilities: {
+        ...baseStatus.capabilities,
+        headlessRun: true,
+        readDiff: false
+      },
+      installed: true,
+      status: "ready" as const
+    };
+    const readiness = buildExternalAgentReadiness(status);
+
+    expect(isExternalAgentRunnableByHtmlslide(status)).toBe(false);
+    expect(readiness.title).toBe("Built-in run unavailable");
+    expect(readiness.detail).toContain("did not report both headless run and diff review capabilities");
+    expect(readiness.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "HTMLslide run", tone: "warning", value: "Unavailable" }),
+        expect.objectContaining({ label: "Diff review", tone: "neutral", value: "Not enabled" })
+      ])
+    );
+  });
+
+  it("requires built-in agents to be installed and authenticated", () => {
+    const baseStatus = createDefaultExternalAgentStatuses().find((item) => item.id === "claude-code")!;
+    const capableStatus = {
+      ...baseStatus,
+      capabilities: {
+        ...baseStatus.capabilities,
+        headlessRun: true,
+        readDiff: true
+      }
+    };
+    const notInstalled = {
+      ...capableStatus,
+      authenticated: false,
+      installed: false,
+      status: "not-installed" as const
+    };
+    const notAuthenticated = {
+      ...capableStatus,
+      authenticated: false,
+      installed: true,
+      status: "not-authenticated" as const
+    };
+
+    expect(isExternalAgentRunnableByHtmlslide(notInstalled)).toBe(false);
+    expect(buildExternalAgentReadiness(notInstalled).title).toBe("Install required");
+    expect(isExternalAgentRunnableByHtmlslide(notAuthenticated)).toBe(false);
+    expect(buildExternalAgentReadiness(notAuthenticated).title).toBe("Login required");
+  });
+
+  it("keeps Gemini detection-only even if detection reports run capabilities", () => {
+    const baseStatus = createDefaultExternalAgentStatuses().find((item) => item.id === "gemini-cli")!;
+    const status = {
+      ...baseStatus,
+      authenticated: true,
+      capabilities: {
+        ...baseStatus.capabilities,
+        headlessRun: true,
+        readDiff: true
+      },
+      installed: true,
+      status: "ready" as const,
+      version: "gemini 1.2.3"
     };
     const readiness = buildExternalAgentReadiness(status);
 
     expect(isExternalAgentRunnableByHtmlslide(status)).toBe(false);
     expect(readiness.title).toBe("Detected for manual validation");
-    expect(readiness.detail).toContain("direct headless deck editing is not enabled");
-    expect(readiness.nextStep).toContain("configure Generic command mode");
+    expect(readiness.detail).toContain("Gemini CLI remains detection-only");
+    expect(readiness.nextStep).toContain("Claude Code, Codex CLI, or a configured Generic command");
     expect(readiness.items).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ label: "Auth", tone: "success", value: "Authenticated" }),
         expect.objectContaining({ label: "HTMLslide run", tone: "warning", value: "Detection only" }),
         expect.objectContaining({ label: "Diff review", tone: "neutral", value: "Not enabled" })
       ])

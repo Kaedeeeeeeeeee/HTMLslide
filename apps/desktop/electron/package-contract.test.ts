@@ -65,6 +65,9 @@ describe("macOS alpha packaging contract", () => {
     expect(packageScript).toContain("symlink(\"/Applications\"");
     expect(packageScript).toContain("writeDeckPackageDocumentTypes");
     expect(packageScript).toContain("codesign\", [\"--force\", \"--deep\", \"--sign\", \"-\"");
+    expect(packageScript).toContain("assertNoBrokenSymlinks(cliRuntimePath)");
+    expect(packageScript).toContain("Packaged runtime contains a broken symlink");
+    expect(packageScript.split('codesign", ["--verify", "--deep", "--strict"').length - 1).toBe(2);
     expect(packageScript).toContain("APPLE_DEVELOPER_ID_APPLICATION");
     expect(packageScript).toContain("notarytool");
     expect(packageScript).toContain("stapler");
@@ -160,12 +163,13 @@ describe("macOS alpha packaging contract", () => {
     const publicTestingDocs = await readText("docs/testing.md");
     const releaseNotesScript = await readText("scripts/release/create-release-notes.mjs");
 
-    expect(checklistScript).toContain("Validate Real Claude/Codex/Gemini Claim");
-    expect(checklistScript).toContain("detection/manual validation");
-    expect(checklistScript).toContain("sanitized prompt/command");
-    expect(checklistScript).toContain("source-write manifest");
-    expect(publicTestingDocs).toContain("real Claude/Codex/Gemini claim validation or explicit no-claim N/A");
-    expect(releaseNotesScript).toContain("real Claude/Codex/Gemini claim validation or explicit no-claim N/A");
+    expect(checklistScript).toContain("Validate Real Claude/Codex Compatibility And Gemini Boundary");
+    expect(checklistScript).toContain("sanitized task/command");
+    expect(checklistScript).toContain("source-write manifest validation");
+    expect(checklistScript).toContain("Gemini CLI remains detection-only");
+    expect(publicTestingDocs).toContain("real Claude/Codex claim validation or explicit no-claim N/A");
+    expect(publicTestingDocs).toContain("Gemini detection-only status");
+    expect(releaseNotesScript).toContain("real Claude/Codex compatibility validation or explicit no-claim N/A");
   });
 
   it("keeps the signed release workflow gated, notarized, and release-publishing", async () => {

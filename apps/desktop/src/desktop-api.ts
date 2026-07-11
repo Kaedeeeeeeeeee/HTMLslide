@@ -286,7 +286,7 @@ export type DesktopExternalAgentRunSummary = {
 
 export type DesktopExternalAgentRunResult = {
   ok: boolean;
-  providerId: "external-generic";
+  providerId: "external-agent";
   projectPath: string;
   stages: DesktopMockAgentStageSummary[];
   events: AgentRunEvent[];

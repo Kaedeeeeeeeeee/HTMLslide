@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -48,6 +48,7 @@ import {
   type DesktopCliRunner,
   type DesktopAiEngineSettings,
   type DesktopExternalAgentId,
+  type DesktopExternalAgentStatus,
   type DesktopCredentialStore,
   type DesktopAgentRunReport,
   type DesktopProjectRecord
@@ -167,6 +168,29 @@ function externalAgentSettings(commandTemplate: string, selectedId: DesktopExter
     },
     mode: "external-agent",
     version: 1
+  };
+}
+
+function readyExternalAgentStatus(
+  id: Extract<DesktopExternalAgentId, "claude-code" | "codex-cli">
+): DesktopExternalAgentStatus {
+  return {
+    authenticated: true,
+    capabilities: {
+      cancelRun: true,
+      headlessRun: true,
+      readDiff: true,
+      streamLogs: true
+    },
+    checkedAt: "2026-07-11T00:00:00.000Z",
+    command: id === "claude-code" ? "claude" : "codex",
+    id,
+    installed: true,
+    kind: id,
+    label: id === "claude-code" ? "Claude Code" : "Codex CLI",
+    status: "ready",
+    summary: "Detected, authenticated, and headless contract verified",
+    version: "9.9.9"
   };
 }
 
@@ -2259,8 +2283,10 @@ const promptFile = requireArg(args, "--prompt-file");
 const manifestFile = requireArg(args, "--writes-manifest");
 const slideFile = path.join(projectRoot, "slides", "001-title.html");
 const leakedKey = "sk-" + "external-secret123456";
+const githubToken = "github_pat_1234567890abcdefghijklmnop";
 console.log("external stream started");
 console.log("api_key=" + leakedKey);
+console.log(githubToken);
 fs.readFileSync(promptFile, "utf8");
 fs.writeFileSync(slideFile, '<section class="slide" data-slide-id="001-title"><h1>Edited externally</h1><ul><li>External point</li></ul></section>\\n');
 fs.writeFileSync(manifestFile, JSON.stringify({ writes: ["slides/001-title.html"] }));
@@ -2342,9 +2368,10 @@ function requireArg(args, name) {
     );
 
     expect(result.ok).toBe(true);
-    expect(result.providerId).toBe("external-generic");
+    expect(result.providerId).toBe("external-agent");
     expect(result.adapter?.ok).toBe(true);
     expect(JSON.stringify(result)).not.toContain("sk-external-secret123456");
+    expect(JSON.stringify(result)).not.toContain("github_pat_1234567890abcdefghijklmnop");
     if (result.adapter?.ok === true) {
       expect(result.adapter.stdout).toContain("api_key=[redacted]");
       expect(result.adapter.stderr).toContain("Bearer [redacted]");
@@ -2455,6 +2482,260 @@ function requireArg(args, name) {
     expect(JSON.stringify(result)).not.toContain("sk-external-observer-secret123456");
   });
 
+  it.each([
+    { selectedId: "claude-code" as const, command: "claude", expectedArg: "--print" },
+    { selectedId: "codex-cli" as const, command: "codex", expectedArg: "workspace-write" }
+  ])("runs the built-in $selectedId adapter through checkpoint, check, export, and diff", async ({
+    command,
+    expectedArg,
+    selectedId
+  }) => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    await writeFile(path.join(projectPath, "README.md"), "Real project guidance.\n", "utf8");
+    const cliCalls: string[][] = [];
+    const agentInvocations: Array<{ command: string; args: readonly string[]; cwd: string }> = [];
+    let taskPrompt = "";
+
+    const result = await runDesktopExternalAgent(
+      {
+        brief: `Edit this deck with ${selectedId}.`,
+        projectPath,
+        runId: `run-${selectedId}`
+      },
+      {
+        cliRuntime: {
+          cliPath: "/fake/htmlslide.js",
+          cwd: "/fake",
+          mode: "development",
+          rootPath: "/fake"
+        },
+        externalAgentStatuses: [readyExternalAgentStatus(selectedId)],
+        agentRunner: async (invocation) => {
+          agentInvocations.push({
+            command: invocation.command,
+            args: invocation.args,
+            cwd: invocation.cwd
+          });
+          const promptArgument = invocation.args.at(-1) ?? "";
+          const promptPath = /instructions in (.+?\.md)\./u.exec(promptArgument)?.[1];
+          if (promptPath === undefined) {
+            throw new Error(`Built-in adapter prompt did not reference a task file: ${promptArgument}`);
+          }
+          taskPrompt = await readFile(promptPath, "utf8");
+          await writeFile(
+            path.join(invocation.cwd, "slides", "001-title.html"),
+            `<section class="slide" data-slide-id="001-title"><h1>Edited by ${selectedId}</h1></section>\n`,
+            "utf8"
+          );
+          await writeFile(path.join(invocation.cwd, "README.md"), "Unexpected guidance edit.\n", "utf8");
+          await mkdir(path.join(invocation.cwd, "exports"), { recursive: true });
+          await writeFile(path.join(invocation.cwd, "exports", "unexpected.txt"), "discard me\n", "utf8");
+          invocation.onOutput?.({
+            stream: "stdout",
+            text: `${selectedId} edit complete github_pat_1234567890abcdefghijklmnop\n`
+          });
+          return {
+            exitCode: 0,
+            stdout: `${selectedId} edit complete github_pat_1234567890abcdefghijklmnop`,
+            stderr: ""
+          };
+        },
+        cliRunner: async (args) => {
+          cliCalls.push(args);
+          if (args[0] === "check") {
+            return {
+              exitCode: 0,
+              json: { status: "passed", summary: { errors: 0, warnings: 0, info: 0 } },
+              ok: true,
+              stderr: "",
+              stdout: ""
+            };
+          }
+          if (args[0] === "export") {
+            return {
+              exitCode: 0,
+              json: { status: "passed", artifacts: { pdf: path.join(projectPath, "exports", "deck.pdf") } },
+              ok: true,
+              stderr: "",
+              stdout: ""
+            };
+          }
+          throw new Error(`Unexpected CLI call: ${args.join(" ")}`);
+        },
+        settings: externalAgentSettings("", selectedId)
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.providerId).toBe("external-agent");
+    expect(result.adapter?.adapter.kind).toBe(selectedId);
+    expect(JSON.stringify(result)).not.toContain("github_pat_1234567890abcdefghijklmnop");
+    expect(result.adapter?.stdout).toBe("[built-in structured output omitted]");
+    expect(result.summary.filesChanged).toEqual(["slides/001-title.html"]);
+    expect(result.checkpointDiff?.summary.changed).toBe(1);
+    expect(agentInvocations).toHaveLength(1);
+    expect(agentInvocations[0]?.command).toBe(command);
+    expect(agentInvocations[0]?.cwd).not.toBe(projectPath);
+    expect(path.basename(agentInvocations[0]?.cwd ?? "")).toMatch(/^htmlslide-agent-workspace-/u);
+    expect(agentInvocations[0]?.args).toContain(expectedArg);
+    expect(taskPrompt).not.toContain("## Write manifest");
+    expect(taskPrompt).not.toContain("writes.json");
+    expect(taskPrompt).not.toContain(projectPath);
+    await expect(readFile(path.join(projectPath, "README.md"), "utf8")).resolves.toBe("Real project guidance.\n");
+    await expect(access(path.join(projectPath, "exports", "unexpected.txt"))).rejects.toThrow();
+    await expect(access(agentInvocations[0]?.cwd ?? "")).rejects.toThrow();
+    expect(cliCalls).toEqual([
+      ["check", projectPath, "--json"],
+      ["export", projectPath, "--json"]
+    ]);
+  });
+
+  it("rejects source symlinks before a built-in external agent starts", async () => {
+    const projectPath = await tempDir();
+    const outsidePath = await tempDir();
+    await writeDeck(projectPath);
+    await writeFile(path.join(outsidePath, "outside.txt"), "outside\n", "utf8");
+    await mkdir(path.join(projectPath, "assets"), { recursive: true });
+    await symlink(path.join(outsidePath, "outside.txt"), path.join(projectPath, "assets", "linked.txt"));
+    let agentStarted = false;
+
+    const result = await runDesktopExternalAgent(
+      {
+        brief: "Do not follow source symlinks.",
+        projectPath,
+        runId: "run-codex-symlink"
+      },
+      {
+        agentRunner: async () => {
+          agentStarted = true;
+          return { exitCode: 0, stdout: "", stderr: "" };
+        },
+        externalAgentStatuses: [readyExternalAgentStatus("codex-cli")],
+        settings: externalAgentSettings("", "codex-cli")
+      }
+    );
+
+    expect(agentStarted).toBe(false);
+    expect(result).toMatchObject({
+      ok: false,
+      providerId: "external-agent"
+    });
+    expect(result.error).toContain("do not follow symlinks");
+  });
+
+  it("cancels a built-in agent in its isolated workspace without applying staged source", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const originalSource = await readFile(path.join(projectPath, "slides", "001-title.html"), "utf8");
+    const abortController = new AbortController();
+    let isolatedWorkspace = "";
+    let cliCalled = false;
+
+    const result = await runDesktopExternalAgent(
+      {
+        brief: "Cancel before applying built-in output.",
+        projectPath,
+        runId: "run-codex-isolated-cancel"
+      },
+      {
+        agentRunner: async (invocation) => {
+          isolatedWorkspace = invocation.cwd;
+          await writeFile(
+            path.join(invocation.cwd, "slides", "001-title.html"),
+            '<section class="slide" data-slide-id="001-title"><h1>Cancelled agent edit</h1></section>\n',
+            "utf8"
+          );
+          abortController.abort("Cancel isolated built-in run.");
+          return { cancelled: true, exitCode: 1, stdout: "cancelled", stderr: "" };
+        },
+        cliRunner: async () => {
+          cliCalled = true;
+          throw new Error("CLI must not run after cancellation.");
+        },
+        externalAgentStatuses: [readyExternalAgentStatus("codex-cli")],
+        settings: externalAgentSettings("", "codex-cli"),
+        signal: abortController.signal
+      }
+    );
+
+    expect(result.summary.status).toBe("cancelled");
+    expect(cliCalled).toBe(false);
+    await expect(readFile(path.join(projectPath, "slides", "001-title.html"), "utf8")).resolves.toBe(originalSource);
+    await expect(access(isolatedWorkspace)).rejects.toThrow();
+  });
+
+  it("rejects symlinked source paths created inside a built-in agent workspace", async () => {
+    const projectPath = await tempDir();
+    const outsidePath = await tempDir();
+    await writeDeck(projectPath);
+    await writeFile(
+      path.join(outsidePath, "001-title.html"),
+      '<section class="slide" data-slide-id="001-title"><h1>Outside source</h1></section>\n',
+      "utf8"
+    );
+
+    const result = await runDesktopExternalAgent(
+      {
+        brief: "Reject runtime-created source symlinks.",
+        projectPath,
+        runId: "run-codex-runtime-symlink"
+      },
+      {
+        agentRunner: async (invocation) => {
+          await rm(path.join(invocation.cwd, "slides"), { recursive: true, force: true });
+          await symlink(outsidePath, path.join(invocation.cwd, "slides"));
+          return { exitCode: 0, stdout: "done", stderr: "" };
+        },
+        externalAgentStatuses: [readyExternalAgentStatus("codex-cli")],
+        settings: externalAgentSettings("", "codex-cli")
+      }
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("symlinked source path");
+    await expect(readFile(path.join(projectPath, "slides", "001-title.html"), "utf8")).resolves.not.toContain(
+      "Outside source"
+    );
+  });
+
+  it("preserves concurrent real-project edits instead of overwriting them with built-in output", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const userEdit = '<section class="slide" data-slide-id="001-title"><h1>User edit</h1></section>\n';
+    let cliCalled = false;
+
+    const result = await runDesktopExternalAgent(
+      {
+        brief: "Do not overwrite concurrent user edits.",
+        projectPath,
+        runId: "run-codex-conflict"
+      },
+      {
+        agentRunner: async (invocation) => {
+          await writeFile(path.join(projectPath, "slides", "001-title.html"), userEdit, "utf8");
+          await writeFile(
+            path.join(invocation.cwd, "slides", "001-title.html"),
+            '<section class="slide" data-slide-id="001-title"><h1>Agent edit</h1></section>\n',
+            "utf8"
+          );
+          return { exitCode: 0, stdout: "done", stderr: "" };
+        },
+        cliRunner: async () => {
+          cliCalled = true;
+          throw new Error("CLI must not run after a source conflict.");
+        },
+        externalAgentStatuses: [readyExternalAgentStatus("codex-cli")],
+        settings: externalAgentSettings("", "codex-cli")
+      }
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("Project source changed while Codex CLI was running");
+    expect(cliCalled).toBe(false);
+    await expect(readFile(path.join(projectPath, "slides", "001-title.html"), "utf8")).resolves.toBe(userEdit);
+  });
+
   it("bounds service-level external logs before registry delivery", async () => {
     const projectPath = await tempDir();
     await writeDeck(projectPath);
@@ -2491,27 +2772,25 @@ function requireArg(args, name) {
     expect(result.logs.at(-1)?.message).toBe("Desktop service log limit reached (500 records).");
   });
 
-  it("blocks external agent runs until Generic command is selected and configured", async () => {
+  it("keeps Gemini detection-only and requires a configured Generic command", async () => {
     const projectPath = await tempDir();
     await writeDeck(projectPath);
 
-    for (const selectedId of ["codex-cli", "gemini-cli"] as const) {
-      const nonGeneric = await runDesktopExternalAgent(
-        {
-          brief: "Edit the deck.",
-          projectPath,
-          runId: `run-${selectedId}-blocked`
-        },
-        {
-          settings: externalAgentSettings(`${selectedId} exec`, selectedId)
-        }
-      );
-      expect(nonGeneric).toMatchObject({
-        error: "Only Generic command headless runs are enabled in this milestone.",
-        ok: false,
-        providerId: "external-generic"
-      });
-    }
+    const gemini = await runDesktopExternalAgent(
+      {
+        brief: "Edit the deck.",
+        projectPath,
+        runId: "run-gemini-blocked"
+      },
+      {
+        settings: externalAgentSettings("", "gemini-cli")
+      }
+    );
+    expect(gemini).toMatchObject({
+      error: "Gemini CLI remains detection-only until its non-interactive authentication and permission contract is tested.",
+      ok: false,
+      providerId: "external-agent"
+    });
 
     const emptyCommand = await runDesktopExternalAgent(
       {
@@ -2527,6 +2806,38 @@ function requireArg(args, name) {
       error: "Generic command template is required before running an external agent.",
       ok: false
     });
+  });
+
+  it("rechecks built-in readiness before creating a checkpoint or starting the command", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    let agentStarted = false;
+    const notAuthenticated: DesktopExternalAgentStatus = {
+      ...readyExternalAgentStatus("codex-cli"),
+      authenticated: false,
+      status: "not-authenticated",
+      summary: "Login required"
+    };
+
+    const result = await runDesktopExternalAgent(
+      {
+        brief: "Do not start before readiness passes.",
+        projectPath,
+        runId: "run-codex-not-ready"
+      },
+      {
+        agentRunner: async () => {
+          agentStarted = true;
+          return { exitCode: 0, stdout: "", stderr: "" };
+        },
+        externalAgentStatuses: [notAuthenticated],
+        settings: externalAgentSettings("", "codex-cli")
+      }
+    );
+
+    expect(result).toMatchObject({ error: "Login required", ok: false });
+    expect(agentStarted).toBe(false);
+    await expect(access(path.join(projectPath, ".htmlslide", "checkpoints", "run-codex-not-ready"))).rejects.toThrow();
   });
 
   it("fails external agent runs that report artifact writes", async () => {

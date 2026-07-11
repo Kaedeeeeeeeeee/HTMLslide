@@ -118,7 +118,7 @@ export function renderChecklist(metadata) {
 
 ## Manual Acceptance Script
 
-For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is only acceptable for BYOK when no test key is available, or for real Claude/Codex/Gemini validation when the candidate makes no direct headless-support claim; record that explicitly.
+For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is only acceptable for BYOK when no test key is available, or for real Claude/Codex compatibility when the candidate makes no validated real-account claim; record that explicitly. Gemini headless editing is not supported and must remain detection-only.
 
 ### 1. Clean macOS User Account
 
@@ -159,19 +159,20 @@ For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is 
 - Evidence:
 - Notes:
 
-### 6. Connect Fake External Agent
+### 6. Connect Fake External Agents
 
-- [ ] Configure a fake Generic external agent command.
-- [ ] Run generation or repair through the external agent path.
-- [ ] Confirm project-local writes, sanitized logs, check/export gate, and checkpoint diff.
+- [ ] Run a fake built-in Claude or Codex executable through the fixed adapter path.
+- [ ] Configure and run a fake Generic external agent command.
+- [ ] Confirm isolated built-in source application, Generic source-write manifest validation, sanitized logs, check/export gate, and checkpoint diff.
 - Evidence:
 - Notes:
 
-### 7. Validate Real Claude/Codex/Gemini Claim
+### 7. Validate Real Claude/Codex Compatibility And Gemini Boundary
 
-- [ ] Review docs and release notes for any Claude Code, Codex, or Gemini CLI claim beyond detection/manual validation.
-- [ ] If direct support is claimed, record the real tool, version, authentication evidence, sanitized prompt/command, source-write manifest, check/export result, and diff-review evidence.
-- [ ] If direct support is not claimed, mark N/A and confirm docs/release notes keep these adapters detection/manual-validation only.
+- [ ] Review docs and release notes for any validated real-account Claude Code or Codex compatibility claim.
+- [ ] If compatibility is claimed, record the real tool, version, authentication evidence, sanitized task/command, completed edit, cancellation behavior, checkpoint diff, check/export result, and revert evidence against this exact packaged artifact.
+- [ ] If compatibility is not claimed, mark N/A and confirm docs/release notes describe only the built-in adapter contract and fake automation.
+- [ ] Confirm Gemini CLI remains detection-only and no headless deck-editing claim is present.
 - Evidence:
 - Notes:
 

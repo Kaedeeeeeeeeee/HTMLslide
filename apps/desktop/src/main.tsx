@@ -675,16 +675,16 @@ function App(): React.ReactNode {
       terminalStatus: Extract<DesktopAgentRunStatus, "succeeded" | "failed" | "cancelled">
     ): void => {
       const checkReport = result.check?.json as DesktopCheckReport | undefined;
-      const repairs = result.providerId === "external-generic" ? [] : result.agent?.outputs.repairs ?? [];
+      const repairs = result.providerId === "external-agent" ? [] : result.agent?.outputs.repairs ?? [];
       const checkErrors = result.summary.checkErrors ?? 0;
       const checkWarnings = result.summary.checkWarnings ?? 0;
       const agentLabel =
-        result.providerId === "external-generic"
+        result.providerId === "external-agent"
           ? "External agent"
           : result.providerId === "htmlslide-byok"
             ? "HTMLslide Agent"
             : "Mock agent";
-      const generationOk = result.providerId === "external-generic" ? result.adapter?.ok === true : result.agent?.ok === true;
+      const generationOk = result.providerId === "external-agent" ? result.adapter?.ok === true : result.agent?.ok === true;
       const cancelled = terminalStatus === "cancelled";
 
       if (result.project) {
@@ -736,12 +736,12 @@ function App(): React.ReactNode {
         message: cancelled
           ? "Generation cancelled"
           : generationOk
-          ? result.providerId === "external-generic"
+          ? result.providerId === "external-agent"
             ? "External agent complete"
             : result.providerId === "htmlslide-byok"
               ? "HTMLslide Agent complete"
               : "Mock generation complete"
-          : result.providerId === "external-generic"
+          : result.providerId === "external-agent"
             ? "External agent failed"
             : result.providerId === "htmlslide-byok"
               ? "HTMLslide Agent failed"

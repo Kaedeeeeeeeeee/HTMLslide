@@ -202,7 +202,7 @@ const providerIdForEngine = (engine: DesktopAgentEngine): DesktopAgentRunResult[
   if (engine === "htmlslide-agent") {
     return "htmlslide-byok";
   }
-  return "external-generic";
+  return "external-agent";
 };
 
 const resultStatus = (result: DesktopAgentRunResult): Extract<DesktopAgentRunStatus, "succeeded" | "failed" | "cancelled"> => {

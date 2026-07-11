@@ -268,6 +268,7 @@ export function selectedExternalAgentStatus(
       authenticated: true,
       capabilities: {
         ...genericDefault.capabilities,
+        cancelRun: true,
         headlessRun: true,
         readDiff: true,
         streamLogs: true
@@ -288,11 +289,17 @@ export function selectedExternalAgentStatus(
 }
 
 export function isExternalAgentRunnableByHtmlslide(status: ExternalAgentStatus): boolean {
+  const supportsWorkspaceRun = status.capabilities.headlessRun === true && status.capabilities.readDiff === true;
+
+  if (status.id === "generic") {
+    return status.status === "ready" && supportsWorkspaceRun;
+  }
+
   return (
-    status.id === "generic" &&
-    status.status === "ready" &&
-    status.capabilities.headlessRun === true &&
-    status.capabilities.readDiff === true
+    (status.id === "claude-code" || status.id === "codex-cli") &&
+    status.installed &&
+    status.authenticated &&
+    supportsWorkspaceRun
   );
 }
 
@@ -336,13 +343,21 @@ export function buildExternalAgentReadiness(status: ExternalAgentStatus): Extern
       },
       {
         label: "HTMLslide run",
-        tone: htmlslideHeadlessEnabled ? "success" : "warning",
-        value: htmlslideHeadlessEnabled ? "Enabled" : "Detection only"
+        ...htmlslideRunReadiness(status, htmlslideHeadlessEnabled)
       },
       {
         label: "Diff review",
-        tone: htmlslideHeadlessEnabled ? "success" : "neutral",
-        value: htmlslideHeadlessEnabled ? "Enabled" : "Not enabled"
+        ...diffReviewReadiness(status, htmlslideHeadlessEnabled)
+      },
+      {
+        label: "Permissions",
+        tone: htmlslideHeadlessEnabled ? "neutral" : "warning",
+        value: permissionSummary(status)
+      },
+      {
+        label: "Cancel",
+        tone: htmlslideHeadlessEnabled && status.capabilities.cancelRun === true ? "success" : "neutral",
+        value: htmlslideHeadlessEnabled && status.capabilities.cancelRun === true ? "Enabled" : "Not enabled"
       }
     ],
     nextStep,
@@ -403,8 +418,16 @@ function readinessTitle(status: ExternalAgentStatus, htmlslideHeadlessEnabled: b
     return "Ready for HTMLslide runs";
   }
 
-  if (status.status === "ready") {
+  if (status.id === "gemini-cli" && status.status === "ready") {
     return "Detected for manual validation";
+  }
+
+  if (
+    (status.id === "claude-code" || status.id === "codex-cli") &&
+    status.installed &&
+    status.authenticated
+  ) {
+    return "Built-in run unavailable";
   }
 
   if (status.status === "not-installed") {
@@ -420,14 +443,14 @@ function readinessTitle(status: ExternalAgentStatus, htmlslideHeadlessEnabled: b
 
 function readinessDetail(status: ExternalAgentStatus, htmlslideHeadlessEnabled: boolean): string {
   if (htmlslideHeadlessEnabled) {
-    return "HTMLslide can run this Generic command from an opened local project, then check, export, and show the diff review.";
+    if (status.id === "generic") {
+      return "HTMLslide can run this Generic command from an opened local project, then check, export, and show the diff review.";
+    }
+
+    return `HTMLslide can run the built-in ${status.label} adapter from an opened local project, keep a checkpoint, then check, export, and show the diff review.`;
   }
 
   if (status.id !== "generic") {
-    if (status.status === "ready") {
-      return `${status.label} is detected and authenticated, but direct headless deck editing is not enabled until command templates are defined and tested.`;
-    }
-
     if (status.status === "not-installed") {
       return `${status.label} was not found on PATH.`;
     }
@@ -436,7 +459,19 @@ function readinessDetail(status: ExternalAgentStatus, htmlslideHeadlessEnabled: 
       return `${status.label} is installed but the account is not ready for non-interactive use.`;
     }
 
-    return `${status.label} detection cannot prove a release-ready headless editing path yet.`;
+    if (status.id === "gemini-cli") {
+      return "Gemini CLI remains detection-only until its authentication and non-interactive permission contract is defined and tested.";
+    }
+
+    if (
+      (status.id === "claude-code" || status.id === "codex-cli") &&
+      status.installed &&
+      status.authenticated
+    ) {
+      return `${status.label} is installed and authenticated, but this HTMLslide build did not report both headless run and diff review capabilities.`;
+    }
+
+    return `${status.label} is not ready for an HTMLslide run.`;
   }
 
   return "Save a project-scoped Generic command template before using Coding Agent generation.";
@@ -444,7 +479,11 @@ function readinessDetail(status: ExternalAgentStatus, htmlslideHeadlessEnabled: 
 
 function readinessNextStep(status: ExternalAgentStatus, htmlslideHeadlessEnabled: boolean): string {
   if (htmlslideHeadlessEnabled) {
-    return "Run it from an opened workspace or the New Deck wizard and review reported source writes before export.";
+    if (status.id === "generic") {
+      return "Run it from an opened workspace or the New Deck wizard and review reported source writes before export.";
+    }
+
+    return "Run it from an opened workspace or the New Deck wizard, then review the checkpoint diff. Built-in agents are user-authorized local tools, not a complete OS sandbox.";
   }
 
   if (status.id === "generic") {
@@ -459,7 +498,57 @@ function readinessNextStep(status: ExternalAgentStatus, htmlslideHeadlessEnabled
     return `Log in with the ${status.command} CLI, then refresh status.`;
   }
 
-  return "For alpha automation, configure Generic command mode until this adapter has a tested headless template.";
+  if (status.id === "gemini-cli") {
+    return "Use Claude Code, Codex CLI, or a configured Generic command for HTMLslide runs.";
+  }
+
+  return "Update HTMLslide, restart the app, and refresh status so the built-in adapter capabilities can be checked again.";
+}
+
+function htmlslideRunReadiness(
+  status: ExternalAgentStatus,
+  htmlslideHeadlessEnabled: boolean
+): Pick<ExternalAgentReadinessItem, "tone" | "value"> {
+  if (htmlslideHeadlessEnabled) {
+    return { tone: "success", value: "Enabled" };
+  }
+
+  if (status.id === "gemini-cli") {
+    return { tone: "warning", value: "Detection only" };
+  }
+
+  if (status.id === "generic") {
+    return { tone: "warning", value: "Detection only" };
+  }
+
+  return { tone: "warning", value: "Unavailable" };
+}
+
+function diffReviewReadiness(
+  status: ExternalAgentStatus,
+  htmlslideHeadlessEnabled: boolean
+): Pick<ExternalAgentReadinessItem, "tone" | "value"> {
+  if (htmlslideHeadlessEnabled) {
+    return { tone: "success", value: "Enabled" };
+  }
+
+  return {
+    tone: "neutral",
+    value: "Not enabled"
+  };
+}
+
+function permissionSummary(status: ExternalAgentStatus): string {
+  if (status.id === "claude-code") {
+    return "Read/write tools only";
+  }
+  if (status.id === "codex-cli") {
+    return "Isolated workspace-write";
+  }
+  if (status.id === "generic") {
+    return "User-defined command";
+  }
+  return "Detection only";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

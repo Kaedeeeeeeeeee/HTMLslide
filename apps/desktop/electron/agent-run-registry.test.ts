@@ -363,7 +363,7 @@ describe("DesktopAgentRunRegistry", () => {
       const mock = result(request.runId);
       return {
         ok: true,
-        providerId: "external-generic",
+        providerId: "external-agent",
         projectPath: "/tmp/external",
         stages: mock.stages,
         events: mock.events,
@@ -394,7 +394,7 @@ describe("DesktopAgentRunRegistry", () => {
     registry.start({ engine: "external-agent", projectPath: "/tmp/external", brief: "Build" });
     await vi.waitFor(() => expect(registry.get("run-adapter-bounds")?.status).toBe("succeeded"));
     const snapshot = registry.get("run-adapter-bounds");
-    if (snapshot?.result?.providerId !== "external-generic" || !snapshot.result.adapter) {
+    if (snapshot?.result?.providerId !== "external-agent" || !snapshot.result.adapter) {
       throw new Error("Expected compact external result.");
     }
     expect(snapshot.result.adapter.stdout?.length).toBeLessThanOrEqual(32_768);

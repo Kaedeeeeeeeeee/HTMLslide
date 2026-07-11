@@ -16,6 +16,23 @@ export interface ExternalCliDetectorOptions {
   readonly authArgs?: readonly string[];
 }
 
+export const CLAUDE_HEADLESS_CONTRACT_ARGS = ["--help"] as const;
+export const CLAUDE_HEADLESS_CONTRACT_FLAGS = [
+  "--setting-sources",
+  "--strict-mcp-config",
+  "--disable-slash-commands",
+  "--no-chrome",
+  "--no-session-persistence"
+] as const;
+export const CODEX_HEADLESS_CONTRACT_ARGS = ["exec", "--help"] as const;
+export const CODEX_HEADLESS_CONTRACT_FLAGS = [
+  "--sandbox",
+  "--ephemeral",
+  "--ignore-user-config",
+  "--skip-git-repo-check",
+  "--json"
+] as const;
+
 const CLAUDE_CAPABILITIES = createCapabilitySet([
   "detectInstalled",
   "detectAuthenticated",
@@ -65,6 +82,8 @@ export async function detectClaudeCli(options: ExternalCliDetectorOptions): Prom
     command: options.command ?? "claude",
     versionArgs: options.versionArgs ?? ["--version"],
     authArgs: options.authArgs ?? ["auth", "status"],
+    contractArgs: CLAUDE_HEADLESS_CONTRACT_ARGS,
+    contractFlags: CLAUDE_HEADLESS_CONTRACT_FLAGS,
     cwd: options.cwd,
     runner: options.runner,
     capabilities: claudeCliCapabilities()
@@ -78,7 +97,9 @@ export async function detectCodexCli(options: ExternalCliDetectorOptions): Promi
     kind: "codex-cli",
     command: options.command ?? "codex",
     versionArgs: options.versionArgs ?? ["--version"],
-    authArgs: options.authArgs ?? ["auth", "status"],
+    authArgs: options.authArgs ?? ["login", "status"],
+    contractArgs: CODEX_HEADLESS_CONTRACT_ARGS,
+    contractFlags: CODEX_HEADLESS_CONTRACT_FLAGS,
     cwd: options.cwd,
     runner: options.runner,
     capabilities: codexCliCapabilities()
@@ -106,6 +127,8 @@ interface DetectExternalCliOptions {
   readonly command: string;
   readonly versionArgs: readonly string[];
   readonly authArgs?: readonly string[];
+  readonly contractArgs?: readonly string[];
+  readonly contractFlags?: readonly string[];
   readonly cwd?: string;
   readonly runner: CommandRunner;
   readonly capabilities: AgentAdapterCapabilitySet;
@@ -200,6 +223,45 @@ async function detectExternalCli(options: DetectExternalCliOptions): Promise<Age
         detail: authResult.result.stderr || authResult.result.stdout
       })
     };
+  }
+
+  if (options.contractArgs && options.contractFlags) {
+    const contractResult = await runDetectorCommand(options.runner, {
+      command: options.command,
+      args: options.contractArgs,
+      cwd
+    });
+    const output = contractResult.kind === "result"
+      ? `${contractResult.result.stdout}\n${contractResult.result.stderr}`
+      : "";
+    const missingFlags = options.contractFlags.filter((flag) => !output.includes(flag));
+    if (
+      contractResult.kind !== "result" ||
+      contractResult.result.exitCode !== 0 ||
+      missingFlags.length > 0
+    ) {
+      return {
+        ...base,
+        capabilities: {
+          ...base.capabilities,
+          headlessRun: false,
+          readDiff: false,
+          streamLogs: false
+        },
+        status: "unavailable",
+        installed: true,
+        authenticated: true,
+        version,
+        ...(contractResult.kind === "result" ? { raw: pickRaw(contractResult.result) } : {}),
+        failure: createAgentAdapterFailure("command-failed", {
+          command: [options.command, ...options.contractArgs].join(" "),
+          detail: missingFlags.length > 0
+            ? `Installed CLI is missing required headless flags: ${missingFlags.join(", ")}`
+            : "Installed CLI headless contract could not be verified.",
+          ...(contractResult.kind === "result" ? { exitCode: contractResult.result.exitCode } : {})
+        })
+      };
+    }
   }
 
   return {

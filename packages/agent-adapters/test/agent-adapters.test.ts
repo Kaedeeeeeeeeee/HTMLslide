@@ -5,14 +5,17 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  buildBuiltInExternalAgentCommand,
   COMMAND_CAPTURE_LIMIT_CHARS,
   COMMAND_CAPTURE_TRUNCATION_MARKER,
+  createBuiltInExternalAgentDescriptor,
   createCapabilitySet,
   detectClaudeCli,
   detectCodexCli,
   detectGeminiCli,
   readJsonFileWriteManifest,
   renderCommandTemplate,
+  runBuiltInExternalAgentAdapter,
   runCommand,
   runGenericAgentAdapter,
   validateReportedFileWrites,
@@ -65,17 +68,27 @@ describe("external agent detector helpers", () => {
     const runner: CommandRunner = async (invocation) => {
       invocations.push([invocation.command, ...invocation.args].join(" "));
 
-      return invocation.args.includes("--version")
-        ? {
-            exitCode: 0,
-            stdout: `${invocation.command} 9.9.9\n`,
-            stderr: ""
-          }
-        : {
-            exitCode: 0,
-            stdout: "authenticated\n",
-            stderr: ""
-          };
+      if (invocation.args.includes("--version")) {
+        return {
+          exitCode: 0,
+          stdout: `${invocation.command} 9.9.9\n`,
+          stderr: ""
+        };
+      }
+      if (invocation.args.includes("--help")) {
+        return {
+          exitCode: 0,
+          stdout: invocation.command === "fake-claude"
+            ? "--setting-sources --strict-mcp-config --disable-slash-commands --no-chrome --no-session-persistence\n"
+            : "--sandbox --ephemeral --ignore-user-config --skip-git-repo-check --json\n",
+          stderr: ""
+        };
+      }
+      return {
+        exitCode: 0,
+        stdout: "authenticated\n",
+        stderr: ""
+      };
     };
 
     const claude = await detectClaudeCli({ command: "fake-claude", runner });
@@ -98,9 +111,25 @@ describe("external agent detector helpers", () => {
     expect(invocations).toEqual([
       "fake-claude --version",
       "fake-claude auth status",
+      "fake-claude --help",
       "fake-codex --version",
-      "fake-codex auth status"
+      "fake-codex login status",
+      "fake-codex exec --help"
     ]);
+  });
+
+  it("keeps authenticated CLIs unavailable when their fixed headless contract is missing", async () => {
+    const runner: CommandRunner = async (invocation) => ({
+      exitCode: 0,
+      stdout: invocation.args.includes("--version") ? "codex 0.1.0\n" : "authenticated\n",
+      stderr: ""
+    });
+
+    const result = await detectCodexCli({ runner });
+
+    expect(result).toMatchObject({ authenticated: true, installed: true, status: "unavailable" });
+    expect(result.capabilities.headlessRun).toBe(false);
+    expect(result.failure?.detail).toContain("missing required headless flags");
   });
 
   it("detects Gemini CLI installation without pretending authentication is verified", async () => {
@@ -128,6 +157,210 @@ describe("external agent detector helpers", () => {
     expect(result.capabilities.headlessRun).toBe(false);
     expect(result.capabilities.openExternal).toBe(true);
     expect(invocations).toEqual(["fake-gemini --version"]);
+  });
+});
+
+describe("built-in external agent adapters", () => {
+  it("creates runnable descriptors with fixed defaults and command overrides", () => {
+    expect(createBuiltInExternalAgentDescriptor("claude-code")).toMatchObject({
+      id: "claude-code",
+      label: "Claude Code",
+      kind: "claude-code",
+      command: "claude",
+      capabilities: {
+        headlessRun: true,
+        streamLogs: true,
+        cancelRun: true,
+        readDiff: true
+      }
+    });
+    expect(createBuiltInExternalAgentDescriptor("codex-cli", "/opt/bin/codex-test")).toMatchObject({
+      id: "codex-cli",
+      label: "Codex CLI",
+      kind: "codex-cli",
+      command: "/opt/bin/codex-test"
+    });
+  });
+
+  it("builds the exact Claude Code argv without shell interpolation", async () => {
+    const project = await createFakeProject("built-in-claude argv");
+
+    expect(
+      buildBuiltInExternalAgentCommand({
+        kind: "claude-code",
+        command: "fake-claude",
+        projectRoot: project.projectRoot,
+        promptFile: project.promptFile
+      })
+    ).toEqual({
+      command: "fake-claude",
+      args: [
+        "--print",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--setting-sources",
+        "",
+        "--strict-mcp-config",
+        "--disable-slash-commands",
+        "--no-chrome",
+        "--permission-mode",
+        "acceptEdits",
+        "--tools",
+        "Read,Glob,Grep,Edit,Write",
+        "--no-session-persistence",
+        builtInTaskPrompt(project.promptFile)
+      ]
+    });
+  });
+
+  it("builds the exact Codex CLI argv without shell interpolation", async () => {
+    const project = await createFakeProject("built-in-codex argv");
+
+    expect(
+      buildBuiltInExternalAgentCommand({
+        kind: "codex-cli",
+        command: "fake-codex",
+        projectRoot: project.projectRoot,
+        promptFile: project.promptFile
+      })
+    ).toEqual({
+      command: "fake-codex",
+      args: [
+        "exec",
+        "--sandbox",
+        "workspace-write",
+        "--ephemeral",
+        "--ignore-user-config",
+        "--skip-git-repo-check",
+        "--json",
+        "--color",
+        "never",
+        "-C",
+        project.projectRoot,
+        builtInTaskPrompt(project.promptFile)
+      ]
+    });
+  });
+
+  it("rejects a built-in prompt path outside the project before running", async () => {
+    const project = await createFakeProject("built-in-boundary");
+    let runnerCalled = false;
+
+    const result = await runBuiltInExternalAgentAdapter({
+      kind: "claude-code",
+      projectRoot: project.projectRoot,
+      promptFile: path.resolve(project.projectRoot, "..", "outside-task.md"),
+      runner: async () => {
+        runnerCalled = true;
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+    });
+
+    expect(runnerCalled).toBe(false);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error("Expected a project boundary failure.");
+    }
+    expect(result.failure.type).toBe("project-boundary-violation");
+  });
+
+  it("passes cwd, timeout, cancellation signal, and output callback to the shared runner", async () => {
+    const project = await createFakeProject("built-in-run");
+    const slideFile = path.join(project.projectRoot, "slides", "001-title.html");
+    await fs.mkdir(path.dirname(slideFile), { recursive: true });
+    await fs.writeFile(slideFile, "<section data-slide-id=\"001-title\"></section>\n", "utf8");
+    const controller = new AbortController();
+    const chunks: Array<{ stream: "stdout" | "stderr"; text: string }> = [];
+    const invocations: Parameters<CommandRunner>[0][] = [];
+    const runner: CommandRunner = async (invocation) => {
+      invocations.push(invocation);
+      invocation.onOutput?.({ stream: "stdout", text: "progress\n" });
+      return { exitCode: 0, stdout: "complete\n", stderr: "warning\n" };
+    };
+
+    const result = await runBuiltInExternalAgentAdapter({
+      kind: "codex-cli",
+      command: "fake-codex",
+      projectRoot: project.projectRoot,
+      promptFile: project.promptFile,
+      runner,
+      signal: controller.signal,
+      timeoutMs: 4_321,
+      onOutput: (chunk) => chunks.push(chunk),
+      readReportedFileWrites: async () => ["slides/001-title.html"]
+    });
+
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0]).toEqual({
+      command: "fake-codex",
+      args: buildBuiltInExternalAgentCommand({
+        kind: "codex-cli",
+        command: "fake-codex",
+        projectRoot: project.projectRoot,
+        promptFile: project.promptFile
+      }).args,
+      cwd: project.projectRoot,
+      signal: controller.signal,
+      timeoutMs: 4_321,
+      onOutput: expect.any(Function)
+    });
+    expect(chunks).toEqual([{ stream: "stdout", text: "progress\n" }]);
+    expect(result).toMatchObject({
+      ok: true,
+      status: "completed",
+      cwd: project.projectRoot,
+      stdout: "complete\n",
+      stderr: "warning\n",
+      reportedWrites: [slideFile],
+      adapter: {
+        id: "codex-cli",
+        kind: "codex-cli",
+        command: "fake-codex"
+      }
+    });
+  });
+
+  it.each([
+    {
+      name: "cancellation",
+      commandResult: { exitCode: 1, stdout: "partial", stderr: "", cancelled: true },
+      failureType: "cancelled",
+      status: "cancelled"
+    },
+    {
+      name: "timeout",
+      commandResult: { exitCode: 1, stdout: "partial", stderr: "", timedOut: true },
+      failureType: "run-timeout",
+      status: "failed"
+    },
+    {
+      name: "command failure",
+      commandResult: { exitCode: 17, stdout: "", stderr: "provider failed" },
+      failureType: "command-failed",
+      status: "failed"
+    }
+  ])("maps $name from the shared runner into AgentAdapterRunResult", async ({ commandResult, failureType, status }) => {
+    const project = await createFakeProject(`built-in-${failureType}`);
+    const result = await runBuiltInExternalAgentAdapter({
+      kind: "claude-code",
+      projectRoot: project.projectRoot,
+      promptFile: project.promptFile,
+      timeoutMs: 250,
+      runner: async () => commandResult
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error(`Expected ${failureType}.`);
+    }
+    expect(result.status).toBe(status);
+    expect(result.failure.type).toBe(failureType);
+    expect(result.stdout).toBe(commandResult.stdout);
+    expect(result.stderr).toBe(commandResult.stderr);
+    if (failureType === "command-failed") {
+      expect(result.failure.exitCode).toBe(17);
+    }
   });
 });
 
@@ -795,6 +1028,14 @@ function createFakeAdapter(commandTemplate: string): GenericAgentAdapterConfig {
 
 function nodeCommandTemplate(): string {
   return `"${process.execPath}" "{{scriptFile}}" --project "{{projectPath}}" --prompt-file "{{promptFile}}" --writes-manifest "{{writeManifest}}"`;
+}
+
+function builtInTaskPrompt(promptFile: string): string {
+  return [
+    `Read and follow the HTMLslide task instructions in ${promptFile}.`,
+    "Only edit source files in deck.json, slides/, notes/, theme/, and assets/.",
+    "Do not edit exports/ or .htmlslide/."
+  ].join(" ");
 }
 
 async function killProcess(pid: number): Promise<void> {

@@ -459,7 +459,7 @@ export class DesktopAgentRunRegistry {
       projectPath: truncateSanitizedText(snapshot.projectPath, MAX_DESKTOP_IPC_TEXT_CHARS),
       events: this.#boundedEvents(snapshot.events),
       logs: this.#boundedFinalLogs(snapshot.logs, snapshot.runId),
-      ...(snapshot.result ? { result: this.#compactResult(snapshot.result) } : {}),
+      ...(snapshot.result ? { result: structuredClone(snapshot.result) } : {}),
       ...(snapshot.error
         ? { error: truncateSanitizedText(snapshot.error, MAX_DESKTOP_IPC_TEXT_CHARS) }
         : {})

@@ -154,6 +154,9 @@ For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is 
 - [ ] Attach or paste the sanitized provider validation JSON and confirm it does not include the API key value.
 - [ ] Save a test provider key through Settings.
 - [ ] Create a deck with the BYOK provider.
+- [ ] Request an explicit 8-12 slide count and confirm the generated manifest matches the accepted outline.
+- [ ] Run \`pnpm rc:byok-evidence -- --project <deck> --provider-validation <validation.json> --run-id <run-id> --commit <commit> --artifact-url <artifact-url>\`.
+- [ ] Attach the passing sanitized evidence JSON for this exact run and candidate artifact.
 - [ ] Confirm no API key appears in project files, reports, logs, or screenshots.
 - [ ] If no key is available, mark N/A and record why.
 - Evidence:

@@ -1,6 +1,7 @@
 import { access, mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   COMMAND_CAPTURE_LIMIT_CHARS,
   COMMAND_CAPTURE_TRUNCATION_MARKER
@@ -45,6 +46,7 @@ import {
   upsertRecentProject,
   writeDesktopLibrary,
   type CliRunResult,
+  type CliRuntime,
   type DesktopCliRunner,
   type DesktopAiEngineSettings,
   type DesktopExternalAgentId,
@@ -55,6 +57,13 @@ import {
 } from "./desktop-services.js";
 
 const tempDirs: string[] = [];
+const testModulePath = fileURLToPath(import.meta.url);
+const TEST_CLI_RUNTIME: CliRuntime = {
+  cliPath: testModulePath,
+  cwd: path.dirname(testModulePath),
+  mode: "development",
+  rootPath: path.dirname(testModulePath)
+};
 
 async function tempDir(): Promise<string> {
   const dir = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-test-"));
@@ -1035,6 +1044,7 @@ describe("desktop services", () => {
       schemaVersion: "0.1.0",
       status: "succeeded"
     });
+    expect(report).not.toHaveProperty("provider");
     expect(report.outputs.outline?.slides.map((slide) => slide.id)).toEqual([
       "001-title",
       "002-workflow",
@@ -1125,6 +1135,42 @@ describe("desktop services", () => {
     expect(restoredDeck.slides).toHaveLength(1);
   });
 
+  it("refuses a symlinked agent report directory without writing outside the project", async () => {
+    const projectPath = await tempDir();
+    const outsidePath = await tempDir();
+    const outsideReports = path.join(outsidePath, "reports");
+    await writeDeck(projectPath);
+    await mkdir(outsideReports);
+
+    await expect(runDesktopMockAgent(
+      {
+        brief: "Do not follow report symlinks.",
+        projectPath,
+        runExport: false,
+        runId: "run-report-symlink"
+      },
+      {
+        cliRuntime: TEST_CLI_RUNTIME,
+        cliRunner: async () => {
+          await symlink(outsideReports, path.join(projectPath, ".htmlslide", "reports"));
+          return {
+            ok: true,
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            json: {
+              status: "passed",
+              summary: { errors: 0, warnings: 0, info: 0, suggestions: 0 },
+              issues: []
+            }
+          };
+        }
+      }
+    )).rejects.toThrow(/runtime path must be a real project directory/);
+
+    await expect(access(path.join(outsideReports, "latest-agent-run.json"))).rejects.toThrow();
+  });
+
   it("delivers normalized core and desktop records live and keeps them in the final arrays", async () => {
     const projectPath = await tempDir();
     await writeDeck(projectPath);
@@ -1191,7 +1237,8 @@ describe("desktop services", () => {
         brief: "Run despite observer failures.",
         projectPath,
         runExport: false,
-        runId: "run-byok-observer-isolation"
+        runId: "run-byok-observer-isolation",
+        targetSlideCount: 1
       },
       {
         cliRuntime: {
@@ -1239,6 +1286,220 @@ describe("desktop services", () => {
     expect(JSON.stringify(result)).not.toContain("sk-observer-secret");
   });
 
+  it("fails BYOK CLI-runtime preflight before credential, provider, CLI, or source-write work", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const originalDeck = await readFile(path.join(projectPath, "deck.json"), "utf8");
+    let credentialReads = 0;
+    let providerConstructions = 0;
+    let cliCalls = 0;
+    const credentialStore: DesktopCredentialStore = {
+      available: true,
+      label: "Observed Keychain",
+      async getPassword() {
+        credentialReads += 1;
+        return "sk-must-not-be-read";
+      },
+      async setPassword() {
+        return undefined;
+      },
+      async deletePassword() {
+        return undefined;
+      }
+    };
+
+    const result = await runDesktopByokAgent(
+      {
+        brief: "Do not start without the authoritative CLI runtime.",
+        projectPath,
+        runId: "run-byok-missing-cli-runtime",
+        targetSlideCount: 1
+      },
+      {
+        cliRunner: async () => {
+          cliCalls += 1;
+          throw new Error("CLI must not run without a runtime.");
+        },
+        credentialStore,
+        providerFactory: () => {
+          providerConstructions += 1;
+          return createSourceWriteTestProvider("Must Not Be Written");
+        },
+        settings: byokSettings("openai")
+      }
+    );
+
+    expect(result).toMatchObject({
+      error: "HTMLslide CLI runtime is not available. Rebuild the app or reinstall HTMLslide before running HTMLslide Agent.",
+      ok: false,
+      summary: {
+        runId: "run-byok-missing-cli-runtime",
+        status: "failed"
+      }
+    });
+    expect(credentialReads).toBe(0);
+    expect(providerConstructions).toBe(0);
+    expect(cliCalls).toBe(0);
+    await expect(readFile(path.join(projectPath, "deck.json"), "utf8")).resolves.toBe(originalDeck);
+    await expect(access(path.join(projectPath, ".htmlslide"))).rejects.toThrow();
+  });
+
+  it("revalidates a stale BYOK CLI runtime descriptor before reading credentials", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    let credentialReads = 0;
+
+    const result = await runDesktopByokAgent(
+      {
+        brief: "Reject a stale runtime descriptor.",
+        projectPath,
+        runId: "run-byok-stale-cli-runtime"
+      },
+      {
+        cliRuntime: {
+          cliPath: path.join(projectPath, "missing-cli.js"),
+          cwd: projectPath,
+          mode: "development",
+          rootPath: projectPath
+        },
+        credentialStore: {
+          available: true,
+          label: "Observed Keychain",
+          async getPassword() {
+            credentialReads += 1;
+            return "not-read";
+          },
+          async setPassword() {},
+          async deletePassword() {}
+        },
+        settings: byokSettings("openai")
+      }
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/missing-cli\.js|no such file/i);
+    expect(credentialReads).toBe(0);
+  });
+
+  it("rejects a provider deck manifest that mismatches the accepted outline before applying writes", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const originalDeck = await readFile(path.join(projectPath, "deck.json"), "utf8");
+    const originalSlide = await readFile(path.join(projectPath, "slides", "001-title.html"), "utf8");
+    const provider = createMockProvider({
+      checkResults: [createMockPassedCheck()],
+      id: "test-byok-manifest-mismatch"
+    });
+    const writes = byokSourceWrites("Mismatched Manifest");
+    const manifest = JSON.parse(writes[0]!.content) as { slides: Array<{ id: string }> };
+    manifest.slides[0]!.id = "999-not-in-outline";
+    writes[0] = {
+      path: "deck.json",
+      content: `${JSON.stringify(manifest, null, 2)}\n`
+    };
+    let cliCalls = 0;
+
+    await expect(runDesktopByokAgent(
+      {
+        brief: "Reject a mismatched provider manifest.",
+        projectPath,
+        runExport: false,
+        runId: "run-byok-manifest-mismatch",
+        targetSlideCount: 1
+      },
+      {
+        cliRuntime: TEST_CLI_RUNTIME,
+        cliRunner: async () => {
+          cliCalls += 1;
+          throw new Error("CLI must not run after manifest validation fails.");
+        },
+        credentialStore: createFakeCredentialStore({
+          "app.htmlslide.ai-key:provider:openai": "sk-manifest-mismatch"
+        }),
+        providerFactory: () => ({
+          id: "test-byok-manifest-mismatch",
+          label: "Manifest Mismatch Provider",
+          async validateCredentials() {
+            return { ok: true };
+          },
+          async complete(request) {
+            const response = await provider.complete(request);
+            return request.stage === "build"
+              ? {
+                  ...response,
+                  output: {
+                    ...(response.output as Record<string, unknown>),
+                    sourceWrites: writes
+                  }
+                }
+              : response;
+          }
+        }),
+        settings: byokSettings("openai")
+      }
+    )).rejects.toThrow("generated deck.json slide IDs/order do not match the accepted outline");
+
+    expect(cliCalls).toBe(0);
+    await expect(readFile(path.join(projectPath, "deck.json"), "utf8")).resolves.toBe(originalDeck);
+    await expect(readFile(path.join(projectPath, "slides", "001-title.html"), "utf8")).resolves.toBe(originalSlide);
+  });
+
+  it("rejects missing provider-manifest source references before applying writes", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const originalDeck = await readFile(path.join(projectPath, "deck.json"), "utf8");
+    const provider = createMockProvider({
+      checkResults: [createMockPassedCheck()],
+      id: "test-byok-missing-reference"
+    });
+    const writes = byokSourceWrites("Missing Reference");
+    const manifest = JSON.parse(writes[0]!.content) as { slides: Array<{ source: string }> };
+    manifest.slides[0]!.source = "slides/not-generated.html";
+    writes[0] = {
+      path: "deck.json",
+      content: `${JSON.stringify(manifest, null, 2)}\n`
+    };
+
+    await expect(runDesktopByokAgent(
+      {
+        brief: "Reject a missing manifest reference.",
+        projectPath,
+        runExport: false,
+        runId: "run-byok-missing-reference",
+        targetSlideCount: 1
+      },
+      {
+        cliRuntime: TEST_CLI_RUNTIME,
+        credentialStore: createFakeCredentialStore({
+          "app.htmlslide.ai-key:provider:openai": "sk-missing-reference"
+        }),
+        providerFactory: () => ({
+          id: "test-byok-missing-reference",
+          label: "Missing Reference Provider",
+          async validateCredentials() {
+            return { ok: true };
+          },
+          async complete(request) {
+            const response = await provider.complete(request);
+            return request.stage === "build"
+              ? {
+                  ...response,
+                  output: {
+                    ...(response.output as Record<string, unknown>),
+                    sourceWrites: writes
+                  }
+                }
+              : response;
+          }
+        }),
+        settings: byokSettings("openai")
+      }
+    )).rejects.toThrow("is not included in sourceWrites and does not already exist safely");
+
+    await expect(readFile(path.join(projectPath, "deck.json"), "utf8")).resolves.toBe(originalDeck);
+    await expect(access(path.join(projectPath, "slides", "not-generated.html"))).rejects.toThrow();
+  });
+
   it("cancels a BYOK run while credential validation is pending", async () => {
     const projectPath = await tempDir();
     await writeDeck(projectPath);
@@ -1253,6 +1514,7 @@ describe("desktop services", () => {
         runId: "run-byok-cancel-preflight"
       },
       {
+        cliRuntime: TEST_CLI_RUNTIME,
         signal: abortController.signal,
         credentialStore: createFakeCredentialStore({
           "app.htmlslide.ai-key:provider:openai": "sk-preflight-secret"
@@ -1306,6 +1568,7 @@ describe("desktop services", () => {
         runId: "run-byok-cancel-keychain"
       },
       {
+        cliRuntime: TEST_CLI_RUNTIME,
         signal: abortController.signal,
         credentialStore,
         settings: byokSettings("openai")
@@ -1341,6 +1604,7 @@ describe("desktop services", () => {
         runId: "run-byok-timeout-keychain"
       },
       {
+        cliRuntime: TEST_CLI_RUNTIME,
         credentialAccessTimeoutMs: 20,
         credentialStore,
         settings: byokSettings("openai")
@@ -1364,6 +1628,7 @@ describe("desktop services", () => {
         runId: "run-byok-timeout-preflight"
       },
       {
+        cliRuntime: TEST_CLI_RUNTIME,
         credentialStore: createFakeCredentialStore({
           "app.htmlslide.ai-key:provider:openai": "sk-timeout-secret"
         }),
@@ -1436,7 +1701,8 @@ describe("desktop services", () => {
       {
         brief: "Create a deck through the real provider adapter.",
         projectPath,
-        runId: "run-byok-openai"
+        runId: "run-byok-openai",
+        targetSlideCount: 1
       },
       {
         cliRuntime: {
@@ -1476,6 +1742,10 @@ describe("desktop services", () => {
     expect(result.agentReportPath).toBe(path.join(projectPath, ".htmlslide", "reports", "agent-run-run-byok-openai.json"));
     expect(report).toMatchObject({
       kind: "htmlslide-agent-run-report",
+      provider: {
+        model: "gpt-5-mini",
+        provider: "openai"
+      },
       providerId: "htmlslide-byok",
       runId: "run-byok-openai",
       status: "succeeded"
@@ -1570,6 +1840,15 @@ describe("desktop services", () => {
       model: "gpt-5-mini",
       provider: "compatible"
     });
+    const report = JSON.parse(
+      await readFile(path.join(projectPath, ".htmlslide", "reports", "latest-agent-run.json"), "utf8")
+    ) as DesktopAgentRunReport;
+    expect(report.provider).toEqual({
+      baseUrlSha256: "6e067d1e19d6075c41b9ece4d7d9524ac78e3313fe346f719ae46c5c98d4b072",
+      model: "gpt-5-mini",
+      provider: "compatible"
+    });
+    expect(report.provider).not.toHaveProperty("baseUrl");
     expect(providerFetch.calls[0]?.url).toBe("https://compatible.example.test/v1/models/gpt-5-mini");
     expect(providerFetch.calls.some((call) => call.url === "https://compatible.example.test/v1/chat/completions")).toBe(true);
     expect(JSON.stringify(result.logs)).not.toContain("provider-token-secret");
@@ -1588,6 +1867,7 @@ describe("desktop services", () => {
         runId: "run-byok-compatible-missing-base-url"
       },
       {
+        cliRuntime: TEST_CLI_RUNTIME,
         credentialStore: createFakeCredentialStore({
           "app.htmlslide.ai-key:provider:compatible": "provider-token-secret"
         }),
@@ -1765,7 +2045,8 @@ describe("desktop services", () => {
       {
         brief: "Create a deck through the built-in HTMLslide Agent.",
         projectPath,
-        runId: "run-byok-test"
+        runId: "run-byok-test",
+        targetSlideCount: 1
       },
       {
         cliRuntime: {
@@ -1843,7 +2124,8 @@ describe("desktop services", () => {
       {
         brief: "Create a deck that fails real check.",
         projectPath,
-        runId: "run-byok-check-failed"
+        runId: "run-byok-check-failed",
+        targetSlideCount: 1
       },
       {
         cliRuntime: {
@@ -1898,7 +2180,8 @@ describe("desktop services", () => {
       {
         brief: "Create and repair a deck.",
         projectPath,
-        runId: "run-byok-repair-writes"
+        runId: "run-byok-repair-writes",
+        targetSlideCount: 1
       },
       {
         cliRuntime: {
@@ -2013,6 +2296,7 @@ describe("desktop services", () => {
         runId: "run-byok-missing-key"
       },
       {
+        cliRuntime: TEST_CLI_RUNTIME,
         credentialStore: createFakeCredentialStore(),
         cliRunner: async (args) => {
           calls.push(args);
@@ -2053,6 +2337,7 @@ describe("desktop services", () => {
         runId: "run-byok-invalid-key"
       },
       {
+        cliRuntime: TEST_CLI_RUNTIME,
         credentialStore: createFakeCredentialStore({
           "app.htmlslide.ai-key:provider:openai": "sk-invalid-secret"
         }),

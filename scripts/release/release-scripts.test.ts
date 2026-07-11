@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import { buildArtifactMetadata } from "./artifact-metadata.mjs";
 import { renderChecklist } from "./create-rc-acceptance.mjs";
 import { renderReleaseNotes } from "./create-release-notes.mjs";
+import { main as verifyByokEvidence } from "./verify-byok-acceptance.mjs";
 
 const execFileAsync = promisify(execFile);
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
@@ -99,6 +101,225 @@ describe("release evidence scripts", () => {
     expect(stdout).toContain("Delete App And Check System Files");
   });
 
+  it("writes sanitized run-bound evidence for a valid 8-slide BYOK deck", async () => {
+    const fixture = await createByokEvidenceFixture();
+    try {
+      const outputPath = path.join(fixture.projectPath, ".htmlslide", "reports", "evidence.json");
+      await verifyByokEvidence([
+        "--project", fixture.projectPath,
+        "--provider-validation", fixture.validationPath,
+        "--run-id", "run-real-provider",
+        "--output", outputPath,
+        "--commit", "abc1234",
+        "--artifact-url", "https://github.test/artifacts/123"
+      ]);
+
+      const evidenceText = await readFile(outputPath, "utf8");
+      const evidence = JSON.parse(evidenceText) as Record<string, unknown>;
+      expect(evidence).toMatchObject({
+        kind: "htmlslide-byok-acceptance-evidence",
+        runId: "run-real-provider",
+        status: "passed",
+        provider: { provider: "openai", model: "gpt-test" },
+        project: { slideCount: 8 }
+      });
+      expect(evidenceText).not.toContain("sk-evidence-secret-value");
+      expect((evidence.artifacts as unknown[])).toHaveLength(10);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects stale artifact fingerprints and secret-bearing validation without leaking the secret", async () => {
+    const fixture = await createByokEvidenceFixture();
+    const sentinel = "sk-evidence-secret-value";
+    try {
+      await writeFile(path.join(fixture.projectPath, "exports", "deck.pdf"), "tampered", "utf8");
+      await expect(verifyByokEvidence([
+        "--project", fixture.projectPath,
+        "--provider-validation", fixture.validationPath,
+        "--output", path.join(fixture.projectPath, ".htmlslide", "reports", "stale.json")
+      ])).rejects.toThrow(/fingerprint mismatch/);
+
+      const validation = JSON.parse(await readFile(fixture.validationPath, "utf8")) as Record<string, unknown>;
+      validation.apiKey = sentinel;
+      await writeFile(fixture.validationPath, JSON.stringify(validation), "utf8");
+      let message = "";
+      try {
+        await verifyByokEvidence([
+          "--project", fixture.projectPath,
+          "--provider-validation", fixture.validationPath,
+          "--output", path.join(fixture.projectPath, ".htmlslide", "reports", "secret.json")
+        ]);
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+      expect(message).toMatch(/forbidden secret field/);
+      expect(message).not.toContain(sentinel);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed for wrong run/provider/count, malformed reports, stale sources, missing artifacts, and symlinks", async () => {
+    const cases = [
+      {
+        name: "wrong run",
+        mutate: async (fixture: Awaited<ReturnType<typeof createByokEvidenceFixture>>) => ({
+          extraArgs: ["--report", fixture.reportPath, "--run-id", "run-other"]
+        }),
+        message: /does not match requested runId/
+      },
+      {
+        name: "provider mismatch",
+        mutate: async (fixture: Awaited<ReturnType<typeof createByokEvidenceFixture>>) => {
+          const validation = JSON.parse(await readFile(fixture.validationPath, "utf8")) as Record<string, unknown>;
+          validation.provider = "anthropic";
+          await writeFile(fixture.validationPath, JSON.stringify(validation), "utf8");
+          return {};
+        },
+        message: /provider\/model does not match/
+      },
+      {
+        name: "invalid target count",
+        mutate: async (fixture: Awaited<ReturnType<typeof createByokEvidenceFixture>>) => {
+          const report = JSON.parse(await readFile(fixture.reportPath, "utf8")) as Record<string, unknown>;
+          report.targetSlideCount = 7;
+          await writeFile(fixture.reportPath, JSON.stringify(report), "utf8");
+          return {};
+        },
+        message: /explicit 8-12 slide target/
+      },
+      {
+        name: "malformed report",
+        mutate: async (fixture: Awaited<ReturnType<typeof createByokEvidenceFixture>>) => {
+          await writeFile(fixture.reportPath, "{", "utf8");
+          return {};
+        },
+        message: /not valid JSON/
+      },
+      {
+        name: "stale source",
+        mutate: async (fixture: Awaited<ReturnType<typeof createByokEvidenceFixture>>) => {
+          await writeFile(path.join(fixture.projectPath, "slides", "001-slide.html"), "changed\n", "utf8");
+          return {};
+        },
+        message: /source fingerprint mismatch/
+      },
+      {
+        name: "missing artifact",
+        mutate: async (fixture: Awaited<ReturnType<typeof createByokEvidenceFixture>>) => {
+          await rm(path.join(fixture.projectPath, "exports", "deck.pdf"));
+          return {};
+        },
+        message: /ENOENT/
+      },
+      {
+        name: "symlinked report",
+        mutate: async (fixture: Awaited<ReturnType<typeof createByokEvidenceFixture>>) => {
+          const outsideReport = path.join(fixture.root, "outside-report.json");
+          await writeFile(outsideReport, await readFile(fixture.reportPath));
+          await rm(fixture.reportPath);
+          await symlink(outsideReport, fixture.reportPath);
+          return {};
+        },
+        message: /must not be a symlink/
+      },
+      {
+        name: "compatible endpoint mismatch",
+        mutate: async (fixture: Awaited<ReturnType<typeof createByokEvidenceFixture>>) => {
+          const validation = JSON.parse(await readFile(fixture.validationPath, "utf8")) as Record<string, unknown>;
+          validation.provider = "compatible";
+          validation.baseUrl = "https://compatible.example.test/v1";
+          await writeFile(fixture.validationPath, JSON.stringify(validation), "utf8");
+          const report = JSON.parse(await readFile(fixture.reportPath, "utf8")) as {
+            provider: Record<string, unknown>;
+          };
+          report.provider = {
+            provider: "compatible",
+            model: "gpt-test",
+            baseUrlSha256: "0".repeat(64)
+          };
+          await writeFile(fixture.reportPath, JSON.stringify(report), "utf8");
+          return {};
+        },
+        message: /compatible endpoint does not match/
+      },
+      {
+        name: "tampered checkpoint snapshot",
+        mutate: async (fixture: Awaited<ReturnType<typeof createByokEvidenceFixture>>) => {
+          await writeFile(
+            path.join(fixture.projectPath, ".htmlslide", "checkpoints", "run-real-provider", "snapshot", "deck.json"),
+            "tampered\n",
+            "utf8"
+          );
+          return {};
+        },
+        message: /Checkpoint snapshot digest mismatch/
+      },
+      {
+        name: "secret-bearing project source",
+        mutate: async (fixture: Awaited<ReturnType<typeof createByokEvidenceFixture>>) => {
+          await writeFile(
+            path.join(fixture.projectPath, "notes", "001-slide.md"),
+            "api_key=sk-project-secret-value-123456\n",
+            "utf8"
+          );
+          await refreshFixtureSourceBinding(fixture);
+          return {};
+        },
+        message: /Project source contains common secret-like material/
+      },
+      {
+        name: "invalid export kind",
+        mutate: async (fixture: Awaited<ReturnType<typeof createByokEvidenceFixture>>) => {
+          const manifest = JSON.parse(await readFile(fixture.exportManifestPath, "utf8")) as {
+            artifacts: Array<Record<string, unknown>>;
+          };
+          const pdf = manifest.artifacts.find((artifact) => artifact.kind === "pdf");
+          if (pdf) {
+            pdf.kind = "deckpkg";
+          }
+          await writeFile(fixture.exportManifestPath, JSON.stringify(manifest), "utf8");
+          return {};
+        },
+        message: /kind\/path metadata is inconsistent/
+      },
+      {
+        name: "symlinked output parent",
+        mutate: async (fixture: Awaited<ReturnType<typeof createByokEvidenceFixture>>) => {
+          const outside = path.join(fixture.root, "outside-evidence");
+          await mkdir(outside);
+          const link = path.join(fixture.projectPath, ".htmlslide", "reports", "link");
+          await symlink(outside, link);
+          return { outputPath: path.join(link, "evidence.json") };
+        },
+        message: /Project directory must not contain symlinks/
+      }
+    ];
+
+    for (const testCase of cases) {
+      const fixture = await createByokEvidenceFixture();
+      try {
+        const mutation = await testCase.mutate(fixture);
+        await expect(verifyByokEvidence([
+          "--project", fixture.projectPath,
+          "--provider-validation", fixture.validationPath,
+          "--report", fixture.reportPath,
+          "--output", mutation.outputPath ?? path.join(
+            fixture.projectPath,
+            ".htmlslide",
+            "reports",
+            `${testCase.name}.json`
+          ),
+          ...(mutation.extraArgs ?? [])
+        ])).rejects.toThrow(testCase.message);
+      } finally {
+        await rm(fixture.root, { recursive: true, force: true });
+      }
+    }
+  });
+
   it("renders release notes from deterministic commit metadata", () => {
     const notes = renderReleaseNotes({
       commits: [
@@ -144,3 +365,195 @@ describe("release evidence scripts", () => {
     expect(notes).toContain("Verify checkout fetch depth and tag history.");
   });
 });
+
+async function createByokEvidenceFixture() {
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-byok-evidence-"));
+  const projectPath = path.join(fixtureRoot, "deck");
+  const reportsPath = path.join(projectPath, ".htmlslide", "reports");
+  const exportsPath = path.join(projectPath, "exports");
+  await Promise.all([
+    mkdir(reportsPath, { recursive: true }),
+    mkdir(path.join(projectPath, "slides"), { recursive: true }),
+    mkdir(path.join(projectPath, "notes"), { recursive: true }),
+    mkdir(path.join(exportsPath, "thumbnails"), { recursive: true })
+  ]);
+
+  const slides = Array.from({ length: 8 }, (_, index) => {
+    const id = `${String(index + 1).padStart(3, "0")}-slide`;
+    return { id, title: `Slide ${index + 1}`, source: `slides/${id}.html`, notes: `notes/${id}.md` };
+  });
+  await Promise.all(slides.flatMap((slide) => [
+    writeFile(path.join(projectPath, slide.source), `<section data-slide-id="${slide.id}"></section>\n`, "utf8"),
+    writeFile(path.join(projectPath, slide.notes), `# ${slide.title}\n`, "utf8")
+  ]));
+  await writeFile(path.join(projectPath, "deck.json"), JSON.stringify({
+    schemaVersion: "0.1.0",
+    id: "real-provider-deck",
+    title: "Real Provider Deck",
+    language: "en-US",
+    aspectRatio: "16:9",
+    viewport: { width: 1920, height: 1080 },
+    slides
+  }, null, 2), "utf8");
+
+  const sourcePaths = ["deck.json", ...slides.flatMap((slide) => [slide.source, slide.notes])];
+  const sources = [];
+  for (const sourcePath of sourcePaths) {
+    const bytes = await readFile(path.join(projectPath, sourcePath));
+    sources.push({
+      path: sourcePath,
+      sizeBytes: bytes.byteLength,
+      sha256: createHash("sha256").update(bytes).digest("hex")
+    });
+  }
+  sources.sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)));
+  const sourceDigest = createHash("sha256").update(JSON.stringify(
+    sources.map((source) => ({ path: source.path, sizeBytes: source.sizeBytes, sha256: source.sha256 }))
+  )).digest("hex");
+
+  const artifactFixtures = [
+    { path: "exports/deck.pdf", kind: "pdf", content: "%PDF-test" },
+    { path: "exports/deck.deckpkg", kind: "deckpkg", content: "deckpkg-test" },
+    ...slides.map((slide) => ({
+      path: `exports/thumbnails/${slide.id}.png`,
+      kind: "thumbnail",
+      slideId: slide.id,
+      content: `png-${slide.id}`
+    }))
+  ];
+  const artifacts = [];
+  for (const artifact of artifactFixtures) {
+    const bytes = Buffer.from(artifact.content);
+    await writeFile(path.join(projectPath, artifact.path), bytes);
+    artifacts.push({
+      path: artifact.path,
+      kind: artifact.kind,
+      sizeBytes: bytes.byteLength,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      ...(artifact.slideId ? { slideId: artifact.slideId } : {})
+    });
+  }
+  artifacts.sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)));
+  await writeFile(path.join(exportsPath, "export-manifest.json"), JSON.stringify({
+    schemaVersion: "0.1.0",
+    compilerVersion: "0.1.0",
+    hashAlgorithm: "sha256",
+    sourceDigest,
+    sources,
+    artifacts
+  }, null, 2), "utf8");
+
+  const validationPath = path.join(fixtureRoot, "provider-validation.json");
+  await writeFile(validationPath, JSON.stringify({
+    status: "passed",
+    command: "agent validate-provider",
+    provider: "openai",
+    model: "gpt-test",
+    apiKeyEnv: "OPENAI_API_KEY",
+    credential: { ok: true, providerId: "htmlslide-provider-validation" },
+    secretRecorded: false,
+    exitCode: 0
+  }, null, 2), "utf8");
+
+  const thumbnailCachePath = path.join(projectPath, ".htmlslide", "cache", "thumbnails", "001-slide.png");
+  await mkdir(path.dirname(thumbnailCachePath), { recursive: true });
+  await writeFile(thumbnailCachePath, "cache-only", "utf8");
+  const artifactPaths = [
+    ...artifacts.map((artifact) => path.join(projectPath, artifact.path)),
+    thumbnailCachePath
+  ];
+  const checkpointRoot = path.join(projectPath, ".htmlslide", "checkpoints", "run-real-provider");
+  await mkdir(path.join(checkpointRoot, "snapshot"), { recursive: true });
+  const checkpointDeck = "{}\n";
+  const checkpointDeckDigest = createHash("sha256").update(checkpointDeck).digest("hex");
+  await writeFile(path.join(checkpointRoot, "snapshot", "deck.json"), checkpointDeck, "utf8");
+  await writeFile(path.join(checkpointRoot, "manifest.json"), JSON.stringify({
+    schemaVersion: "0.1.0",
+    id: "checkpoint-run-real-provider",
+    runId: "run-real-provider",
+    projectRoot: projectPath,
+    strategy: "file-copy",
+    createdAt: "2026-07-11T00:00:00.000Z",
+    label: "Before run",
+    sourceRoots: ["deck.json", "slides/", "notes/", "theme/", "assets/"],
+    files: [{
+      path: "deck.json",
+      status: "modified",
+      origin: "snapshot",
+      snapshotPath: "snapshot/deck.json",
+      digest: checkpointDeckDigest,
+      originalDigest: checkpointDeckDigest
+    }],
+    restore: { canRevert: true, notes: "Fixture checkpoint" }
+  }, null, 2), "utf8");
+  const reportPayload = JSON.stringify({
+    schemaVersion: "0.1.0",
+    kind: "htmlslide-agent-run-report",
+    runId: "run-real-provider",
+    providerId: "htmlslide-byok",
+    provider: { provider: "openai", model: "gpt-test" },
+    targetSlideCount: 8,
+    projectPath,
+    generatedAt: "2026-07-11T00:00:00.000Z",
+    ok: true,
+    status: "succeeded",
+    stages: [],
+    outputs: {
+      outline: { title: "Deck", language: "en-US", audience: "reviewers", durationMinutes: 10, slides },
+      build: {
+        filesChanged: ["deck.json", ...slides.flatMap((slide) => [slide.source, slide.notes])],
+        slidesChanged: slides.map((slide) => slide.id),
+        notesChanged: slides.map((slide) => slide.id),
+        themeChanged: [],
+        sourceWriteCount: 17,
+        sourceWritePaths: ["deck.json", ...slides.flatMap((slide) => [slide.source, slide.notes])]
+      },
+      checks: [],
+      repairs: []
+    },
+    applied: { source: "provider-source-writes", filesChanged: ["deck.json"], writeCount: 17 },
+    checkpoint: { id: "checkpoint-run-real-provider", strategy: "file-copy", canRevert: true },
+    exportManifest: { sourceDigest, artifactCount: artifacts.length },
+    cli: {
+      check: { ok: true, exitCode: 0, status: "passed", summary: { errors: 0, warnings: 0 }, artifactPaths: [] },
+      export: { ok: true, exitCode: 0, status: "passed", artifactPaths }
+    }
+  }, null, 2);
+  await Promise.all([
+    writeFile(path.join(reportsPath, "latest-agent-run.json"), reportPayload, "utf8"),
+    writeFile(path.join(reportsPath, "agent-run-run-real-provider.json"), reportPayload, "utf8")
+  ]);
+
+  return {
+    root: fixtureRoot,
+    projectPath,
+    validationPath,
+    reportPath: path.join(reportsPath, "agent-run-run-real-provider.json"),
+    exportManifestPath: path.join(exportsPath, "export-manifest.json")
+  };
+}
+
+async function refreshFixtureSourceBinding(
+  fixture: Awaited<ReturnType<typeof createByokEvidenceFixture>>
+): Promise<void> {
+  const manifest = JSON.parse(await readFile(fixture.exportManifestPath, "utf8")) as {
+    sourceDigest: string;
+    sources: Array<{ path: string; sizeBytes: number; sha256: string }>;
+  };
+  for (const source of manifest.sources) {
+    const bytes = await readFile(path.join(fixture.projectPath, source.path));
+    source.sizeBytes = bytes.byteLength;
+    source.sha256 = createHash("sha256").update(bytes).digest("hex");
+  }
+  manifest.sources.sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)));
+  manifest.sourceDigest = createHash("sha256").update(JSON.stringify(
+    manifest.sources.map((source) => ({ path: source.path, sizeBytes: source.sizeBytes, sha256: source.sha256 }))
+  )).digest("hex");
+  await writeFile(fixture.exportManifestPath, JSON.stringify(manifest), "utf8");
+
+  const report = JSON.parse(await readFile(fixture.reportPath, "utf8")) as {
+    exportManifest: { sourceDigest: string };
+  };
+  report.exportManifest.sourceDigest = manifest.sourceDigest;
+  await writeFile(fixture.reportPath, JSON.stringify(report), "utf8");
+}

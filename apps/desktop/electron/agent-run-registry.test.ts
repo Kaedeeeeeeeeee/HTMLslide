@@ -122,6 +122,30 @@ describe("DesktopAgentRunRegistry", () => {
     })).toThrow(/Unknown agent engine/);
   });
 
+  it("validates and preserves an explicit target slide count", async () => {
+    const execute = vi.fn<DesktopAgentRunExecutor>(async (request) => result(request.runId));
+    const registry = new DesktopAgentRunRegistry({ execute, runIdFactory: () => "run-count" });
+
+    expect(() => registry.start({
+      engine: "htmlslide-agent",
+      projectPath: "/tmp/invalid-count",
+      brief: "Build",
+      targetSlideCount: 0
+    })).toThrow(/between 1 and 100/);
+
+    registry.start({
+      engine: "htmlslide-agent",
+      projectPath: "/tmp/count",
+      brief: "Build",
+      targetSlideCount: 10
+    });
+    await vi.waitFor(() => expect(registry.get("run-count")?.status).toBe("succeeded"));
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ targetSlideCount: 10 }),
+      expect.any(Object)
+    );
+  });
+
   it("uses the canonical project path for active-run locking and recovery", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-agent-registry-"));
     const projectPath = path.join(root, "deck");

@@ -47,6 +47,7 @@ import {
   type ModelProvider
 } from "@htmlslide/agent";
 import { buildSlidePreviewDocument } from "@htmlslide/compiler";
+import { ExportManifestSchema, parseDeck, type Deck } from "@htmlslide/core";
 import { AGENT_RUN_REPORT_SCHEMA_VERSION } from "@htmlslide/core/version";
 import {
   DeckPackageValidationError,
@@ -249,6 +250,7 @@ export type DesktopOfficialSkillsOptions = {
 export type DesktopMockAgentRunRequest = {
   projectPath: string;
   brief: string;
+  targetSlideCount?: number;
   runExport?: boolean;
   maxRepairRounds?: number;
   runId?: string;
@@ -287,6 +289,12 @@ export type DesktopAgentRunReport = {
   kind: "htmlslide-agent-run-report";
   runId: string;
   providerId: "htmlslide-mock" | "htmlslide-byok";
+  provider?: {
+    provider: DesktopApiKeyProvider;
+    model: string;
+    baseUrlSha256?: string;
+  };
+  targetSlideCount?: number;
   projectPath: string;
   generatedAt: string;
   ok: boolean;
@@ -339,6 +347,10 @@ export type DesktopAgentRunReport = {
   cli: {
     check?: DesktopAgentRunReportCliResult;
     export?: DesktopAgentRunReportCliResult;
+  };
+  exportManifest?: {
+    sourceDigest: string;
+    artifactCount: number;
   };
 };
 
@@ -1711,6 +1723,7 @@ export async function runDesktopMockAgent(
     projectRoot: projectPath,
     provider: createMockProvider(),
     runId: request.runId,
+    targetSlideCount: request.targetSlideCount,
     metadata: {
       mode: "desktop-mock-agent"
     },
@@ -1834,6 +1847,7 @@ export async function runDesktopMockAgent(
     exportResult,
     projectPath,
     providerId: "htmlslide-mock",
+    targetSlideCount: request.targetSlideCount,
     stages
   });
 
@@ -1865,7 +1879,6 @@ export async function runDesktopByokAgent(
   const events: AgentRunEvent[] = [];
   const logs: AgentRunLog[] = [];
   const cliRunner = options.cliRunner ?? runHtmlslideCli;
-  const credentialStore = options.credentialStore ?? createDesktopCredentialStore();
   const observers = createDesktopAgentObserverDispatcher(options, runId, events, logs);
   const addEvent = createDesktopAgentEventRecorder(events, runId, observers);
   const addLog = createDesktopAgentLogRecorder(logs, runId, observers);
@@ -1897,6 +1910,38 @@ export async function runDesktopByokAgent(
     });
   }
 
+  if (!options.cliRuntime) {
+    return byokAgentFailureResult({
+      addEvent,
+      addLog,
+      error: "HTMLslide CLI runtime is not available. Rebuild the app or reinstall HTMLslide before running HTMLslide Agent.",
+      events,
+      logs,
+      projectPath,
+      runId,
+      settings: settingsSummary,
+      stage: "brief"
+    });
+  }
+
+  if (!options.cliRunner) {
+    try {
+      await assertDesktopCliRuntimeUsable(options.cliRuntime);
+    } catch (error) {
+      return byokAgentFailureResult({
+        addEvent,
+        addLog,
+        error: error instanceof Error ? error.message : String(error),
+        events,
+        logs,
+        projectPath,
+        runId,
+        settings: settingsSummary,
+        stage: "brief"
+      });
+    }
+  }
+
   if (!settings.apiKey.hasKey) {
     return byokAgentFailureResult({
       addEvent,
@@ -1911,6 +1956,7 @@ export async function runDesktopByokAgent(
     });
   }
 
+  const credentialStore = options.credentialStore ?? createDesktopCredentialStore();
   if (!credentialStore.available) {
     return byokAgentFailureResult({
       addEvent,
@@ -2084,6 +2130,7 @@ export async function runDesktopByokAgent(
     projectRoot: projectPath,
     provider: modelProvider,
     runId,
+    targetSlideCount: request.targetSlideCount,
     metadata: {
       credentialAccount,
       ...(baseUrl ? { baseUrl } : {}),
@@ -2216,6 +2263,8 @@ export async function runDesktopByokAgent(
     exportResult,
     projectPath,
     providerId: "htmlslide-byok",
+    providerMetadata: settingsSummary,
+    targetSlideCount: request.targetSlideCount,
     stages
   });
 
@@ -3616,6 +3665,21 @@ async function runDesktopAgentCliStep(
   });
 }
 
+async function assertDesktopCliRuntimeUsable(cliRuntime: CliRuntime): Promise<void> {
+  const cliStat = await fs.lstat(cliRuntime.cliPath);
+  const cwdStat = await fs.lstat(cliRuntime.cwd);
+  const rootStat = cliRuntime.rootPath ? await fs.lstat(cliRuntime.rootPath) : undefined;
+  if (
+    !cliStat.isFile() ||
+    cliStat.isSymbolicLink() ||
+    !cwdStat.isDirectory() ||
+    (rootStat !== undefined && !rootStat.isDirectory())
+  ) {
+    throw new Error("HTMLslide CLI runtime is no longer usable. Rebuild the app or reinstall HTMLslide before running HTMLslide Agent.");
+  }
+  await fs.access(cliRuntime.cliPath, fsConstants.R_OK);
+}
+
 function desktopAgentCliLog(runId: string, stage: "check" | "export", result: CliRunResult): AgentRunLog {
   return {
     runId,
@@ -4348,6 +4412,12 @@ async function applyByokAgentSourceWrites({
     });
   }
 
+  await validateByokAgentBuildManifest({
+    batches,
+    projectPath,
+    result
+  });
+
   const stageResults: DesktopByokAgentAppliedResult["stages"] = [];
   for (const batch of batches) {
     const applied = await applyAgentSourceWrites({
@@ -4374,6 +4444,96 @@ async function applyByokAgentSourceWrites({
   };
 }
 
+async function validateByokAgentBuildManifest({
+  batches,
+  projectPath,
+  result
+}: {
+  batches: Array<{
+    stage: Extract<AgentRunStage, "build" | "repair">;
+    attempt?: number;
+    writes: AgentSourceWrite[];
+  }>;
+  projectPath: string;
+  result: AgentRunResult;
+}): Promise<void> {
+  const outline = result.outputs.outline;
+  if (!outline) {
+    throw new Error("HTMLslide Agent provider did not return an accepted outline for build-manifest validation.");
+  }
+
+  const finalWriteByPath = new Map<string, AgentSourceWrite>();
+  for (const batch of batches) {
+    for (const write of batch.writes) {
+      finalWriteByPath.set(write.path, write);
+    }
+  }
+
+  const manifestWrite = finalWriteByPath.get("deck.json");
+  if (!manifestWrite) {
+    throw new Error("HTMLslide Agent provider sourceWrites must include the generated deck.json manifest.");
+  }
+
+  let deck: Deck;
+  try {
+    deck = parseDeck(JSON.parse(manifestWrite.content) as unknown);
+  } catch (error) {
+    const detail = error instanceof SyntaxError ? ` ${error.message}` : "";
+    throw new Error(`HTMLslide Agent generated deck.json is invalid.${detail}`);
+  }
+
+  const outlineSlideIds = outline.slides.map((slide) => slide.id);
+  const manifestSlideIds = deck.slides.map((slide) => slide.id);
+  if (
+    outlineSlideIds.length !== manifestSlideIds.length ||
+    outlineSlideIds.some((slideId, index) => slideId !== manifestSlideIds[index])
+  ) {
+    throw new Error(
+      `HTMLslide Agent generated deck.json slide IDs/order do not match the accepted outline ` +
+      `(outline: ${outlineSlideIds.join(", ")}; deck.json: ${manifestSlideIds.join(", ")}).`
+    );
+  }
+
+  const referencedPaths = uniqueStrings(
+    deck.slides.flatMap((slide) => slide.notes ? [slide.source, slide.notes] : [slide.source])
+  );
+  for (const referencedPath of referencedPaths) {
+    if (finalWriteByPath.has(referencedPath)) {
+      continue;
+    }
+    await assertExistingByokManifestReferenceSafe(projectPath, referencedPath);
+  }
+}
+
+async function assertExistingByokManifestReferenceSafe(
+  projectPath: string,
+  referencedPath: string
+): Promise<void> {
+  const projectRoot = await fs.realpath(projectPath);
+  let currentPath = projectRoot;
+
+  try {
+    for (const segment of referencedPath.split("/")) {
+      currentPath = path.join(currentPath, segment);
+      const stats = await fs.lstat(currentPath);
+      if (stats.isSymbolicLink()) {
+        throw new Error(`path component is a symbolic link: ${referencedPath}`);
+      }
+    }
+
+    const stats = await fs.stat(currentPath);
+    if (!stats.isFile()) {
+      throw new Error(`path is not a regular file: ${referencedPath}`);
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `HTMLslide Agent generated deck.json references ${referencedPath}, but it is not included in sourceWrites ` +
+      `and does not already exist safely in the project (${detail}).`
+    );
+  }
+}
+
 async function writeDesktopAgentRunReport({
   agent,
   applied,
@@ -4382,6 +4542,8 @@ async function writeDesktopAgentRunReport({
   exportResult,
   projectPath,
   providerId,
+  providerMetadata,
+  targetSlideCount,
   stages
 }: {
   agent: AgentRunResult;
@@ -4391,10 +4553,12 @@ async function writeDesktopAgentRunReport({
   exportResult?: CliRunResult;
   projectPath: string;
   providerId: DesktopAgentRunReport["providerId"];
+  providerMetadata?: Pick<DesktopByokAgentRunSummary, "provider" | "model" | "baseUrl">;
+  targetSlideCount?: number;
   stages: DesktopMockAgentStageSummary[];
 }): Promise<string> {
-  const reportsPath = path.join(projectPath, ".htmlslide", "reports");
-  await fs.mkdir(reportsPath, { recursive: true });
+  const reportsPath = await ensureProjectRuntimeDirectory(projectPath, [".htmlslide", "reports"]);
+  const exportManifest = await readDesktopAgentExportManifestSummary(projectPath, exportResult);
 
   const report = createDesktopAgentRunReport({
     agent,
@@ -4404,13 +4568,16 @@ async function writeDesktopAgentRunReport({
     exportResult,
     projectPath,
     providerId,
+    providerMetadata,
+    targetSlideCount,
+    exportManifest,
     stages
   });
   const payload = `${JSON.stringify(report, null, 2)}\n`;
   const reportPath = path.join(reportsPath, `agent-run-${safeAgentRunReportId(agent.runId)}.json`);
   await Promise.all([
-    fs.writeFile(reportPath, payload, "utf8"),
-    fs.writeFile(path.join(reportsPath, "latest-agent-run.json"), payload, "utf8")
+    writeRuntimeFileAtomic(reportPath, payload),
+    writeRuntimeFileAtomic(path.join(reportsPath, "latest-agent-run.json"), payload)
   ]);
 
   return reportPath;
@@ -4424,6 +4591,9 @@ function createDesktopAgentRunReport({
   exportResult,
   projectPath,
   providerId,
+  providerMetadata,
+  targetSlideCount,
+  exportManifest,
   stages
 }: {
   agent: AgentRunResult;
@@ -4433,6 +4603,9 @@ function createDesktopAgentRunReport({
   exportResult?: CliRunResult;
   projectPath: string;
   providerId: DesktopAgentRunReport["providerId"];
+  providerMetadata?: Pick<DesktopByokAgentRunSummary, "provider" | "model" | "baseUrl">;
+  targetSlideCount?: number;
+  exportManifest?: DesktopAgentRunReport["exportManifest"];
   stages: DesktopMockAgentStageSummary[];
 }): DesktopAgentRunReport {
   const report: DesktopAgentRunReport = {
@@ -4448,6 +4621,24 @@ function createDesktopAgentRunReport({
     outputs: sanitizeAgentOutputsForReport(agent.outputs),
     cli: {}
   };
+
+  if (targetSlideCount !== undefined) {
+    report.targetSlideCount = targetSlideCount;
+  }
+
+  if (providerMetadata) {
+    report.provider = {
+      model: providerMetadata.model,
+      provider: providerMetadata.provider,
+      ...(providerMetadata.baseUrl
+        ? { baseUrlSha256: createHash("sha256").update(providerMetadata.baseUrl).digest("hex") }
+        : {})
+    };
+  }
+
+  if (exportManifest) {
+    report.exportManifest = exportManifest;
+  }
 
   const appliedSummary = summarizeAppliedAgentRunForReport(applied);
   if (appliedSummary) {
@@ -4486,6 +4677,57 @@ function createDesktopAgentRunReport({
   }
 
   return report;
+}
+
+async function readDesktopAgentExportManifestSummary(
+  projectPath: string,
+  exportResult: CliRunResult | undefined
+): Promise<DesktopAgentRunReport["exportManifest"] | undefined> {
+  if (!exportResult?.ok) {
+    return undefined;
+  }
+  try {
+    const manifestPath = path.join(projectPath, "exports", "export-manifest.json");
+    const manifestStat = await fs.lstat(manifestPath);
+    if (!manifestStat.isFile() || manifestStat.isSymbolicLink()) {
+      return undefined;
+    }
+    const manifest = ExportManifestSchema.parse(JSON.parse(await fs.readFile(manifestPath, "utf8")));
+    return {
+      sourceDigest: manifest.sourceDigest,
+      artifactCount: manifest.artifacts.length
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function ensureProjectRuntimeDirectory(projectPath: string, segments: string[]): Promise<string> {
+  let current = path.resolve(projectPath);
+  for (const segment of segments) {
+    current = path.join(current, segment);
+    try {
+      await fs.mkdir(current);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw error;
+      }
+    }
+    const currentStat = await fs.lstat(current);
+    if (!currentStat.isDirectory() || currentStat.isSymbolicLink()) {
+      throw new Error(`HTMLslide runtime path must be a real project directory: ${current}`);
+    }
+  }
+  return current;
+}
+
+async function writeRuntimeFileAtomic(filePath: string, payload: string): Promise<void> {
+  const temporaryPath = path.join(
+    path.dirname(filePath),
+    `.${path.basename(filePath)}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  );
+  await fs.writeFile(temporaryPath, payload, { encoding: "utf8", flag: "wx", mode: 0o600 });
+  await fs.rename(temporaryPath, filePath);
 }
 
 function sanitizeAgentOutputsForReport(outputs: AgentRunResult["outputs"]): DesktopAgentRunReport["outputs"] {

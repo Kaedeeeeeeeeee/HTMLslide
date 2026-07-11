@@ -74,7 +74,7 @@ These items require human evidence for the exact artifact before an alpha build 
 | --- | --- |
 | Clean macOS install | Completed checklist from `pnpm rc:checklist` on a clean account or isolated machine. |
 | Gatekeeper behavior | Screenshot or note confirming expected unsigned alpha warning or signed release behavior. |
-| Real BYOK provider | At least one real provider account with `htmlslide agent validate-provider --json` evidence, test prompt, generated deck, check/export result, and secret-safety review. |
+| Real BYOK provider | At least one real provider account with sanitized `htmlslide agent validate-provider --json` output plus passing `pnpm rc:byok-evidence` evidence for the exact 8-12 slide desktop run and candidate artifact. |
 | Real Claude Code compatibility claim | The exact packaged RC runs a deck edit through the tester's own authenticated Claude Code installation; evidence includes detected version/auth state, permission summary, completed edit, cancellation behavior, diff review, Check/Export result, revert result, and secret-safety review. |
 | Real Codex compatibility claim | The exact packaged RC runs a deck edit through the tester's own authenticated Codex installation; evidence includes detected version and `codex login status`, sandbox/permission summary, completed edit, cancellation behavior, diff review, Check/Export result, revert result, and secret-safety review. |
 | Gemini CLI status | Detection may be recorded, but Gemini remains detection-only. A headless editing claim is not permitted until a separate non-interactive authentication and permission contract is implemented, tested, and manually validated. |
@@ -93,10 +93,17 @@ The generated checklist lives under `dist/acceptance/` and is intentionally not 
 For BYOK evidence, run provider validation from a shell that has the key in an environment variable, not in the command line:
 
 ```bash
-htmlslide agent validate-provider --provider openai --model <model-id> --api-key-env OPENAI_API_KEY --json
+umask 077
+htmlslide agent validate-provider --provider openai --model <model-id> --api-key-env OPENAI_API_KEY --json > /path/to/provider-validation.json
 ```
 
-The JSON output is release evidence only after confirming it does not include the API key value.
+Save the JSON output, generate an explicit 8-12 slide deck in the desktop candidate, then verify the exact run:
+
+```bash
+pnpm rc:byok-evidence -- --project <deck-path> --provider-validation <validation.json> --run-id <run-id> --commit <commit> --artifact-url <artifact-url>
+```
+
+The provider JSON alone proves only credential/model reachability. BYOK release evidence is complete only when the verifier passes, its sanitized JSON is attached to the candidate notes, and the completed checklist confirms that the caller-declared commit/artifact labels identify the exact package tested.
 
 Fake Claude/Codex executables in unit, service, Electron, or packaging tests are automated evidence. They do not satisfy either real-account row above. Manual evidence is valid only for the exact packaged artifact named in the checklist; a result from a source checkout, a different build, or another tester's login does not transfer to the candidate.
 

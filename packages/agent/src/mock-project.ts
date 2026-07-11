@@ -19,19 +19,7 @@ import type {
 } from "./types.js";
 
 const deckPath = "deck.json" as const;
-const slidePaths = ["slides/001-title.html", "slides/002-workflow.html", "slides/003-review.html"] as const;
-const notePaths = ["notes/001-title.md", "notes/002-workflow.md", "notes/003-review.md"] as const;
 const themePaths = ["theme/theme.css", "theme/tokens.json"] as const;
-
-const filesChanged = [deckPath, ...slidePaths, ...notePaths, ...themePaths] as const;
-
-const expectedSlideIds = ["001-title", "002-workflow", "003-review"] as const;
-
-const slideFileSpecs = [
-  { id: "001-title", source: "slides/001-title.html", notes: "notes/001-title.md" },
-  { id: "002-workflow", source: "slides/002-workflow.html", notes: "notes/002-workflow.md" },
-  { id: "003-review", source: "slides/003-review.html", notes: "notes/003-review.md" }
-] as const;
 
 type ApplicableMockAgentRunResult = AgentRunSucceededResult & {
   outputs: AgentRunSucceededResult["outputs"] & {
@@ -40,30 +28,6 @@ type ApplicableMockAgentRunResult = AgentRunSucceededResult & {
     outline: AgentOutline;
     visualDirection: VisualDirectionSet;
   };
-};
-
-const fallbackSlides: Record<
-  (typeof expectedSlideIds)[number],
-  Pick<AgentOutlineSlide, "id" | "title" | "kind" | "goal">
-> = {
-  "001-title": {
-    id: "001-title",
-    title: "HTMLslide mock deck",
-    kind: "title",
-    goal: "Introduce the deck promise and project constraints."
-  },
-  "002-workflow": {
-    id: "002-workflow",
-    title: "Controlled agent workflow",
-    kind: "content",
-    goal: "Show the brief, outline, visual direction, build, check, repair, export, review loop."
-  },
-  "003-review": {
-    id: "003-review",
-    title: "Reviewable outputs",
-    kind: "closing",
-    goal: "Summarize files, checks, exports, and next actions."
-  }
 };
 
 export const applyMockAgentProject = async (
@@ -79,44 +43,34 @@ export const applyMockAgentProject = async (
   const title = brief?.title ?? outline.title;
   const language = brief?.language ?? outline.language;
   const briefText = cleanInlineText(input.brief ?? brief?.brief ?? "Create a short mock HTMLslide deck.");
-  const slides = slideFileSpecs.map((spec) => {
-    const outlineSlide = outline.slides.find((slide) => slide.id === spec.id) ?? fallbackSlides[spec.id];
-    return {
-      ...outlineSlide,
-      source: spec.source,
-      notes: spec.notes
-    };
-  });
+  const slides = outline.slides.map((slide) => ({
+    ...slide,
+    source: `slides/${slide.id}.html`,
+    notes: `notes/${slide.id}.md`
+  }));
+  const slidePaths = slides.map((slide) => slide.source);
+  const notePaths = slides.map((slide) => slide.notes);
 
   const writes: AgentSourceWrite[] = [
     {
       path: deckPath,
       content: `${stableJson(buildDeckJson({ title, language, runId: input.result.runId, slides }))}\n`
     },
-    {
-      path: "slides/001-title.html",
-      content: buildTitleSlide({ title, brief, direction: selectedDirection })
-    },
-    {
-      path: "slides/002-workflow.html",
-      content: buildWorkflowSlide({ slides, direction: selectedDirection })
-    },
-    {
-      path: "slides/003-review.html",
-      content: buildReviewSlide({ title, direction: selectedDirection })
-    },
-    {
-      path: "notes/001-title.md",
-      content: buildTitleNotes({ title, briefText, slide: slides[0] })
-    },
-    {
-      path: "notes/002-workflow.md",
-      content: buildWorkflowNotes({ briefText, slide: slides[1] })
-    },
-    {
-      path: "notes/003-review.md",
-      content: buildReviewNotes({ slide: slides[2] })
-    },
+    ...slides.map((slide, index) => ({
+      path: slide.source,
+      content: buildMockSlide({
+        brief,
+        direction: selectedDirection,
+        index,
+        slide,
+        slides,
+        title
+      })
+    })),
+    ...slides.map((slide, index) => ({
+      path: slide.notes,
+      content: buildMockNotes({ briefText, index, slide, slideCount: slides.length, title })
+    })),
     {
       path: "theme/theme.css",
       content: buildThemeCss(selectedDirection)
@@ -141,13 +95,13 @@ export const applyMockAgentProject = async (
     title,
     language,
     selectedVisualDirectionId: selectedDirection.id,
-    filesChanged: [...filesChanged],
-    slideIds: [...expectedSlideIds],
+    filesChanged: [deckPath, ...slidePaths, ...notePaths, ...themePaths],
+    slideIds: slides.map((slide) => slide.id),
     slides: appliedSlides,
     paths: {
       deck: deckPath,
-      slides: [...slidePaths],
-      notes: [...notePaths],
+      slides: slidePaths,
+      notes: notePaths,
       theme: [...themePaths]
     }
   };
@@ -178,7 +132,7 @@ function assertSuccessfulMockResult(
   }
 
   const changedSlides = new Set(result.outputs.build.slidesChanged);
-  const missingSlide = expectedSlideIds.find((slideId) => !changedSlides.has(slideId));
+  const missingSlide = result.outputs.outline.slides.find((slide) => !changedSlides.has(slide.id))?.id;
   if (missingSlide !== undefined) {
     throw new Error(`Cannot apply mock agent project files; build output is missing ${missingSlide}.`);
   }
@@ -248,8 +202,9 @@ const buildTitleSlide = (input: {
   title: string;
   brief?: NormalizedBrief;
   direction: VisualDirection;
+  slideId: string;
 }): string => `${[
-  `<section class="slide title-slide" data-slide-id="001-title">`,
+  `<section class="slide title-slide" data-slide-id="${escapeHtml(input.slideId)}">`,
   `  <div class="safe-area">`,
   `    <p class="eyebrow">HTMLslide mock agent</p>`,
   `    <h1>${escapeHtml(input.title)}</h1>`,
@@ -266,11 +221,12 @@ const buildTitleSlide = (input: {
 const buildWorkflowSlide = (input: {
   slides: Array<AgentOutlineSlide & { source: string; notes: string }>;
   direction: VisualDirection;
+  slide: AgentOutlineSlide;
 }): string => `${[
-  `<section class="slide workflow-slide" data-slide-id="002-workflow">`,
+  `<section class="slide workflow-slide" data-slide-id="${escapeHtml(input.slide.id)}">`,
   `  <div class="safe-area">`,
   `    <p class="eyebrow">Controlled workflow</p>`,
-  `    <h2>${escapeHtml(input.slides[1]?.title ?? fallbackSlides["002-workflow"].title)}</h2>`,
+  `    <h2>${escapeHtml(input.slide.title)}</h2>`,
   `    <ol class="workflow-list">`,
   `      <li><strong>Brief</strong><span>Normalize goals, language, audience, and timing.</span></li>`,
   `      <li><strong>Outline</strong><span>Lock three slide ids before source files are written.</span></li>`,
@@ -282,14 +238,19 @@ const buildWorkflowSlide = (input: {
   `</section>`
 ].join("\n")}\n`;
 
-const buildReviewSlide = (input: { title: string; direction: VisualDirection }): string => `${[
-  `<section class="slide review-slide" data-slide-id="003-review">`,
+const buildReviewSlide = (input: {
+  direction: VisualDirection;
+  slide: AgentOutlineSlide;
+  slideCount: number;
+  title: string;
+}): string => `${[
+  `<section class="slide review-slide" data-slide-id="${escapeHtml(input.slide.id)}">`,
   `  <div class="safe-area">`,
   `    <p class="eyebrow">Reviewable outputs</p>`,
   `    <h2>Ready for local check and export</h2>`,
   `    <div class="review-grid">`,
   `      <article><h3>Sources</h3><p>Manifest, slide fragments, speaker notes, CSS, and tokens are project-local.</p></article>`,
-  `      <article><h3>Identity</h3><p>The three slide ids match their data-slide-id attributes.</p></article>`,
+  `      <article><h3>Identity</h3><p>All ${input.slideCount} slide ids match their data-slide-id attributes.</p></article>`,
   `      <article><h3>Theme</h3><p>${escapeHtml(input.direction.label)} keeps ${escapeHtml(input.title)} consistent offline.</p></article>`,
   `    </div>`,
   `  </div>`,
@@ -299,21 +260,21 @@ const buildReviewSlide = (input: { title: string; direction: VisualDirection }):
 const buildTitleNotes = (input: {
   title: string;
   briefText: string;
-  slide?: AgentOutlineSlide;
+  slide: AgentOutlineSlide;
 }): string => `${[
-  `# 001-title`,
+  `# ${markdownInline(input.slide.id)}`,
   ``,
   `Open by naming "${markdownInline(input.title)}" as a deterministic mock deck. State that this run proves the agent can turn abstract build output into editable HTMLslide source files.`,
   ``,
   `Brief context: ${markdownInline(input.briefText)}`,
   ``,
-  `Presenter cue: ${markdownInline(input.slide?.goal ?? fallbackSlides["001-title"].goal)}`,
+  `Presenter cue: ${markdownInline(input.slide.goal)}`,
   ``,
   `Timing: 75s`
 ].join("\n")}\n`;
 
-const buildWorkflowNotes = (input: { briefText: string; slide?: AgentOutlineSlide }): string => `${[
-  `# 002-workflow`,
+const buildWorkflowNotes = (input: { briefText: string; slide: AgentOutlineSlide }): string => `${[
+  `# ${markdownInline(input.slide.id)}`,
   ``,
   `Walk through the pipeline from brief to review. Emphasize that each stage produces structured output before the source writer touches deck.json, slide fragments, notes, or theme files.`,
   ``,
@@ -321,22 +282,98 @@ const buildWorkflowNotes = (input: { briefText: string; slide?: AgentOutlineSlid
   ``,
   `Brief context: ${markdownInline(input.briefText)}`,
   ``,
-  `Presenter cue: ${markdownInline(input.slide?.goal ?? fallbackSlides["002-workflow"].goal)}`,
+  `Presenter cue: ${markdownInline(input.slide.goal)}`,
   ``,
   `Timing: 120s`
 ].join("\n")}\n`;
 
-const buildReviewNotes = (input: { slide?: AgentOutlineSlide }): string => `${[
-  `# 003-review`,
+const buildReviewNotes = (input: { slide: AgentOutlineSlide }): string => `${[
+  `# ${markdownInline(input.slide.id)}`,
   ``,
   `Close by summarizing the concrete files that changed and the checks a human reviewer should run next. The important point is that exports remain artifacts, while this module writes only source areas.`,
   ``,
   `Mention that deck.json references every slide and note with POSIX project-relative paths. The theme is local CSS plus JSON tokens, so export can run without downloading fonts, scripts, or images.`,
   ``,
-  `Presenter cue: ${markdownInline(input.slide?.goal ?? fallbackSlides["003-review"].goal)}`,
+  `Presenter cue: ${markdownInline(input.slide.goal)}`,
   ``,
   `Timing: 75s`
 ].join("\n")}\n`;
+
+const buildDetailSlide = (input: { direction: VisualDirection; slide: AgentOutlineSlide }): string => `${[
+  `<section class="slide workflow-slide" data-slide-id="${escapeHtml(input.slide.id)}">`,
+  `  <div class="safe-area">`,
+  `    <p class="eyebrow">Supporting detail</p>`,
+  `    <h2>${escapeHtml(input.slide.title)}</h2>`,
+  `    <p class="subtitle">${escapeHtml(input.slide.goal)}</p>`,
+  `    <ol class="workflow-list">`,
+  `      <li><strong>Purpose</strong><span>${escapeHtml(input.slide.goal)}</span></li>`,
+  `      <li><strong>Direction</strong><span>Use ${escapeHtml(input.direction.label)} tokens and project-local source.</span></li>`,
+  `      <li><strong>Review</strong><span>Check hierarchy, spacing, notes, and export output.</span></li>`,
+  `    </ol>`,
+  `  </div>`,
+  `</section>`
+].join("\n")}\n`;
+
+const buildDetailNotes = (input: { briefText: string; slide: AgentOutlineSlide }): string => `${[
+  `# ${markdownInline(input.slide.id)}`,
+  ``,
+  `Explain the supporting point in the context of the requested deck, then connect it to the next section.`,
+  ``,
+  `Brief context: ${markdownInline(input.briefText)}`,
+  ``,
+  `Presenter cue: ${markdownInline(input.slide.goal)}`,
+  ``,
+  `Timing: 75s`
+].join("\n")}\n`;
+
+const buildMockSlide = (input: {
+  brief?: NormalizedBrief;
+  direction: VisualDirection;
+  index: number;
+  slide: AgentOutlineSlide;
+  slides: Array<AgentOutlineSlide & { source: string; notes: string }>;
+  title: string;
+}): string => {
+  if (input.index === 0) {
+    return buildTitleSlide({
+      title: input.title,
+      brief: input.brief,
+      direction: input.direction,
+      slideId: input.slide.id
+    });
+  }
+  if (input.index === input.slides.length - 1) {
+    return buildReviewSlide({
+      title: input.title,
+      direction: input.direction,
+      slide: input.slide,
+      slideCount: input.slides.length
+    });
+  }
+  if (input.index === 1) {
+    return buildWorkflowSlide({ slides: input.slides, direction: input.direction, slide: input.slide });
+  }
+  return buildDetailSlide({ direction: input.direction, slide: input.slide });
+};
+
+const buildMockNotes = (input: {
+  briefText: string;
+  index: number;
+  slide: AgentOutlineSlide;
+  slideCount: number;
+  title: string;
+}): string => {
+  if (input.index === 0) {
+    return buildTitleNotes({ title: input.title, briefText: input.briefText, slide: input.slide });
+  }
+  if (input.index === input.slideCount - 1) {
+    return buildReviewNotes({ slide: input.slide });
+  }
+  if (input.index === 1) {
+    return buildWorkflowNotes({ briefText: input.briefText, slide: input.slide });
+  }
+  return buildDetailNotes({ briefText: input.briefText, slide: input.slide });
+};
 
 const buildThemeCss = (direction: VisualDirection): string => {
   const background = tokenString(direction.tokens, "background", "#fbfbfd");

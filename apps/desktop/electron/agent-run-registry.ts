@@ -23,6 +23,7 @@ export type DesktopAgentRunRequest = {
   engine: DesktopAgentEngine;
   projectPath: string;
   brief: string;
+  targetSlideCount?: number;
   runExport?: boolean;
   maxRepairRounds?: number;
 };
@@ -414,6 +415,12 @@ export class DesktopAgentRunRegistry {
     }
     if (typeof request.brief !== "string") {
       throw new Error("Agent run brief must be a string.");
+    }
+    if (
+      request.targetSlideCount !== undefined &&
+      (!Number.isInteger(request.targetSlideCount) || request.targetSlideCount < 1 || request.targetSlideCount > 100)
+    ) {
+      throw new Error("Agent run target slide count must be an integer between 1 and 100.");
     }
     const projectPath = this.#canonicalProjectPath(request.projectPath);
     const brief = request.brief.trim() || "Create or revise this HTMLslide deck.";

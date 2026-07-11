@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
     engine: "mock-agent" | "htmlslide-agent" | "external-agent";
     projectPath: string;
     brief: string;
+    targetSlideCount?: number;
     runExport?: boolean;
     maxRepairRounds?: number;
   }) => ipcRenderer.invoke("htmlslide:start-agent-run", request),

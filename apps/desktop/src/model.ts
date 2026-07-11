@@ -228,6 +228,14 @@ export function buildNewDeckAgentBrief(draft: NewDeckDraft): string {
   ].join("\n");
 }
 
+export function newDeckTargetSlideCount(draft: NewDeckDraft): number | undefined {
+  if (draft.slideCount === "auto") {
+    return undefined;
+  }
+  const value = Number(draft.slideCount);
+  return Number.isInteger(value) && value > 0 && value <= 100 ? value : undefined;
+}
+
 const agentStageLabels: Record<AgentRunStageId, string> = {
   brief: "Brief",
   build: "Build",

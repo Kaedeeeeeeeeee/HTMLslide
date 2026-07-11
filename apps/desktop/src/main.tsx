@@ -28,6 +28,7 @@ import {
   defaultCommandActionStatuses,
   formatProjectOpenedAt,
   getNextStageIndex,
+  newDeckTargetSlideCount,
   type AgentRunEventLike,
   type AgentRunLogLike,
   type AppView,
@@ -862,7 +863,12 @@ function App(): React.ReactNode {
   }, [desktopApi]);
 
   const startAgentGeneration = useCallback(
-    (brief: string, options: { engine?: DesktopAgentEngine; forceMock?: boolean; projectPath?: string } = {}): void => {
+    (brief: string, options: {
+      engine?: DesktopAgentEngine;
+      forceMock?: boolean;
+      projectPath?: string;
+      targetSlideCount?: number;
+    } = {}): void => {
       const currentSnapshot = agentRunSnapshotRef.current;
       if (agentStartPendingRef.current || (currentSnapshot && activeAgentRunStatuses.has(currentSnapshot.status))) {
         return;
@@ -913,6 +919,7 @@ function App(): React.ReactNode {
         brief: prompt,
         engine: selectedEngine,
         projectPath: options.projectPath,
+        targetSlideCount: options.targetSlideCount,
         runExport: true
       })
         .then(async (snapshot) => {
@@ -1158,7 +1165,8 @@ function App(): React.ReactNode {
           startAgentGeneration(buildNewDeckAgentBrief(draft), {
             engine: draft.generationMode,
             forceMock: draft.generationMode === "mock-agent",
-            projectPath: result.project.project.path
+            projectPath: result.project.project.path,
+            targetSlideCount: newDeckTargetSlideCount(draft)
           });
         }
       })

@@ -307,6 +307,7 @@ export type DesktopAgentRunRequest = {
   engine: DesktopAgentEngine;
   projectPath: string;
   brief: string;
+  targetSlideCount?: number;
   runExport?: boolean;
   maxRepairRounds?: number;
 };

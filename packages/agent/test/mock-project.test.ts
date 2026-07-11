@@ -19,7 +19,7 @@ const createTempProject = async (): Promise<string> => {
   return projectPath;
 };
 
-const runSuccessfulMockAgent = async (projectPath: string) =>
+const runSuccessfulMockAgent = async (projectPath: string, targetSlideCount?: number) =>
   runAgent(
     {
       projectRoot: projectPath,
@@ -27,7 +27,8 @@ const runSuccessfulMockAgent = async (projectPath: string) =>
       provider: createMockProvider({
         checkResults: [createMockPassedCheck()]
       }),
-      runId: "run-apply-mock"
+      runId: "run-apply-mock",
+      targetSlideCount
     },
     {
       clock: fixedClock
@@ -121,6 +122,25 @@ describe("applyMockAgentProject", () => {
 
     expect(secondApply).toEqual(firstApply);
     expect(secondFiles).toEqual(firstFiles);
+  });
+
+  it("writes every slide from an explicit multi-slide target", async () => {
+    const projectPath = await createTempProject();
+    const result = await runSuccessfulMockAgent(projectPath, 8);
+
+    const applied = await applyMockAgentProject({ projectPath, result });
+    const deck = JSON.parse(await readFile(path.join(projectPath, "deck.json"), "utf8")) as {
+      slides: Array<{ id: string; source: string; notes: string }>;
+    };
+
+    expect(applied.slideIds).toHaveLength(8);
+    expect(applied.paths.slides).toHaveLength(8);
+    expect(applied.paths.notes).toHaveLength(8);
+    expect(deck.slides.map((slide) => slide.id)).toEqual(applied.slideIds);
+    await expect(readFile(path.join(projectPath, "slides", "008-review.html"), "utf8"))
+      .resolves.toContain('data-slide-id="008-review"');
+    await expect(readFile(path.join(projectPath, "notes", "003-detail.md"), "utf8"))
+      .resolves.toContain("supporting point");
   });
 
   it("refuses a non-successful result without writing project files", async () => {

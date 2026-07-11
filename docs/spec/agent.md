@@ -87,26 +87,34 @@ Terminal desktop snapshots use a bounded IPC delivery shape rather than forwardi
 
 Pause is capability-gated. The built-in HTTP providers and Generic external command do not currently provide portable pause/resume semantics, so the desktop console must expose Pause as unavailable rather than changing UI state while work continues.
 
-## Checkpoint Metadata
+## Checkpoints
 
-Each run creates checkpoint metadata before the `brief` stage. The default foundation is metadata-only:
+Each desktop Local Mock and BYOK run creates a reversible file-copy checkpoint before the `brief` stage:
 
 ```json
 {
   "id": "checkpoint-run-0001",
   "runId": "run-0001",
   "projectRoot": "/path/to/deck",
-  "strategy": "metadata-only",
+  "strategy": "file-copy",
   "sourceRoots": ["deck.json", "slides/", "notes/", "theme/", "assets/"],
-  "files": [],
+  "files": [
+    {
+      "path": "deck.json",
+      "status": "unchanged",
+      "digest": "<sha256>",
+      "snapshotPath": "snapshot/deck.json",
+      "origin": "snapshot"
+    }
+  ],
   "restore": {
-    "canRevert": false,
-    "notes": "Metadata-only checkpoint. Future git-diff or file-copy adapters should populate reversible file snapshots."
+    "canRevert": true,
+    "notes": "Restore source files captured before this run."
   }
 }
 ```
 
-Future checkpoint adapters should use `git-diff` for git projects or `file-copy` for non-git projects. Revert-capable checkpoints must cover `deck.json`, `slides/`, `notes/`, `theme/`, and `assets/` without deleting user-added source material that was not part of the snapshot.
+File-copy checkpoints cover `deck.json`, `slides/`, `notes/`, `theme/`, and `assets/`. The snapshot records both existing paths and source-root membership so revert can restore modified/deleted files and remove only files added by the agent run. Checkpoint metadata and diffs must not expose provider source content across desktop IPC.
 
 ## Mock Provider
 
@@ -141,9 +149,9 @@ Provider `build` and `repair` outputs may include `sourceWrites` so desktop and 
 
 ## Desktop Agent Run Reports
 
-Desktop Local Mock and BYOK runs write a sanitized review artifact under `.htmlslide/reports/agent-run-<runId>.json` and refresh `.htmlslide/reports/latest-agent-run.json` with the same payload. The report records the run id, provider id, stage summaries, normalized brief, generated outline, visual-direction options, selected visual direction, build/check/repair/export/review summaries, applied file paths, checkpoint summary, and real desktop CLI check/export status.
+Desktop Local Mock and BYOK runs write a sanitized review artifact under `.htmlslide/reports/agent-run-<runId>.json` and refresh `.htmlslide/reports/latest-agent-run.json` with the same payload. The report records the run id, provider id, explicit target slide count, stage summaries, normalized brief, generated outline, visual-direction options, selected visual direction, build/check/repair/export/review summaries, applied file paths, checkpoint summary, real desktop CLI check/export status, and the completed export manifest's source digest/artifact count. BYOK reports include provider/model metadata; compatible-provider reports include a SHA-256 endpoint binding rather than the raw base URL.
 
-Reports are intentionally not raw `AgentRunResult` dumps. They must not include provider API keys, credential values, raw provider prompts, CLI stdout/stderr, checkpoint text diffs, or `sourceWrites[].content`. Provider-backed source writes are represented by path lists and counts only.
+Reports are intentionally not raw `AgentRunResult` dumps. They must not include provider API keys, credential values, raw provider prompts, CLI stdout/stderr, checkpoint text diffs, raw compatible endpoints, or `sourceWrites[].content`. Provider-backed source writes are represented by path lists and counts only. Report and checkpoint writes reject symlinked project runtime directories and use same-directory atomic replacement.
 
 ## Provider Adapters
 
@@ -156,6 +164,10 @@ Provider adapters convert structured stage responses into the shared agent outpu
 The CLI exposes `htmlslide agent validate-provider --provider openai|anthropic|compatible --model <model> --api-key-env <ENV_NAME> [--base-url <url>] --json` as a manual BYOK preflight. It reuses provider `validateCredentials()`, reads key material only from the named environment variable, returns sanitized JSON evidence, and exits with code `6` when provider validation fails. It must not accept a raw API key argument or write the key value to stdout, stderr, reports, or logs.
 
 The desktop BYOK path is now wired to OpenAI, configured OpenAI-compatible providers, and Anthropic. It still treats desktop CLI `check` and `export` as authoritative: provider `check`/`export` stage outputs do not replace the real project gate.
+
+An explicit New Deck slide count is a structured `targetSlideCount` contract, not prompt text alone. The orchestrator rejects an outline that misses the explicit count, and the desktop source-write boundary requires the generated `deck.json` slide IDs and order to match that outline before applying provider writes. The shared source-write and checkpoint boundaries reject symlinked path components before writing. Desktop BYOK also verifies the current CLI runtime descriptor before credential access or provider calls so a missing authoritative check/export runtime cannot consume tokens or mutate source.
+
+Release-candidate BYOK evidence is verified after a desktop run with `pnpm rc:byok-evidence`. The verifier binds sanitized provider validation, the exact desktop run report, an 8-12 slide manifest, reversible checkpoint metadata, authoritative check/export results, and hashed export artifacts. It never accepts a raw API key.
 
 ## Desktop New Deck v1
 

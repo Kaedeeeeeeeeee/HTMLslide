@@ -18,7 +18,8 @@ htmlslide skill inspect deck-architect --json
 htmlslide mcp demo
 htmlslide mcp --list-tools --json
 htmlslide mcp demo --status --json
-htmlslide agent validate-provider --provider openai --model <openai-model-id> --api-key-env OPENAI_API_KEY --json
+umask 077
+htmlslide agent validate-provider --provider openai --model <openai-model-id> --api-key-env OPENAI_API_KEY --json > /path/to/provider-validation.json
 htmlslide doctor --json
 ```
 
@@ -62,6 +63,14 @@ Use `agent validate-provider` before a real BYOK alpha run:
 export OPENAI_API_KEY="..."
 htmlslide agent validate-provider --provider openai --model <openai-model-id> --api-key-env OPENAI_API_KEY --json
 ```
+
+After an explicit 8-12 slide desktop BYOK run, verify the saved sanitized provider result, exact run report, deck, checkpoint, and exports without reading the key again:
+
+```bash
+pnpm rc:byok-evidence -- --project <deck-path> --provider-validation <validation.json> --run-id <run-id> --commit <commit> --artifact-url <artifact-url>
+```
+
+This release command is read-only apart from its evidence JSON output. It is not a second provider runner.
 
 For OpenAI-compatible providers, pass the API root explicitly:
 

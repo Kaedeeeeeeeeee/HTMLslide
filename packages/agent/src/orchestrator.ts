@@ -67,6 +67,8 @@ const stageStates: Record<AgentRunStage, AgentRunState> = {
 
 const terminalStatuses = new Set<AgentRunStatus>(["succeeded", "failed", "cancelled"]);
 
+const countSensitiveStages = new Set<AgentRunStage>(["brief", "outline", "visual-direction", "build", "check", "repair"]);
+
 let nextRunNumber = 1;
 
 export const canTransitionAgentRunState = (from: AgentRunState, to: AgentRunState): boolean =>
@@ -140,6 +142,48 @@ const cloneOutputs = (outputs: AgentRunOutputs): AgentRunOutputs => ({
   checks: [...outputs.checks],
   repairs: [...outputs.repairs]
 });
+
+const withTargetSlideCount = <TInput extends Record<string, unknown>>(
+  input: TInput,
+  targetSlideCount: number | undefined
+): TInput & { targetSlideCount?: number } => {
+  if (targetSlideCount === undefined) {
+    return input;
+  }
+
+  return {
+    ...input,
+    targetSlideCount
+  };
+};
+
+const validateOutline = (outline: AgentOutline, targetSlideCount: number | undefined): void => {
+  if (outline.slides.length === 0) {
+    throw new AgentRunFailureError({
+      code: "invalid-output",
+      message: "Outline stage returned no slides.",
+      stage: "outline"
+    });
+  }
+
+  if (targetSlideCount !== undefined && outline.slides.length !== targetSlideCount) {
+    throw new AgentRunFailureError({
+      code: "invalid-output",
+      message: `Outline stage returned ${outline.slides.length} slide(s); expected exactly ${targetSlideCount}.`,
+      stage: "outline"
+    });
+  }
+};
+
+const validateVisualDirections = (visualDirection: VisualDirectionSet): void => {
+  if (visualDirection.directions.length === 0) {
+    throw new AgentRunFailureError({
+      code: "invalid-output",
+      message: "Visual direction stage returned no directions.",
+      stage: "visual-direction"
+    });
+  }
+};
 
 export class AgentRunController {
   readonly runId: string;
@@ -227,7 +271,7 @@ export class AgentRunController {
       const outline = await this.#runStage<AgentOutline>("outline", "Generate deck outline.", {
         brief,
         metadata: this.#input.metadata
-      });
+      }, (output) => validateOutline(output, this.#input.targetSlideCount));
       this.#snapshot.outputs.outline = outline;
 
       const visualDirection = await this.#runStage<VisualDirectionSet>(
@@ -236,7 +280,8 @@ export class AgentRunController {
         {
           brief,
           outline
-        }
+        },
+        validateVisualDirections
       );
       const selectedVisualDirectionId = await this.#selectVisualDirection(visualDirection);
       this.#snapshot.outputs.visualDirection = {
@@ -380,7 +425,12 @@ export class AgentRunController {
     return check;
   }
 
-  async #runStage<TOutput>(stage: AgentRunStage, prompt: string, input: unknown): Promise<TOutput> {
+  async #runStage<TOutput>(
+    stage: AgentRunStage,
+    prompt: string,
+    input: Record<string, unknown>,
+    validateOutput?: (output: TOutput) => void
+  ): Promise<TOutput> {
     this.#throwIfCancelled(stage);
     this.#transition(stageStates[stage]);
     this.#snapshot.currentStage = stage;
@@ -391,20 +441,31 @@ export class AgentRunController {
       const response = await this.#input.provider.complete({
         runId: this.runId,
         stage,
-        prompt,
-        input,
-        metadata: this.#input.metadata,
+        prompt: this.#promptForStage(stage, prompt),
+        input: withTargetSlideCount(input, this.#input.targetSlideCount),
+        metadata:
+          this.#input.targetSlideCount === undefined
+            ? this.#input.metadata
+            : withTargetSlideCount(this.#input.metadata ?? {}, this.#input.targetSlideCount),
         signal: this.#abortController.signal
       });
       this.#throwIfCancelled(stage);
+      const output = response.output as TOutput;
+      validateOutput?.(output);
       this.#emit("stage-completed", stage, "succeeded", response.content, {
-        filesChanged: filesChangedForOutput(response.output),
-        issuesFound: issuesFoundForOutput(response.output)
+        filesChanged: filesChangedForOutput(output),
+        issuesFound: issuesFoundForOutput(output)
       });
       this.#log("info", response.content, stage);
-      return response.output as TOutput;
+      return output;
     } catch (error) {
       if (this.#cancelled || isCancellationError(error)) {
+        throw error;
+      }
+
+      if (error instanceof AgentRunFailureError) {
+        this.#emit("stage-failed", stage, "failed", error.info.message);
+        this.#log("error", error.info.message, stage);
         throw error;
       }
 
@@ -417,6 +478,15 @@ export class AgentRunController {
       this.#log("error", info.message, stage);
       throw new AgentRunFailureError(info);
     }
+  }
+
+  #promptForStage(stage: AgentRunStage, prompt: string): string {
+    const targetSlideCount = this.#input.targetSlideCount;
+    if (targetSlideCount === undefined || !countSensitiveStages.has(stage)) {
+      return prompt;
+    }
+
+    return `${prompt} The deck must contain exactly ${targetSlideCount} slide(s).`;
   }
 
   #throwIfCancelled(stage = this.#snapshot.currentStage): void {

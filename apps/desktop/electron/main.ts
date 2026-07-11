@@ -161,7 +161,8 @@ const agentRunRegistry = new DesktopAgentRunRegistry({
           maxRepairRounds: request.maxRepairRounds,
           projectPath: request.projectPath,
           runExport: request.runExport,
-          runId: request.runId
+          runId: request.runId,
+          targetSlideCount: request.targetSlideCount
         },
         sharedOptions
       );
@@ -174,7 +175,8 @@ const agentRunRegistry = new DesktopAgentRunRegistry({
           maxRepairRounds: request.maxRepairRounds,
           projectPath: request.projectPath,
           runExport: request.runExport,
-          runId: request.runId
+          runId: request.runId,
+          targetSlideCount: request.targetSlideCount
         },
         {
           ...sharedOptions,

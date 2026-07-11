@@ -25,6 +25,7 @@ Initial commands:
 - `htmlslide setup status --json` reports shim installation status.
 - `htmlslide doctor --json` reports local runtime health.
 - `htmlslide agent validate-provider --provider openai|anthropic|compatible --model <model> --api-key-env <ENV_NAME> [--base-url <url>] --json` validates BYOK credential/model reachability without printing or accepting an API key as a CLI argument.
+- `pnpm rc:byok-evidence -- --project <path> --provider-validation <validation.json> [--run-id <id>] [--report <agent-report.json>] [--output <evidence.json>]` verifies a completed desktop BYOK run without reading provider credentials.
 
 Exit codes:
 
@@ -168,6 +169,8 @@ Actionable setup errors use the generic error envelope with stable fields:
 ```
 
 Validation failures return the same shape with `"status": "failed"`, a sanitized `credential.reason`, and exit code `6`. Missing or invalid CLI inputs use the generic error envelope with stable `AGENT_PROVIDER_*` codes. The command must never accept a raw API key argument and must not include the environment variable value in stdout, stderr, reports, or logs.
+
+`rc:byok-evidence` is a repository release command rather than a provider runner. It performs no provider network calls. It fails unless the provider validation passed, the desktop report and requested run id agree, provider/model and compatible endpoint bindings agree, an explicit 8-12 slide target matches the accepted outline and final deck, provider source writes were applied, the file-copy checkpoint manifest and snapshots exist, authoritative desktop CLI check/export passed, current source fingerprints match the export source digest, and every export-manifest artifact matches its size and SHA-256. Evidence output must stay under the project's `.htmlslide/reports/` directory and contains only sanitized metadata, relative artifact paths, byte sizes, and SHA-256 digests.
 
 `check --json` must return a machine-readable report even when project loading fails. The report shape is:
 

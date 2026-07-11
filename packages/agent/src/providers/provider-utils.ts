@@ -28,7 +28,7 @@ export function coerceStageOutput(stage: AgentRunStage, output: JsonObject): unk
         language: expectString(output, "language"),
         audience: expectString(output, "audience"),
         durationMinutes: expectNumber(output, "durationMinutes"),
-        slides: expectArray(output, "slides").map((slide, index) => {
+        slides: expectNonEmptyArray(output, "slides").map((slide, index) => {
           const record = expectRecord(slide, `slides[${index}]`);
           return {
             id: expectString(record, "id"),
@@ -50,7 +50,7 @@ export function coerceStageOutput(stage: AgentRunStage, output: JsonObject): unk
       } satisfies AgentOutline;
     case "visual-direction":
       return {
-        directions: expectArray(output, "directions").map((direction, index) => {
+        directions: expectNonEmptyArray(output, "directions").map((direction, index) => {
           const record = expectRecord(direction, `directions[${index}]`);
           return {
             id: expectString(record, "id"),
@@ -142,7 +142,7 @@ export function schemaForStage(stage: AgentRunStage): JsonObject {
           title: stringSchema(),
           kind: stringSchema(),
           goal: stringSchema()
-        }))
+        }), true)
       });
     case "visual-direction":
       return objectSchema({
@@ -156,7 +156,7 @@ export function schemaForStage(stage: AgentRunStage): JsonObject {
             text: stringSchema(),
             accent: stringSchema()
           })
-        })),
+        }), true),
         selectedDirectionId: nullableStringSchema()
       });
     case "build":
@@ -315,10 +315,11 @@ function objectSchema(properties: Record<string, JsonObject>): JsonObject {
   };
 }
 
-function arraySchema(items: JsonObject): JsonObject {
+function arraySchema(items: JsonObject, nonEmpty = false): JsonObject {
   return {
     type: "array",
-    items
+    items,
+    ...(nonEmpty ? { minItems: 1 } : {})
   };
 }
 
@@ -381,6 +382,14 @@ function expectArray(record: JsonObject, key: string): unknown[] {
   const value = record[key];
   if (!Array.isArray(value)) {
     throw new Error(`Expected ${key} to be an array.`);
+  }
+  return value;
+}
+
+function expectNonEmptyArray(record: JsonObject, key: string): unknown[] {
+  const value = expectArray(record, key);
+  if (value.length === 0) {
+    throw new Error(`Expected ${key} to contain at least one item.`);
   }
   return value;
 }

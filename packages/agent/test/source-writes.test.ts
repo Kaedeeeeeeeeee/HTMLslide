@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -109,5 +109,24 @@ describe("agent source writes", () => {
     const resolved = resolveAgentSourceWritePath(projectPath, "theme/tokens.json");
 
     expect(resolved).toBe(path.join(projectPath, "theme", "tokens.json"));
+  });
+
+  it("rejects existing source symlinks before writing any files", async () => {
+    const projectPath = await tempProject();
+    const outsidePath = await tempProject();
+    await mkdir(path.join(outsidePath, "slides"));
+    await writeFile(path.join(outsidePath, "slides", "existing.html"), "outside\n", "utf8");
+    await symlink(path.join(outsidePath, "slides"), path.join(projectPath, "slides"));
+
+    await expect(applyAgentSourceWrites({
+      projectPath,
+      writes: [
+        { path: "deck.json", content: "{}\n" },
+        { path: "slides/generated.html", content: "generated\n" }
+      ]
+    })).rejects.toThrow(/contains a symlink/);
+
+    await expect(access(path.join(projectPath, "deck.json"))).rejects.toThrow();
+    await expect(access(path.join(outsidePath, "slides", "generated.html"))).rejects.toThrow();
   });
 });

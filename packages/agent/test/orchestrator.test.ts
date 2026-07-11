@@ -51,6 +51,84 @@ describe("agent orchestrator", () => {
     ).toEqual(["brief", "outline"]);
   });
 
+  it("propagates an explicit slide target and makes mock stage output honor it", async () => {
+    const baseProvider = createMockProvider({
+      checkResults: [createMockPassedCheck()]
+    });
+    const requests: ModelRequest[] = [];
+    const provider = {
+      ...baseProvider,
+      validateCredentials: () => baseProvider.validateCredentials(),
+      complete: async (request: ModelRequest): Promise<ModelResponse> => {
+        requests.push(request);
+        return baseProvider.complete(request);
+      }
+    };
+
+    const result = await runMockAgent({
+      provider,
+      runId: "run-target-count",
+      targetSlideCount: 8
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.outputs.outline?.slides).toHaveLength(8);
+    expect(result.outputs.build?.slidesChanged).toHaveLength(8);
+    expect(result.outputs.build?.slidesChanged).toEqual(result.outputs.outline?.slides.map((slide) => slide.id));
+    expect(requests).not.toHaveLength(0);
+    for (const request of requests) {
+      expect(request.input).toMatchObject({ targetSlideCount: 8 });
+      expect(request.metadata).toMatchObject({ targetSlideCount: 8 });
+    }
+    expect(requests.find((request) => request.stage === "outline")?.prompt).toContain("exactly 8 slide(s)");
+    expect(requests.find((request) => request.stage === "export")?.prompt).not.toContain("exactly 8 slide(s)");
+  });
+
+  it("rejects an explicit outline count mismatch before visual and build stages", async () => {
+    const baseProvider = createMockProvider({
+      checkResults: [createMockPassedCheck()]
+    });
+    const requestedStages: AgentRunStage[] = [];
+    const provider = {
+      ...baseProvider,
+      validateCredentials: () => baseProvider.validateCredentials(),
+      complete: async (request: ModelRequest): Promise<ModelResponse> => {
+        requestedStages.push(request.stage);
+        const response = await baseProvider.complete(request);
+        if (request.stage !== "outline") {
+          return response;
+        }
+
+        const outline = response.output as { slides: unknown[] };
+        return {
+          ...response,
+          output: {
+            ...outline,
+            slides: outline.slides.slice(0, 3)
+          }
+        };
+      }
+    };
+
+    const result = await runMockAgent({
+      provider,
+      runId: "run-target-mismatch",
+      targetSlideCount: 4
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toEqual({
+        code: "invalid-output",
+        message: "Outline stage returned 3 slide(s); expected exactly 4.",
+        stage: "outline"
+      });
+    }
+    expect(result.outputs.outline).toBeUndefined();
+    expect(requestedStages).toEqual(["brief", "outline"]);
+    expect(result.events.some((event) => event.type === "stage-failed" && event.stage === "outline")).toBe(true);
+  });
+
   it("supports visual direction selection before build", async () => {
     const result = await runMockAgent({
       runId: "run-visual-direction",

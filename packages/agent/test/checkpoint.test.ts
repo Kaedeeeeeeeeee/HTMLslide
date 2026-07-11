@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -39,6 +39,21 @@ afterEach(async () => {
 });
 
 describe("file-copy checkpoints", () => {
+  it("rejects a symlinked checkpoint runtime before writing outside the project", async () => {
+    const projectPath = await createTempProject();
+    const outsidePath = await createTempProject();
+    await writeProjectFile(projectPath, "deck.json", "{}\n");
+    await symlink(outsidePath, path.join(projectPath, ".htmlslide"));
+
+    await expect(createFileCopyCheckpoint({
+      projectRoot: projectPath,
+      runId: "run-symlink",
+      createdAt
+    })).rejects.toThrow(/real project directory/);
+
+    await expectMissing(path.join(outsidePath, "checkpoints", "run-symlink", "manifest.json"));
+  });
+
   it("copies only deck source-scope files into a checkpoint manifest and snapshot", async () => {
     const projectPath = await createTempProject();
     await writeProjectFile(projectPath, "deck.json", '{"schemaVersion":"0.1.0"}\n');

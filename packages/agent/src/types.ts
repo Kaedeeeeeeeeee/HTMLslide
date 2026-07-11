@@ -450,6 +450,7 @@ export type AgentRunInput = {
   projectRoot: string;
   brief: string;
   provider: ModelProvider;
+  targetSlideCount?: number;
   runId?: string;
   maxRepairRounds?: number;
   metadata?: JsonObject;

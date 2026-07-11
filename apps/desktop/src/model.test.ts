@@ -9,7 +9,8 @@ import {
   defaultCommandActionStatuses,
   filterQaIssues,
   formatProjectOpenedAt,
-  getNextStageIndex
+  getNextStageIndex,
+  newDeckTargetSlideCount
 } from "./model";
 import type { AgentRunEventLike, AgentRunLogLike, AgentStage, QaIssue } from "./model";
 
@@ -217,6 +218,9 @@ describe("desktop model helpers", () => {
     expect(buildNewDeckAgentBrief(draft)).toContain("Slide count: 8 slides");
     expect(buildNewDeckAgentBrief(draft)).toContain("Speaker notes: full speaker script");
     expect(buildNewDeckAgentBrief(draft)).toContain("fixed 1920x1080 canvas");
+    expect(newDeckTargetSlideCount(draft)).toBe(8);
+    expect(newDeckTargetSlideCount({ ...draft, slideCount: "auto" })).toBeUndefined();
+    expect(newDeckTargetSlideCount({ ...draft, slideCount: "invalid" })).toBeUndefined();
   });
 
   it("caps stage advancement at the last known stage", () => {

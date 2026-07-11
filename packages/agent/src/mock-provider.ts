@@ -3,6 +3,7 @@ import type {
   AgentBuildResult,
   AgentCheckResult,
   AgentOutline,
+  AgentOutlineSlide,
   AgentRepairResult,
   AgentRunStage,
   AgentExportResult,
@@ -23,6 +24,27 @@ export type MockProviderOptions = {
 };
 
 const mockTitle = "Mock HTMLslide Deck";
+
+const defaultOutlineSlides = [
+  {
+    id: "001-title",
+    title: "HTMLslide mock deck",
+    kind: "title",
+    goal: "Introduce the deck promise and project constraints."
+  },
+  {
+    id: "002-workflow",
+    title: "Controlled agent workflow",
+    kind: "content",
+    goal: "Show the brief, outline, visual direction, build, check, repair, export, review loop."
+  },
+  {
+    id: "003-review",
+    title: "Reviewable outputs",
+    kind: "closing",
+    goal: "Summarize files, checks, exports, and next actions."
+  }
+] as const satisfies readonly AgentOutlineSlide[];
 
 const waitFor = async (ms: number, signal?: AbortSignal, stage?: AgentRunStage): Promise<void> => {
   if (ms <= 0) {
@@ -109,6 +131,62 @@ const repairAttemptFrom = (request: ModelRequest): number => {
   return 1;
 };
 
+const targetSlideCountFrom = (request: ModelRequest): number | undefined => {
+  if (typeof request.input !== "object" || request.input === null || !("targetSlideCount" in request.input)) {
+    return undefined;
+  }
+
+  const targetSlideCount = (request.input as { targetSlideCount?: unknown }).targetSlideCount;
+  return typeof targetSlideCount === "number" && Number.isInteger(targetSlideCount) && targetSlideCount > 0
+    ? targetSlideCount
+    : undefined;
+};
+
+const outlineSlidesFrom = (request: ModelRequest): AgentOutlineSlide[] | undefined => {
+  if (typeof request.input !== "object" || request.input === null || !("outline" in request.input)) {
+    return undefined;
+  }
+
+  const outline = (request.input as { outline?: unknown }).outline;
+  if (typeof outline !== "object" || outline === null || !("slides" in outline)) {
+    return undefined;
+  }
+
+  const slides = (outline as { slides?: unknown }).slides;
+  return Array.isArray(slides) ? slides as AgentOutlineSlide[] : undefined;
+};
+
+const createOutlineSlides = (count: number): AgentOutlineSlide[] => {
+  if (count === defaultOutlineSlides.length) {
+    return defaultOutlineSlides.map((slide) => ({ ...slide }));
+  }
+
+  return Array.from({ length: count }, (_, index) => {
+    const position = index + 1;
+    const idPrefix = String(position).padStart(3, "0");
+    if (index === 0) {
+      return { ...defaultOutlineSlides[0] };
+    }
+    if (index === count - 1) {
+      return {
+        id: `${idPrefix}-review`,
+        title: "Reviewable outputs",
+        kind: "closing",
+        goal: "Summarize files, checks, exports, and next actions."
+      };
+    }
+    if (index === 1) {
+      return { ...defaultOutlineSlides[1] };
+    }
+    return {
+      id: `${idPrefix}-detail`,
+      title: `Supporting detail ${position - 1}`,
+      kind: "content",
+      goal: `Develop supporting point ${position - 1} with concise, reviewable evidence.`
+    };
+  });
+};
+
 export class MockModelProvider implements ModelProvider {
   readonly id: string;
   readonly label: string;
@@ -145,15 +223,15 @@ export class MockModelProvider implements ModelProvider {
       case "brief":
         return this.#response(request, "Normalized mock brief.", this.#briefOutput(request));
       case "outline":
-        return this.#response(request, "Generated deterministic mock outline.", this.#outlineOutput());
+        return this.#response(request, "Generated deterministic mock outline.", this.#outlineOutput(request));
       case "visual-direction":
         return this.#response(
           request,
           "Generated deterministic mock visual directions.",
-          this.#visualDirectionOutput()
+          this.#visualDirectionOutput(request)
         );
       case "build":
-        return this.#response(request, "Generated deterministic mock deck source files.", this.#buildOutput());
+        return this.#response(request, "Generated deterministic mock deck source files.", this.#buildOutput(request));
       case "check":
         return this.#response(request, "Produced deterministic mock check report.", this.#checkOutput(request.runId));
       case "repair":
@@ -161,7 +239,7 @@ export class MockModelProvider implements ModelProvider {
       case "export":
         return this.#response(request, "Generated deterministic mock export artifact list.", this.#exportOutput());
       case "review":
-        return this.#response(request, "Prepared deterministic mock review summary.", this.#reviewOutput());
+        return this.#response(request, "Prepared deterministic mock review summary.", this.#reviewOutput(request));
     }
   }
 
@@ -186,43 +264,26 @@ export class MockModelProvider implements ModelProvider {
     };
   }
 
-  #outlineOutput(): AgentOutline {
+  #outlineOutput(request: ModelRequest): AgentOutline {
+    const slides = createOutlineSlides(targetSlideCountFrom(request) ?? defaultOutlineSlides.length);
     return {
       title: mockTitle,
       language: "en-US",
       audience: "technical reviewers",
       durationMinutes: 8,
-      slides: [
-        {
-          id: "001-title",
-          title: "HTMLslide mock deck",
-          kind: "title",
-          goal: "Introduce the deck promise and project constraints."
-        },
-        {
-          id: "002-workflow",
-          title: "Controlled agent workflow",
-          kind: "content",
-          goal: "Show the brief, outline, visual direction, build, check, repair, export, review loop."
-        },
-        {
-          id: "003-review",
-          title: "Reviewable outputs",
-          kind: "closing",
-          goal: "Summarize files, checks, exports, and next actions."
-        }
-      ]
+      slides
     };
   }
 
-  #visualDirectionOutput(): VisualDirectionSet {
+  #visualDirectionOutput(request: ModelRequest): VisualDirectionSet {
+    const slideIds = outlineSlidesFrom(request)?.map((slide) => slide.id) ?? defaultOutlineSlides.map((slide) => slide.id);
     return {
       directions: [
         {
           id: "direction-editorial",
           label: "Editorial Light",
           rationale: "High contrast typography, compact cards, and calm review surfaces.",
-          sampleSlideIds: ["001-title", "002-workflow"],
+          sampleSlideIds: slideIds.slice(0, 2),
           tokens: {
             background: "#fbfbfd",
             text: "#171923",
@@ -233,7 +294,7 @@ export class MockModelProvider implements ModelProvider {
           id: "direction-systems",
           label: "Systems Console",
           rationale: "Dense operational layout with status rails and issue summaries.",
-          sampleSlideIds: ["002-workflow", "003-review"],
+          sampleSlideIds: slideIds.slice(-2),
           tokens: {
             background: "#f4f6f8",
             text: "#111827",
@@ -245,21 +306,20 @@ export class MockModelProvider implements ModelProvider {
     };
   }
 
-  #buildOutput(): AgentBuildResult {
+  #buildOutput(request: ModelRequest): AgentBuildResult {
+    const slideIds = outlineSlidesFrom(request)?.map((slide) => slide.id) ?? defaultOutlineSlides.map((slide) => slide.id);
+    const slidePaths = slideIds.map((slideId) => `slides/${slideId}.html`);
+    const notePaths = slideIds.map((slideId) => `notes/${slideId}.md`);
     return {
       filesChanged: [
         "deck.json",
         "theme/theme.css",
         "theme/tokens.json",
-        "slides/001-title.html",
-        "slides/002-workflow.html",
-        "slides/003-review.html",
-        "notes/001-title.md",
-        "notes/002-workflow.md",
-        "notes/003-review.md"
+        ...slidePaths,
+        ...notePaths
       ],
-      slidesChanged: ["001-title", "002-workflow", "003-review"],
-      notesChanged: ["001-title", "002-workflow", "003-review"],
+      slidesChanged: slideIds,
+      notesChanged: slideIds,
       themeChanged: ["theme/theme.css", "theme/tokens.json"]
     };
   }
@@ -306,20 +366,17 @@ export class MockModelProvider implements ModelProvider {
     };
   }
 
-  #reviewOutput(): AgentReviewResult {
+  #reviewOutput(request: ModelRequest): AgentReviewResult {
+    const input = typeof request.input === "object" && request.input !== null ? request.input as {
+      build?: { filesChanged?: unknown };
+    } : undefined;
+    const generatedFiles = Array.isArray(input?.build?.filesChanged) &&
+      input.build.filesChanged.every((filePath) => typeof filePath === "string")
+      ? input.build.filesChanged as string[]
+      : [];
     return {
       summary: "Mock deck is ready for human review with one repair pass and deterministic exports.",
-      filesChanged: [
-        "deck.json",
-        "theme/theme.css",
-        "theme/tokens.json",
-        "slides/001-title.html",
-        "slides/002-workflow.html",
-        "slides/003-review.html",
-        "notes/001-title.md",
-        "notes/002-workflow.md",
-        "notes/003-review.md"
-      ],
+      filesChanged: generatedFiles,
       issuesRemaining: 0,
       nextActions: ["Review thumbnails", "Check presenter notes", "Export final PDF"]
     };

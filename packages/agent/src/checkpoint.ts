@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { copyFile, lstat, mkdir, readdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, readdir, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { CHECKPOINT_SCHEMA_VERSION } from "@htmlslide/core/version";
 import type {
@@ -29,12 +29,15 @@ export const createFileCopyCheckpoint = async (
   const projectRoot = path.resolve(input.projectRoot);
   const runId = normalizeCheckpointRunId(input.runId);
   const createdAt = input.createdAt ?? new Date().toISOString();
-  const checkpointRoot = checkpointRootFor(projectRoot, runId);
+  const checkpointRoot = await ensureCheckpointRoot(projectRoot, runId);
   const snapshotRoot = path.join(checkpointRoot, snapshotDirectoryName);
 
-  await mkdir(checkpointRoot, { recursive: true });
+  const existingSnapshot = await lstat(snapshotRoot).catch(() => undefined);
+  if (existingSnapshot?.isSymbolicLink() || (existingSnapshot && !existingSnapshot.isDirectory())) {
+    throw new Error(`Checkpoint snapshot path must be a real directory: ${snapshotRoot}`);
+  }
   await rm(snapshotRoot, { recursive: true, force: true });
-  await mkdir(snapshotRoot, { recursive: true });
+  await mkdir(snapshotRoot);
 
   const sourceFiles = await listSourceFiles(projectRoot);
   const files: CheckpointFile[] = [];
@@ -230,6 +233,7 @@ export const revertFileCopyCheckpoint = async (
     }
 
     const snapshotAbsolutePath = resolveCheckpointPath(checkpointRoot, file.snapshotPath);
+    await assertCheckpointPathHasNoSymlinks(checkpointRoot, file.snapshotPath);
     if (!(await isRegularFile(snapshotAbsolutePath))) {
       skipped.push({
         path: file.path,
@@ -294,6 +298,7 @@ const readCheckpointManifest = async (input: CheckpointReferenceInput): Promise<
   const projectRoot = path.resolve(input.projectRoot);
   const runId = resolveCheckpointRunId(input);
   const manifestPath = path.join(checkpointRootFor(projectRoot, runId), manifestFileName);
+  await assertCheckpointRuntimePath(projectRoot, runId, manifestFileName);
   const rawManifest = JSON.parse(await readFile(manifestPath, "utf8")) as CheckpointMetadata;
 
   if (rawManifest.strategy !== "file-copy") {
@@ -313,13 +318,15 @@ const readCheckpointManifest = async (input: CheckpointReferenceInput): Promise<
 };
 
 const writeCheckpointManifest = async (projectRoot: string, checkpoint: CheckpointMetadata): Promise<void> => {
-  const checkpointRoot = checkpointRootFor(projectRoot, checkpoint.runId);
-  await mkdir(checkpointRoot, { recursive: true });
-  await writeFile(
-    path.join(checkpointRoot, manifestFileName),
-    `${JSON.stringify(checkpoint, null, 2)}\n`,
-    "utf8"
-  );
+  const checkpointRoot = await ensureCheckpointRoot(projectRoot, checkpoint.runId);
+  const manifestPath = path.join(checkpointRoot, manifestFileName);
+  const temporaryPath = path.join(checkpointRoot, `.manifest.tmp-${process.pid}-${Date.now()}`);
+  await writeFile(temporaryPath, `${JSON.stringify(checkpoint, null, 2)}\n`, {
+    encoding: "utf8",
+    flag: "wx",
+    mode: 0o600
+  });
+  await rename(temporaryPath, manifestPath);
 };
 
 const listSourceFiles = async (projectRoot: string): Promise<string[]> => {
@@ -406,7 +413,7 @@ const buildTextDiffs = async (
     const originalText =
       file.status === "added" || file.snapshotPath === undefined
         ? ""
-        : await readDiffableText(resolveCheckpointPath(checkpointRoot, file.snapshotPath));
+        : await readCheckpointDiffableText(checkpointRoot, file.snapshotPath);
     const currentText =
       file.status === "deleted"
         ? ""
@@ -752,6 +759,55 @@ const resolveCheckpointRunId = (input: CheckpointReferenceInput): string => {
 
 const checkpointRootFor = (projectRoot: string, runId: string): string =>
   path.join(path.resolve(projectRoot), ".htmlslide", "checkpoints", normalizeCheckpointRunId(runId));
+
+const ensureCheckpointRoot = async (projectRoot: string, runId: string): Promise<string> => {
+  let current = path.resolve(projectRoot);
+  for (const segment of [".htmlslide", "checkpoints", normalizeCheckpointRunId(runId)]) {
+    current = path.join(current, segment);
+    try {
+      await mkdir(current);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw error;
+      }
+    }
+    const info = await lstat(current);
+    if (!info.isDirectory() || info.isSymbolicLink()) {
+      throw new Error(`Checkpoint runtime path must be a real project directory: ${current}`);
+    }
+  }
+  return current;
+};
+
+const assertCheckpointRuntimePath = async (
+  projectRoot: string,
+  runId: string,
+  relativePath: string
+): Promise<void> => {
+  const checkpointRoot = checkpointRootFor(projectRoot, runId);
+  const projectRelativePath = path.relative(path.resolve(projectRoot), checkpointRoot).split(path.sep).join("/");
+  await assertPathHasNoSymlinks(path.resolve(projectRoot), `${projectRelativePath}/${relativePath}`);
+};
+
+const assertCheckpointPathHasNoSymlinks = async (checkpointRoot: string, relativePath: string): Promise<void> => {
+  await assertPathHasNoSymlinks(checkpointRoot, normalizeCheckpointRelativePath(relativePath));
+};
+
+const assertPathHasNoSymlinks = async (rootPath: string, relativePath: string): Promise<void> => {
+  let current = path.resolve(rootPath);
+  for (const segment of relativePath.split("/").filter(Boolean)) {
+    current = path.join(current, segment);
+    const info = await lstat(current);
+    if (info.isSymbolicLink()) {
+      throw new Error(`Checkpoint path contains a symlink: ${relativePath}`);
+    }
+  }
+};
+
+const readCheckpointDiffableText = async (checkpointRoot: string, relativePath: string): Promise<string | undefined> => {
+  await assertCheckpointPathHasNoSymlinks(checkpointRoot, relativePath);
+  return readDiffableText(resolveCheckpointPath(checkpointRoot, relativePath));
+};
 
 const checkpointIdForRun = (runId: string): string => `checkpoint-${runId}`;
 

@@ -80,6 +80,7 @@ Also verify:
 - New Deck, Open Folder, and Project Library work.
 - Mock provider full flow passes.
 - At least one real provider is manually validated when credentials are available.
+- The exact real-provider desktop run produces 8-12 slides and passes `pnpm rc:byok-evidence -- --project <deck> --provider-validation <validation.json> --run-id <run-id> --commit <commit> --artifact-url <artifact-url>`.
 - Outline, visual directions, and full deck generation work.
 - Checks find `text-overflow`, missing asset, and missing notes issues.
 - Chromium PDF page count, normalized metadata, and repeated-export determinism match the deck; PNG full-slide and real DOM thumbnail goldens stay within 0.2 percent and 0.5 percent respectively. PDF acceptance is structural and same-DOM Chromium evidence, not raster visual regression.

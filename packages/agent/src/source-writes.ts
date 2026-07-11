@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, realpath, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AgentSourceWrite } from "./types.js";
 
@@ -51,13 +51,23 @@ export function parseAgentSourceWrites(value: unknown): AgentSourceWrite[] {
 export async function applyAgentSourceWrites(
   input: ApplyAgentSourceWritesInput
 ): Promise<ApplyAgentSourceWritesResult> {
-  const projectPath = path.resolve(input.projectPath);
+  const projectPath = await realpath(path.resolve(input.projectPath));
   const writes = normalizeAgentSourceWrites(input.writes);
 
   for (const write of writes) {
+    await assertSourceWritePathHasNoSymlinks(projectPath, write.path);
+  }
+  for (const write of writes) {
+    await ensureSourceWriteParentDirectory(projectPath, write.path);
+  }
+  for (const [index, write] of writes.entries()) {
     const absolutePath = resolveAgentSourceWritePath(projectPath, write.path);
-    await mkdir(path.dirname(absolutePath), { recursive: true });
-    await writeFile(absolutePath, write.content, "utf8");
+    const temporaryPath = path.join(
+      path.dirname(absolutePath),
+      `.${path.basename(absolutePath)}.tmp-${process.pid}-${Date.now()}-${index}`
+    );
+    await writeFile(temporaryPath, write.content, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    await rename(temporaryPath, absolutePath);
   }
 
   return {
@@ -65,6 +75,45 @@ export async function applyAgentSourceWrites(
     filesChanged: writes.map((write) => write.path),
     writes
   };
+}
+
+async function assertSourceWritePathHasNoSymlinks(projectPath: string, projectRelativePath: string): Promise<void> {
+  const normalizedPath = normalizeAgentSourceWritePath(projectRelativePath);
+  let current = projectPath;
+  for (const segment of normalizedPath.split("/")) {
+    current = path.join(current, segment);
+    try {
+      const info = await lstat(current);
+      if (info.isSymbolicLink()) {
+        throw new Error(`Agent source write path contains a symlink: ${normalizedPath}`);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return;
+      }
+      throw error;
+    }
+  }
+}
+
+async function ensureSourceWriteParentDirectory(projectPath: string, projectRelativePath: string): Promise<void> {
+  const normalizedPath = normalizeAgentSourceWritePath(projectRelativePath);
+  const parentSegments = normalizedPath.split("/").slice(0, -1);
+  let current = projectPath;
+  for (const segment of parentSegments) {
+    current = path.join(current, segment);
+    try {
+      await mkdir(current);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw error;
+      }
+    }
+    const info = await lstat(current);
+    if (!info.isDirectory() || info.isSymbolicLink()) {
+      throw new Error(`Agent source write parent must be a real directory: ${normalizedPath}`);
+    }
+  }
 }
 
 export function normalizeAgentSourceWrites(writes: readonly AgentSourceWrite[]): AgentSourceWrite[] {

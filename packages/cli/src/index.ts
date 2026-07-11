@@ -1,6 +1,6 @@
 import { constants as fsConstants } from "node:fs";
 import { execFile } from "node:child_process";
-import { access, chmod, lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, chmod, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -24,7 +24,12 @@ import {
   type FileCopyCheckpointDiff,
   type FileCopyCheckpointRevertResult
 } from "@htmlslide/agent";
-import { exportDeck, type CompilerProjectInput, type ExportOptions } from "@htmlslide/compiler";
+import {
+  exportDeck,
+  inspectChromiumRuntime,
+  type CompilerProjectInput,
+  type ExportOptions
+} from "@htmlslide/compiler";
 import {
   loadDeckProject,
   ProjectLoadError,
@@ -47,6 +52,99 @@ export const EXIT_CODES = {
   projectNotFound: 7,
   incompatibleSchema: 8
 } as const;
+
+const CHROMIUM_EXECUTABLE_ENV = "HTMLSLIDE_CHROMIUM_EXECUTABLE";
+const BROWSER_RUNTIME_CONFIG_FILE = "browser-runtime.json";
+const MAX_BROWSER_RUNTIME_CONFIG_BYTES = 16 * 1024;
+
+export type CliBrowserRuntimeState = {
+  available: boolean;
+  executablePath?: string;
+  message: string;
+  source: "environment" | "packaged" | "unconfigured";
+};
+
+export type CliBrowserRuntimeOptions = {
+  env?: NodeJS.ProcessEnv;
+  runtimeRoot?: string;
+};
+
+const cliRuntimeRoot = (): string => path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+const validateChromiumExecutable = async (executablePath: string): Promise<string> => {
+  const resolved = path.resolve(executablePath);
+  const entry = await lstat(resolved).catch(() => undefined);
+  if (!entry?.isFile()) {
+    throw new Error(`Chromium runtime executable is missing or is not a regular file: ${resolved}`);
+  }
+  await access(resolved, fsConstants.X_OK).catch(() => {
+    throw new Error(`Chromium runtime executable is not executable: ${resolved}`);
+  });
+  return resolved;
+};
+
+export const configureCliBrowserRuntime = async (
+  options: CliBrowserRuntimeOptions = {}
+): Promise<CliBrowserRuntimeState> => {
+  const env = options.env ?? process.env;
+  const configuredExecutable = env[CHROMIUM_EXECUTABLE_ENV]?.trim();
+  if (configuredExecutable) {
+    const executablePath = await validateChromiumExecutable(configuredExecutable);
+    return {
+      available: true,
+      executablePath,
+      message: `Chromium runtime configured at ${executablePath}.`,
+      source: "environment"
+    };
+  }
+
+  const runtimeRoot = path.resolve(options.runtimeRoot ?? cliRuntimeRoot());
+  const configPath = path.join(runtimeRoot, BROWSER_RUNTIME_CONFIG_FILE);
+  const configEntry = await lstat(configPath).catch(() => undefined);
+  if (!configEntry) {
+    return {
+      available: false,
+      message: "No packaged Chromium runtime is configured; the compiler will use the local Playwright installation.",
+      source: "unconfigured"
+    };
+  }
+  if (!configEntry.isFile() || configEntry.size > MAX_BROWSER_RUNTIME_CONFIG_BYTES) {
+    throw new Error(`Invalid packaged Chromium runtime configuration: ${configPath}`);
+  }
+
+  const parsed = JSON.parse(await readFile(configPath, "utf8")) as {
+    executablePath?: unknown;
+    schemaVersion?: unknown;
+  };
+  if (parsed.schemaVersion !== 1 || typeof parsed.executablePath !== "string" || parsed.executablePath.length === 0) {
+    throw new Error(`Invalid packaged Chromium runtime configuration: ${configPath}`);
+  }
+  if (path.isAbsolute(parsed.executablePath) || parsed.executablePath.split(/[\\/]+/).includes("..")) {
+    throw new Error(`Packaged Chromium executable path must stay inside the CLI runtime: ${parsed.executablePath}`);
+  }
+
+  const executablePath = path.resolve(runtimeRoot, ...parsed.executablePath.split("/"));
+  const relative = path.relative(runtimeRoot, executablePath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`Packaged Chromium executable path escapes the CLI runtime: ${parsed.executablePath}`);
+  }
+  const validatedExecutable = await validateChromiumExecutable(executablePath);
+  const [realRuntimeRoot, realExecutablePath] = await Promise.all([
+    realpath(runtimeRoot),
+    realpath(validatedExecutable)
+  ]);
+  const realRelative = path.relative(realRuntimeRoot, realExecutablePath);
+  if (realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
+    throw new Error(`Packaged Chromium executable resolves outside the CLI runtime: ${parsed.executablePath}`);
+  }
+  env[CHROMIUM_EXECUTABLE_ENV] = validatedExecutable;
+  return {
+    available: true,
+    executablePath: validatedExecutable,
+    message: `Packaged Chromium runtime configured at ${validatedExecutable}.`,
+    source: "packaged"
+  };
+};
 
 export type LoadedProject = {
   projectPath: string;
@@ -845,9 +943,11 @@ export const validateDeckPackageForPresentation = async (
 
 export const doctor = async (options: CliShimTargetOptions = {}) => {
   const cliShim = await getCliShimStatus(options);
+  const chromium = await inspectChromiumRuntime();
+  const status = chromium.available && cliShim.status !== "failed" ? "passed" as const : "failed" as const;
 
   return {
-    status: "passed" as const,
+    status,
     app: "HTMLslide",
     version: HTMLSLIDE_APP_VERSION,
     checks: [
@@ -860,6 +960,16 @@ export const doctor = async (options: CliShimTargetOptions = {}) => {
         id: "filesystem",
         status: "passed",
         message: "Local filesystem access available"
+      },
+      {
+        id: "chromium",
+        status: chromium.available ? "passed" : "failed",
+        message: chromium.available
+          ? `Chromium ${chromium.version} available at ${chromium.executablePath}`
+          : `Chromium is unavailable at ${chromium.executablePath}: ${chromium.error}`,
+        suggestedFix: chromium.available
+          ? undefined
+          : "Install the Playwright Chromium build or reinstall HTMLslide.app."
       },
       {
         id: "cli-shim",

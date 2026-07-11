@@ -14,6 +14,8 @@
     "@htmlslide/core": "workspace:*",
     "@htmlslide/renderer": "workspace:*",
     "jszip": "^3.10.1",
-    "pdf-lib": "^1.17.1"
+    "pdf-lib": "^1.17.1",
+    "playwright-core": "^1.61.1",
+    "postcss": "^8.5.16"
   }
 }

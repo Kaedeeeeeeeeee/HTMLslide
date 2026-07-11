@@ -104,17 +104,25 @@ Local slide and theme asset URLs are rewritten so an HTML file opened from `expo
 
 `slides[*].pdfPage` is one-based and must match the PDF page containing that slide.
 
+## Chromium Render Contract
+
+PDF and PNG export use the compiler-owned `playwright-core` Chromium renderer. The compiler writes a print-only HTML document plus the exact fingerprinted package-local assets into `render-runtime/` inside the private export staging directory. PDF, thumbnails, and the PDF/thumbnail members of `deckpkg` come from one browser session over that staged document; the compiler does not launch a second render for the package.
+
+The browser context disables page JavaScript, downloads, and service workers. Request routing allows only `data:`, `about:`, and `file:` URLs whose resolved path remains inside the staged render root. HTTP(S), WebSocket, malformed URLs, and file paths outside the render root are blocked. A blocked or failed resource, an undecodable image, a page/console error, or a document that does not reach font, image, and stable-layout readiness fails the export before artifacts are committed.
+
+There is no PDF or thumbnail fallback renderer. A missing or unusable Chromium executable fails closed with an actionable export error. Development resolves the installed Playwright Chromium from the Playwright browser cache unless an explicit compiler option or `HTMLSLIDE_CHROMIUM_EXECUTABLE` is supplied. A packaged macOS app must instead provide its private Chromium under the CLI runtime and resolve it through `browser-runtime.json`; export must not download a browser at runtime.
+
 ## PDF Verification
 
-PDF export currently uses the compiler fallback renderer. It writes one PDF page per slide and verifies the saved PDF page count with `pdf-lib` before returning success.
+The renderer calls `page.pdf` with `printBackground: true` and `preferCSSPageSize: true`. It then uses `pdf-lib` to verify one PDF page per slide and normalize title, creator, producer, creation date, and modification date metadata before returning bytes to the export transaction.
 
-The compiler must fail export if the verified page count differs from `deck.json` slide count.
+The compiler must fail export if the verified page count differs from `deck.json` slide count. Byte determinism is defined for the same source inputs, pinned Chromium build, operating-system image, and font environment; cross-machine equality is not claimed when host fonts or the OS differ. Automated PDF verification covers page count, normalized metadata, repeated-byte determinism in that pinned environment, and generation from the same staged Chromium DOM as the PNG thumbnails; it is not a raster PDF visual-regression claim.
 
 ## PNG Thumbnails
 
-The default thumbnail size is `960x540`. The compiler writes one PNG per slide id to both `exports/thumbnails/` and `.htmlslide/cache/thumbnails/`.
+The default thumbnail size is `960x540`. Chromium captures each authored `.htmlslide-page[data-slide-id]` from the staged render DOM and the compiler writes one PNG per slide id to both `exports/thumbnails/` and `.htmlslide/cache/thumbnails/`.
 
-PNG files must have deterministic dimensions and bytes for the same input deck.
+PNG files must have deterministic dimensions and bytes for the same input deck, pinned Chromium build, operating-system image, and font environment.
 
 ## deckpkg
 

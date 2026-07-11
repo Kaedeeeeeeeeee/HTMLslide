@@ -2,6 +2,18 @@ name: Alpha Package
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/alpha-package.yml"
+      - "apps/desktop/**"
+      - "build/package/**"
+      - "packages/cli/**"
+      - "packages/compiler/**"
+      - "packages/core/**"
+      - "packages/renderer/**"
+      - "scripts/release/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
   push:
     tags:
       - "v*"
@@ -90,6 +102,9 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      - name: Browser visual regression
+        run: pnpm test:visual:browser
 
       - name: Performance smoke
         run: pnpm perf:smoke

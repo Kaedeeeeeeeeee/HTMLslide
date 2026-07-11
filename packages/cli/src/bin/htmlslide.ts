@@ -24,6 +24,7 @@ import {
 } from "@htmlslide/skills";
 import {
   checkLoadedProject,
+  configureCliBrowserRuntime,
   createProject,
   diffCheckpoint,
   doctor,
@@ -42,6 +43,12 @@ import {
   validateAgentProviderCredentials,
   validateDeckPackageForPresentation
 } from "../index.js";
+
+try {
+  await configureCliBrowserRuntime();
+} catch (error) {
+  process.env.HTMLSLIDE_BROWSER_RUNTIME_ERROR = error instanceof Error ? error.message : String(error);
+}
 
 type JsonOption = {
   json?: boolean;
@@ -148,6 +155,12 @@ const fail = (error: unknown, json = false): never => {
 const exportFailure = (error: unknown): CliError => {
   if (error instanceof Error && typeof (error as CliError).exitCode === "number") {
     return error as CliError;
+  }
+  if (error instanceof Error && (error as CliError).code === "CHROMIUM_UNAVAILABLE") {
+    return Object.assign(error, {
+      exitCode: EXIT_CODES.missingDependency,
+      suggestedFix: "Install the Playwright Chromium build or reinstall HTMLslide.app, then rerun htmlslide export."
+    });
   }
   return Object.assign(new Error(error instanceof Error ? error.message : String(error), {
     cause: error
@@ -681,7 +694,11 @@ program
   .action(async (options: JsonOption) => {
     const json = Boolean(options.json ?? program.opts<JsonOption>().json);
     try {
-      writeResult(await doctor(), json);
+      const report = await doctor();
+      writeResult(report, json);
+      if (report.status === "failed") {
+        process.exit(EXIT_CODES.missingDependency);
+      }
     } catch (error) {
       fail(error, json);
     }

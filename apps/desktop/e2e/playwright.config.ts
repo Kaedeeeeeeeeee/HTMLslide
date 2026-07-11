@@ -1,9 +1,13 @@
-import { defineConfig } from "@playwright/test";
+import { chromium, defineConfig } from "@playwright/test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const e2eDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(e2eDir, "..", "..", "..");
+
+// E2E launches Electron with an isolated HOME. Resolve Chromium before that
+// override so compiler exports do not look for Playwright's cache in the fixture HOME.
+process.env.HTMLSLIDE_CHROMIUM_EXECUTABLE ??= chromium.executablePath();
 
 export default defineConfig({
   testDir: e2eDir,

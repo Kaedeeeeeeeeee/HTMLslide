@@ -158,6 +158,12 @@ importers:
       pdf-lib:
         specifier: ^1.17.1
         version: 1.17.1
+      playwright-core:
+        specifier: ^1.61.1
+        version: 1.61.1
+      postcss:
+        specifier: ^8.5.16
+        version: 8.5.16
 
   packages/core:
     dependencies:

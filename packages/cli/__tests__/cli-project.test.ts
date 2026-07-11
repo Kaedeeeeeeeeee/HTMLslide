@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,7 @@ import { DECK_SCHEMA_VERSION, HTMLSLIDE_APP_VERSION } from "@htmlslide/core/vers
 import { getOfficialSkill } from "@htmlslide/skills";
 import {
   checkLoadedProject,
+  configureCliBrowserRuntime,
   createProject,
   doctor,
   EXIT_CODES,
@@ -54,13 +55,91 @@ const runCli = (args: string[], env: NodeJS.ProcessEnv = {}) =>
     timeout: 10000
   });
 
-describe("CLI project helpers", () => {
+describe("CLI project helpers", { timeout: 20_000 }, () => {
+  it("configures only a validated packaged Chromium executable inside the CLI runtime", async () => {
+    const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-browser-"));
+    const outsideRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-browser-outside-"));
+    try {
+      const executablePath = path.join(runtimeRoot, "browser-runtime", "Chromium.app", "Contents", "MacOS", "Chromium");
+      await writeExecutable(executablePath, "#!/bin/sh\nexit 0\n");
+      await writeFile(path.join(runtimeRoot, "browser-runtime.json"), `${JSON.stringify({
+        schemaVersion: 1,
+        executablePath: "browser-runtime/Chromium.app/Contents/MacOS/Chromium"
+      })}\n`);
+      const env: NodeJS.ProcessEnv = {};
+
+      await expect(configureCliBrowserRuntime({ env, runtimeRoot })).resolves.toMatchObject({
+        available: true,
+        executablePath,
+        source: "packaged"
+      });
+      expect(env.HTMLSLIDE_CHROMIUM_EXECUTABLE).toBe(executablePath);
+
+      await writeFile(path.join(runtimeRoot, "browser-runtime.json"), `${JSON.stringify({
+        schemaVersion: 1,
+        executablePath: "../outside-chromium"
+      })}\n`);
+      await expect(configureCliBrowserRuntime({ env: {}, runtimeRoot })).rejects.toThrow("must stay inside");
+
+      const outsideExecutable = path.join(outsideRoot, "chromium");
+      await writeExecutable(outsideExecutable, "#!/bin/sh\nexit 0\n");
+      await symlink(outsideRoot, path.join(runtimeRoot, "linked-browser-runtime"));
+      await writeFile(path.join(runtimeRoot, "browser-runtime.json"), `${JSON.stringify({
+        schemaVersion: 1,
+        executablePath: "linked-browser-runtime/chromium"
+      })}\n`);
+      await expect(configureCliBrowserRuntime({ env: {}, runtimeRoot })).rejects.toThrow("resolves outside");
+    } finally {
+      await rm(runtimeRoot, { recursive: true, force: true });
+      await rm(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
   it("reports the centralized app version from CLI and doctor output", async () => {
     const { stdout } = await runCli(["--version"]);
     expect(stdout.trim()).toBe(HTMLSLIDE_APP_VERSION);
 
     const report = await doctor();
     expect(report.version).toBe(HTMLSLIDE_APP_VERSION);
+    expect(report.checks).toContainEqual(expect.objectContaining({ id: "chromium", status: "passed" }));
+  });
+
+  it("fails doctor when the CLI shim path is occupied by an unmanaged command", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-doctor-"));
+    try {
+      const targetPath = path.join(root, "bin", "htmlslide");
+      await writeExecutable(targetPath, "#!/bin/sh\nexit 0\n");
+      const report = await doctor({ targetPath });
+      expect(report).toMatchObject({ status: "failed" });
+      expect(report.checks).toContainEqual(expect.objectContaining({ id: "cli-shim", status: "failed" }));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("returns missing-dependency exit code when Chromium cannot launch", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
+    try {
+      const project = await createProject(path.join(root, "demo"), "demo");
+      await expect(
+        runCli(["export", project.projectPath, "--json"], {
+          HTMLSLIDE_CHROMIUM_EXECUTABLE: path.join(root, "missing-chromium")
+        })
+      ).rejects.toMatchObject({
+        code: EXIT_CODES.missingDependency,
+        stdout: expect.stringContaining('"code": "CHROMIUM_UNAVAILABLE"')
+      });
+      await expect(
+        runCli(["doctor", "--json"], {
+          HTMLSLIDE_CHROMIUM_EXECUTABLE: path.join(root, "missing-chromium")
+        })
+      ).rejects.toMatchObject({
+        code: EXIT_CODES.missingDependency,
+        stdout: expect.stringContaining('"status": "failed"')
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("creates, checks, and exports a default deck project", async () => {

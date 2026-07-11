@@ -20,6 +20,7 @@ These gates are expected before each alpha candidate:
 | Docs site | Static GitHub Pages site builds with valid local links. | `pnpm docs:build` |
 | Version contract | App, packages, and schema constants remain aligned. | `pnpm version:check` |
 | Export integrity | Compiler exports use one source snapshot, token-safe project locking, staged rollback, manifest-last commit, partial-export cleanup, and fail-closed validation for invalid manifests. | `pnpm test` |
+| Chromium export | Production PDF, real DOM thumbnails, and deckpkg render members share one staged `playwright-core` Chromium session with page JavaScript disabled, render-root-only local files, network blocking, asset/layout readiness, normalized PDF metadata, and fail-closed browser/resource errors. | `pnpm test`, `pnpm test:visual:browser` |
 | Code quality | Lint, typecheck, unit tests, compiler regression, CLI tests, and desktop service tests pass. | `pnpm lint`, `pnpm typecheck`, `pnpm test` |
 | Performance guardrails | Preview, PDF export, checker, and presenter state smoke metrics stay under guardrails. | `pnpm perf:smoke` |
 | Security baseline | Source secret scan and high-severity dependency audit pass. | `pnpm security:check` |
@@ -27,7 +28,7 @@ These gates are expected before each alpha candidate:
 | Desktop UX smoke | New Deck, Project Library, QA, export, presenter, CLI integration, and official skills flows pass in Electron. | `pnpm e2e:desktop` |
 | Desktop accessibility smoke | First-run, Project Library, New Deck gating, QA Panel, presenter, Settings, and official skills chrome pass WCAG A/AA axe checks plus role semantics. | `pnpm e2e:desktop:a11y`, `CI` |
 | Built-in external adapter contract | Fake Claude/Codex runners verify fixed argv, isolated temporary cwd, command-contract probing, permission flags, bounded metadata-only logs, process-group cancellation, conflict-safe source application, checkpoint diff, and Check/Export gating. Shared external-run E2E covers retry; the built-in Codex E2E covers review and revert. | `pnpm test`, `pnpm e2e:desktop`, `CI` |
-| Alpha package | Unsigned DMG/ZIP/manifest plus artifact SHA-256 metadata and a prefilled RC acceptance template are created and smoked from the packaged app, packaged CLI, and packaged MCP diagnostics. | `pnpm verify:package:alpha`, `Alpha Package` |
+| Alpha package | Unsigned DMG/ZIP/manifest plus artifact SHA-256 metadata and a prefilled RC acceptance template are created. The app contains private `browser-runtime.json` plus Chromium, and package smoke forces packaged CLI rendering through that runtime before packaged app and MCP checks. | `pnpm verify:package:alpha`, `Alpha Package` |
 | Remote CI | Main branch CI and Docs Pages complete for the candidate commit. | GitHub Actions `CI`, `Docs Pages` |
 
 ## Automated Alpha Coverage
@@ -53,8 +54,9 @@ These gates are expected before each alpha candidate:
 | QA panel shows issues | Electron E2E covers failing check display. |
 | App shell accessibility | Desktop accessibility E2E covers onboarding, Project Library, New Deck gating, canonical preview host states, QA Panel, presenter rehearsal, Settings, and official skills chrome. The sandboxed user-authored preview document is validated separately. |
 | Canonical slide preview | Compiler/renderer tests cover deterministic single-slide documents, fixed manifest viewports, theme and local-asset parity, read-only generation, deny-by-default CSP, and removal of runtime scripts/notes. Electron E2E covers selection, scaling, stale-response handling, error recovery, and hostile authored content. |
-| PDF page count is correct | Compiler tests cover PDF export metadata and page count. |
-| PNG thumbnails are produced | Compiler tests and export fixtures cover deterministic thumbnails. |
+| PDF output is structurally verified | Compiler tests cover page count, normalized metadata, repeated-byte determinism for a pinned Chromium, operating-system image, and font environment, and production from the same staged Chromium DOM as thumbnails. There is no raster PDF visual-regression or cross-platform byte-equality claim. |
+| PNG thumbnails are real DOM captures | Compiler tests cover exact-size Chromium thumbnails, repeated-byte determinism, and vector-only PNG goldens with 0.2 percent full-slide and 0.5 percent thumbnail thresholds. |
+| Browser and resource failures stop export | Browser renderer tests cover missing Chromium, blocked network/file escapes, disabled page JavaScript, invalid or missing images, and readiness failures without a PDF/thumbnail fallback. |
 | Export integrity metadata is enforced | Core/compiler/linter tests cover deterministic SHA-256 metadata, lock and staging cleanup, partial exports, legacy missing-manifest fallback, artifact edits, and invalid or truncated manifests failing closed. |
 | `deckpkg` can open | Presenter tests, Electron E2E, and package smoke cover package opening through direct launch arguments, Electron `open-file` handling, and macOS LaunchServices `open -a` against the packaged app. |
 | Malicious or oversized `deckpkg` is rejected | Presenter tests cover archive byte, entry count, per-entry and total uncompressed limits, encryption, unsafe paths, and malformed package metadata before presenter asset expansion. |
@@ -107,5 +109,6 @@ The alpha docs and release notes must not claim:
 - Gemini CLI headless deck editing while Gemini remains detection-only;
 - physical dual-screen reliability from Electron E2E alone;
 - real provider safety from fake-fetch tests alone.
+- raster PDF visual-regression coverage from structural PDF checks or PNG goldens.
 
 Use [Testing](testing.md), [Release](release.md), and [dev/release.md](dev/release.md) for the detailed command contracts.

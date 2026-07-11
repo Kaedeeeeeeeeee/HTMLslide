@@ -114,6 +114,9 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Browser visual regression
+        run: pnpm test:visual:browser
+
       - name: Performance smoke
         run: pnpm perf:smoke
 
@@ -230,6 +233,12 @@ jobs:
           if (dmgMetadata.sha256 !== sha256(dmg)) fail(`release DMG metadata sha256 mismatch: ${JSON.stringify(dmgMetadata)}`);
           if (!/^[a-f0-9]{64}$/.test(String(dmgMetadata.sha256 || ''))) fail(`release DMG metadata sha256 is invalid: ${JSON.stringify(dmgMetadata)}`);
           NODE
+
+      - name: Smoke signed notarized release package
+        env:
+          HTMLSLIDE_PACKAGE_SMOKE_CHANNEL: release
+          HTMLSLIDE_PACKAGE_SMOKE_DIR: dist/release
+        run: pnpm smoke:package:alpha
 
       - name: Collect release artifacts
         shell: bash

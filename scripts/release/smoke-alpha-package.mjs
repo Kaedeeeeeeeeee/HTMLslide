@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat } from "node:fs/promises";
+import { constants, existsSync } from "node:fs";
+import { access, cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat } from "node:fs/promises";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -9,10 +10,16 @@ import { buildArtifactMetadata } from "./artifact-metadata.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, "..", "..");
-const alphaDir = path.join(root, "dist", "alpha");
+const packageDir = path.resolve(root, process.env.HTMLSLIDE_PACKAGE_SMOKE_DIR ?? "dist/alpha");
+const expectedChannel = process.env.HTMLSLIDE_PACKAGE_SMOKE_CHANNEL ?? "alpha";
+const expectedNotarized = expectedChannel === "release";
+const artifactNameMarker = expectedChannel === "release" ? "signed-notarized" : "unsigned-alpha";
 const appName = "HTMLslide.app";
 const validFullFixturePath = path.join(root, "packages", "test-fixtures", "decks", "valid-full");
 const deckpkgSmokeFixturePath = path.join(root, "packages", "test-fixtures", "decks", "golden-export-basic");
+const compilerRequire = createRequire(path.join(root, "packages", "compiler", "package.json"));
+const JSZip = compilerRequire("jszip");
+const { PDFDocument } = compilerRequire("pdf-lib");
 
 function fail(message) {
   throw new Error(message);
@@ -41,12 +48,12 @@ function run(command, args, options = {}) {
 }
 
 async function latestManifestPath() {
-  const entries = await readdir(alphaDir).catch(() => []);
+  const entries = await readdir(packageDir).catch(() => []);
   const manifests = await Promise.all(
     entries
       .filter((entry) => entry.endsWith(".json"))
       .map(async (entry) => {
-        const filePath = path.join(alphaDir, entry);
+        const filePath = path.join(packageDir, entry);
         return {
           filePath,
           modifiedMs: (await stat(filePath)).mtimeMs
@@ -56,7 +63,7 @@ async function latestManifestPath() {
 
   manifests.sort((left, right) => right.modifiedMs - left.modifiedMs);
   if (!manifests[0]) {
-    fail(`No alpha package manifest found under ${alphaDir}. Run pnpm package:alpha first.`);
+    fail(`No ${expectedChannel} package manifest found under ${packageDir}.`);
   }
 
   return manifests[0].filePath;
@@ -73,27 +80,32 @@ async function readLatestManifest() {
     fail(`Alpha manifest does not point to an existing DMG: ${manifestPath}`);
   }
 
-  if (!zipPath || !existsSync(zipPath)) {
+  if (expectedChannel === "alpha" && (!zipPath || !existsSync(zipPath))) {
     fail(`Alpha manifest does not point to an existing ZIP: ${manifestPath}`);
   }
 
   if (
     manifest.appName !== "HTMLslide" ||
-    manifest.channel !== "alpha" ||
-    manifest.notarized !== false ||
+    manifest.channel !== expectedChannel ||
+    manifest.notarized !== expectedNotarized ||
     !String(manifest.bundleIdentifier ?? "").includes("htmlslide") ||
     !Array.isArray(manifest.documentTypes) ||
-    !manifest.documentTypes.includes("deckpkg")
+    !manifest.documentTypes.includes("deckpkg") ||
+    manifest.browserRuntime?.kind !== "chromium-headless-shell" ||
+    typeof manifest.browserRuntime?.revision !== "string" ||
+    manifest.browserRuntime.revision.length === 0 ||
+    typeof manifest.browserRuntime?.version !== "string" ||
+    manifest.browserRuntime.version.length === 0
   ) {
     fail(`Alpha manifest does not match the unsigned alpha package contract: ${JSON.stringify(manifest, null, 2)}`);
   }
 
-  for (const artifactPath of [dmgPath, zipPath]) {
-    if (!path.basename(artifactPath).includes("unsigned-alpha")) {
-      fail(`Alpha artifact name must include unsigned-alpha: ${artifactPath}`);
+  for (const artifactPath of [dmgPath, zipPath].filter(Boolean)) {
+    if (!path.basename(artifactPath).includes(artifactNameMarker)) {
+      fail(`${expectedChannel} artifact name must include ${artifactNameMarker}: ${artifactPath}`);
     }
   }
-  await assertArtifactMetadata(manifest, [dmgPath, zipPath], manifestPath);
+  await assertArtifactMetadata(manifest, [dmgPath, zipPath].filter(Boolean), manifestPath);
 
   return {
     dmgPath,
@@ -146,6 +158,74 @@ function packagedCliPath(appPath) {
     fail(`Packaged CLI runtime is missing: ${cliPath}`);
   }
   return cliPath;
+}
+
+async function packagedBrowserExecutablePath(appPath) {
+  const cliRuntimePath = path.join(appPath, "Contents", "Resources", "app", "cli-runtime");
+  const configPath = path.join(cliRuntimePath, "browser-runtime.json");
+  let config;
+  try {
+    config = JSON.parse(await readFile(configPath, "utf8"));
+  } catch {
+    fail(`Packaged browser runtime config is missing or invalid JSON: ${configPath}`);
+  }
+
+  if (
+    !config ||
+    Array.isArray(config) ||
+    config.schemaVersion !== 1 ||
+    typeof config.executablePath !== "string" ||
+    config.executablePath.length === 0 ||
+    config.executablePath.includes("\\") ||
+    path.posix.isAbsolute(config.executablePath)
+  ) {
+    fail(`Packaged browser runtime config is invalid: ${JSON.stringify(config)}`);
+  }
+
+  const executablePath = path.resolve(cliRuntimePath, ...config.executablePath.split("/"));
+  const relativeExecutablePath = path.relative(cliRuntimePath, executablePath);
+  if (
+    relativeExecutablePath === "" ||
+    relativeExecutablePath === ".." ||
+    relativeExecutablePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativeExecutablePath)
+  ) {
+    fail(`Packaged browser executable path escapes cli-runtime: ${config.executablePath}`);
+  }
+
+  let executableStats;
+  try {
+    executableStats = await lstat(executablePath);
+    await access(executablePath, constants.X_OK);
+  } catch {
+    fail(`Packaged browser executable is missing or not executable: ${executablePath}`);
+  }
+  if (!executableStats.isFile() || executableStats.isSymbolicLink()) {
+    fail(`Packaged browser executable must be a regular file: ${executablePath}`);
+  }
+
+  const [realCliRuntimePath, realExecutablePath] = await Promise.all([
+    realpath(cliRuntimePath),
+    realpath(executablePath)
+  ]);
+  const realRelativePath = path.relative(realCliRuntimePath, realExecutablePath);
+  if (
+    realRelativePath === "" ||
+    realRelativePath === ".." ||
+    realRelativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(realRelativePath)
+  ) {
+    fail(`Packaged browser executable resolves outside cli-runtime: ${config.executablePath}`);
+  }
+
+  return executablePath;
+}
+
+async function packagedCliEnvironment(appPath, overrides = {}) {
+  return {
+    ...overrides,
+    HTMLSLIDE_CHROMIUM_EXECUTABLE: await packagedBrowserExecutablePath(appPath)
+  };
 }
 
 function assertDeckPackageDocumentType(appPath) {
@@ -277,6 +357,7 @@ async function smokeZipArtifact(zipPath, smokeRoot) {
   assertDeckPackageDocumentType(zipAppPath);
   packagedAppExecutablePath(zipAppPath);
   packagedCliPath(zipAppPath);
+  await packagedBrowserExecutablePath(zipAppPath);
   await smokeCliShim(zipAppPath, path.join(smokeRoot, "zip-cli"));
 }
 
@@ -380,11 +461,16 @@ async function exportFixtureDeckPackageWithPackagedCli(appPath, smokeRoot) {
     recursive: true,
     verbatimSymlinks: true
   });
+  const emptyBrowserCache = path.join(smokeRoot, "empty-playwright-browser-cache");
+  await mkdir(emptyBrowserCache, { recursive: true });
 
   const cliPath = packagedCliPath(appPath);
   const result = run(process.execPath, [cliPath, "package", projectPath, "--json"], {
     env: {
-      HTMLSLIDE_HOME: path.join(smokeRoot, "deckpkg-cli-home")
+      HTMLSLIDE_BROWSER_RUNTIME_ERROR: "",
+      HTMLSLIDE_CHROMIUM_EXECUTABLE: "",
+      HTMLSLIDE_HOME: path.join(smokeRoot, "deckpkg-cli-home"),
+      PLAYWRIGHT_BROWSERS_PATH: emptyBrowserCache
     }
   });
   const exported = readJsonOutput(result, "packaged htmlslide package");
@@ -396,24 +482,70 @@ async function exportFixtureDeckPackageWithPackagedCli(appPath, smokeRoot) {
   if (!existsSync(deckpkgPath)) {
     fail(`Packaged CLI package did not create a deckpkg artifact: ${deckpkgPath}`);
   }
-  assertPackagedDeckPackageAssets(deckpkgPath);
+  await assertPackagedDeckPackageAssets(deckpkgPath);
 
   return deckpkgPath;
 }
 
-function assertPackagedDeckPackageAssets(deckpkgPath) {
-  const entries = run("unzip", ["-Z1", deckpkgPath]).stdout.split(/\r?\n/u).filter(Boolean);
+function pngDimensions(bytes) {
+  if (
+    bytes.length < 24 ||
+    !Buffer.from(bytes.subarray(0, 8)).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+  ) {
+    fail("Packaged deckpkg thumbnail is not a valid PNG.");
+  }
+  const view = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return { width: view.readUInt32BE(16), height: view.readUInt32BE(20) };
+}
+
+async function assertPackagedDeckPackageAssets(deckpkgPath) {
+  const archive = await JSZip.loadAsync(await readFile(deckpkgPath));
+  const entries = Object.keys(archive.files);
   if (!entries.includes("assets/accent.svg")) {
     fail(`Packaged deckpkg does not include package-local asset assets/accent.svg: ${deckpkgPath}`);
   }
 
-  const deckHtml = run("unzip", ["-p", deckpkgPath, "deck.html"]).stdout;
+  const deckHtml = await archive.file("deck.html")?.async("string");
   if (
+    !deckHtml ||
     !deckHtml.includes('src="assets/accent.svg"') ||
     !deckHtml.includes('url("assets/accent.svg")') ||
     deckHtml.includes("../assets/")
   ) {
     fail("Packaged deckpkg deck.html does not use package-local asset URLs.");
+  }
+
+  const packageManifestText = await archive.file("manifest.json")?.async("string");
+  if (!packageManifestText) {
+    fail("Packaged deckpkg does not include manifest.json.");
+  }
+  const packageManifest = JSON.parse(packageManifestText);
+  const slides = Array.isArray(packageManifest.slides) ? packageManifest.slides : [];
+  if (slides.length === 0) {
+    fail("Packaged deckpkg manifest does not list any slides.");
+  }
+
+  const pdfBytes = await archive.file("deck.pdf")?.async("uint8array");
+  if (!pdfBytes) {
+    fail("Packaged deckpkg does not include deck.pdf.");
+  }
+  const pdf = await PDFDocument.load(pdfBytes);
+  if (pdf.getPageCount() !== slides.length) {
+    fail(`Packaged deckpkg PDF page count ${pdf.getPageCount()} does not match ${slides.length} slides.`);
+  }
+
+  for (const slide of slides) {
+    const thumbnailPath = slide?.thumbnail;
+    const thumbnailBytes = typeof thumbnailPath === "string"
+      ? await archive.file(thumbnailPath)?.async("uint8array")
+      : undefined;
+    if (!thumbnailBytes) {
+      fail(`Packaged deckpkg is missing thumbnail ${String(thumbnailPath)}.`);
+    }
+    const dimensions = pngDimensions(thumbnailBytes);
+    if (dimensions.width !== 960 || dimensions.height !== 540) {
+      fail(`Packaged deckpkg thumbnail ${thumbnailPath} is ${dimensions.width}x${dimensions.height}, expected 960x540.`);
+    }
   }
 }
 
@@ -696,10 +828,10 @@ async function smokeCliShim(appPath, smokeRoot) {
   const cliPath = packagedCliPath(appPath);
   const htmlslideHome = path.join(smokeRoot, "htmlslide-home");
   const shimPath = path.join(htmlslideHome, "bin", "htmlslide");
-  const env = {
+  const env = await packagedCliEnvironment(appPath, {
     HTMLSLIDE_HOME: htmlslideHome,
     PATH: `${path.dirname(shimPath)}${path.delimiter}${process.env.PATH ?? ""}`
-  };
+  });
 
   const install = readJsonOutput(
     run(process.execPath, [cliPath, "setup", "install-cli", "--target-path", shimPath, "--app-path", appPath, "--json"], {
@@ -740,7 +872,7 @@ async function smokePackagedCliPresent(appPath, deckpkgPath, smokeRoot, firstRun
     mkdir(smokeWorkspace, { recursive: true }),
     mkdir(smokeUserData, { recursive: true })
   ]);
-  const env = {
+  const env = await packagedCliEnvironment(appPath, {
     ...process.env,
     ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
     HOME: smokeHome,
@@ -752,7 +884,7 @@ async function smokePackagedCliPresent(appPath, deckpkgPath, smokeRoot, firstRun
     HTMLSLIDE_SMOKE_READY_FILE: smokeReadyFile,
     HTMLSLIDE_USER_DATA_DIR: smokeUserData,
     PATH: `${firstRunState.cliTargetDir}${path.delimiter}${process.env.PATH ?? ""}`
-  };
+  });
 
   const presented = readJsonOutput(
     run(shimPath, ["present", deckpkgPath, "--json"], { env }),
@@ -819,11 +951,11 @@ async function smokePackagedCliOpenProject(appPath, smokeRoot, firstRunState) {
     const shimPath = path.join(firstRunState.cliTargetDir, "htmlslide");
     const opened = readJsonOutput(
       run(shimPath, ["open", projectPath, "--json"], {
-        env: {
+        env: await packagedCliEnvironment(appPath, {
           ...process.env,
           HTMLSLIDE_HOME: firstRunState.htmlslideHome,
           PATH: `${firstRunState.cliTargetDir}${path.delimiter}${process.env.PATH ?? ""}`
-        }
+        })
       }),
       "packaged htmlslide open"
     );
@@ -957,10 +1089,10 @@ async function smokeMovedAppCliRepair(originalAppPath, smokeRoot, firstRunState)
   await smokeFirstRunCliProvisioning(movedAppPath, firstRunState.cliTargetDir, firstRunState.htmlslideHome);
 
   const shimPath = path.join(firstRunState.cliTargetDir, "htmlslide");
-  const env = {
+  const env = await packagedCliEnvironment(movedAppPath, {
     HTMLSLIDE_HOME: firstRunState.htmlslideHome,
     PATH: `${path.dirname(shimPath)}${path.delimiter}${process.env.PATH ?? ""}`
-  };
+  });
   const doctor = readJsonOutput(run(shimPath, ["doctor", "--json"], { env }), "moved app htmlslide doctor");
   const cliShim = doctor.checks?.find((check) => check.id === "cli-shim");
   if (doctor.status !== "passed" || cliShim?.status !== "passed") {
@@ -972,7 +1104,7 @@ async function smokeMovedAppCliRepair(originalAppPath, smokeRoot, firstRunState)
 
 async function main() {
   if (process.platform !== "darwin") {
-    fail("Alpha package smoke must run on macOS because it mounts DMG artifacts and launches a .app bundle.");
+    fail("macOS package smoke must run on macOS because it mounts DMG artifacts and launches a .app bundle.");
   }
 
   const smokeRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-alpha-smoke-"));
@@ -982,9 +1114,11 @@ async function main() {
 
   try {
     const { dmgPath, manifestPath, zipPath } = await readLatestManifest();
-    process.stdout.write(`Using alpha manifest: ${manifestPath}\n`);
-    process.stdout.write(`Checking ZIP artifact: ${zipPath}\n`);
-    await smokeZipArtifact(zipPath, smokeRoot);
+    process.stdout.write(`Using ${expectedChannel} manifest: ${manifestPath}\n`);
+    if (zipPath) {
+      process.stdout.write(`Checking ZIP artifact: ${zipPath}\n`);
+      await smokeZipArtifact(zipPath, smokeRoot);
+    }
 
     await mountDmg(dmgPath, mountPoint);
     const mountedAppPath = path.join(mountPoint, appName);
@@ -1004,6 +1138,7 @@ async function main() {
     detachDmg(mountPoint);
 
     assertDeckPackageDocumentType(installedAppPath);
+    await packagedBrowserExecutablePath(installedAppPath);
     const firstRunState = await launchAppOnce(installedAppPath, smokeRoot);
     const movedAppPath = await smokeMovedAppCliRepair(installedAppPath, smokeRoot, firstRunState);
     const deckpkgPath = await launchAppWithDeckPackage(movedAppPath, smokeRoot);
@@ -1012,7 +1147,7 @@ async function main() {
     await openDeckPackageWithLaunchServices(movedAppPath, deckpkgPath, smokeRoot);
     await smokeCliShim(movedAppPath, smokeRoot);
 
-    process.stdout.write("Alpha package smoke passed.\n");
+    process.stdout.write(`${expectedChannel} package smoke passed.\n`);
   } finally {
     detachDmg(mountPoint);
     await rm(smokeRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });

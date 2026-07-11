@@ -39,6 +39,7 @@ const fixtureRootPath = path.resolve(testDir, "../../test-fixtures/decks");
 const goldenOutputRootPath = path.resolve(testDir, "goldens");
 const browserVisualDiffOutputPath = path.resolve(testDir, "../../../dist/visual-regression/renderer");
 const browserSlideDiffThreshold = 0.002;
+const browserThumbnailDiffThreshold = 0.005;
 const updateBrowserGoldens = process.env.HTMLSLIDE_UPDATE_BROWSER_GOLDENS === "1";
 const browserVisualFixtures = [
   {
@@ -185,6 +186,32 @@ describe("browser-rendered visual regression", () => {
               width: result.width
             }).toEqual(project.viewport);
             expect(result.diffRatio, result.message).toBeLessThanOrEqual(browserSlideDiffThreshold);
+          }
+
+          const thumbnailPath = exported.artifacts.thumbnails?.find(
+            (candidate) => path.basename(candidate) === `${slideId}.png`
+          );
+          expect(thumbnailPath).toBeTruthy();
+          const thumbnailGoldenPath = path.join(goldenOutputRootPath, name, "thumbnails", `${slideId}.png`);
+          if (updateBrowserGoldens) {
+            await mkdir(path.dirname(thumbnailGoldenPath), { recursive: true });
+            await copyFile(thumbnailPath!, thumbnailGoldenPath);
+          } else {
+            await assertGoldenExists(thumbnailGoldenPath);
+            const thumbnailResult = await comparePngWithGolden({
+              actualPath: thumbnailPath!,
+              goldenPath: thumbnailGoldenPath,
+              artifactDir: browserVisualDiffOutputPath,
+              artifactName: `${name}-${slideId}-thumbnail`,
+              maxDiffRatio: browserThumbnailDiffThreshold
+            });
+            expect({ height: thumbnailResult.height, width: thumbnailResult.width }).toEqual({
+              height: 540,
+              width: 960
+            });
+            expect(thumbnailResult.diffRatio, thumbnailResult.message).toBeLessThanOrEqual(
+              browserThumbnailDiffThreshold
+            );
           }
         }
 

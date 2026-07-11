@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { existsSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { constants, existsSync } from "node:fs";
+import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -14,8 +14,7 @@ const desktopDir = path.join(root, "apps", "desktop");
 const configPath = path.resolve(root, process.env.HTMLSLIDE_PACKAGE_CONFIG ?? "build/package/alpha-macos.json");
 
 function fail(message) {
-  process.stderr.write(`${message}\n`);
-  process.exit(1);
+  throw new Error(message);
 }
 
 function run(command, args, options = {}) {
@@ -218,6 +217,120 @@ async function deployCliRuntime(appResourcesPath) {
   }
 }
 
+function assertContainedPath(parentPath, childPath, label) {
+  const relativePath = path.relative(parentPath, childPath);
+  if (
+    relativePath === "" ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativePath)
+  ) {
+    fail(`${label} escapes its required parent: ${childPath}`);
+  }
+  return relativePath;
+}
+
+async function findRegularFiles(rootPath, predicate) {
+  const matches = [];
+  const pending = [rootPath];
+  while (pending.length > 0) {
+    const currentPath = pending.pop();
+    const entries = await readdir(currentPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const entryPath = path.join(currentPath, entry.name);
+      if (entry.isDirectory()) {
+        pending.push(entryPath);
+      } else if (entry.isFile() && predicate(entry.name, entryPath)) {
+        matches.push(entryPath);
+      }
+    }
+  }
+  return matches.sort();
+}
+
+async function assertRegularExecutable(executablePath, label) {
+  let executableStats;
+  try {
+    executableStats = await lstat(executablePath);
+    await access(executablePath, constants.X_OK);
+  } catch {
+    fail(`${label} is missing or not executable: ${executablePath}`);
+  }
+  if (!executableStats.isFile() || executableStats.isSymbolicLink()) {
+    fail(`${label} must be a regular executable file: ${executablePath}`);
+  }
+}
+
+async function deployBrowserRuntime(appResourcesPath) {
+  const cliRuntimePath = path.join(appResourcesPath, "cli-runtime");
+  const compilerRequire = createRequire(path.join(root, "packages", "compiler", "package.json"));
+  const playwrightCorePackagePath = compilerRequire.resolve("playwright-core/package.json");
+  const playwrightCoreRoot = path.dirname(playwrightCorePackagePath);
+  const browserRegistry = await readJson(path.join(playwrightCoreRoot, "browsers.json"));
+  const headlessShell = browserRegistry.browsers?.find((browser) => browser.name === "chromium-headless-shell");
+  if (!headlessShell || typeof headlessShell.revision !== "string") {
+    fail(`playwright-core does not declare a chromium-headless-shell revision: ${playwrightCorePackagePath}`);
+  }
+
+  const configuredBrowserPath = process.env.PLAYWRIGHT_BROWSERS_PATH;
+  const browserCacheRoot = configuredBrowserPath === "0"
+    ? path.join(playwrightCoreRoot, ".local-browsers")
+    : configuredBrowserPath
+      ? path.resolve(configuredBrowserPath)
+      : path.join(os.homedir(), "Library", "Caches", "ms-playwright");
+  const sourceRuntimePath = path.join(browserCacheRoot, `chromium_headless_shell-${headlessShell.revision}`);
+  const sourceExecutables = await findRegularFiles(
+    sourceRuntimePath,
+    (name) => name === "chrome-headless-shell"
+  ).catch(() => []);
+  if (sourceExecutables.length !== 1) {
+    fail(`Expected one installed Playwright Chromium headless shell under ${sourceRuntimePath}; found ${sourceExecutables.length}.`);
+  }
+  const sourceExecutablePath = sourceExecutables[0];
+  await assertRegularExecutable(sourceExecutablePath, "Installed Playwright Chromium headless shell");
+
+  const browserRuntimePath = path.join(cliRuntimePath, "browser-runtime");
+  const destinationRuntimePath = path.join(browserRuntimePath, "chromium-headless-shell");
+  const executablePathInsideRuntime = assertContainedPath(
+    sourceRuntimePath,
+    sourceExecutablePath,
+    "Installed Playwright Chromium headless shell"
+  );
+  const destinationExecutablePath = path.resolve(destinationRuntimePath, executablePathInsideRuntime);
+  assertContainedPath(destinationRuntimePath, destinationExecutablePath, "Packaged Chromium executable");
+
+  await rm(browserRuntimePath, { recursive: true, force: true });
+  await cp(sourceRuntimePath, destinationRuntimePath, {
+    recursive: true,
+    verbatimSymlinks: true
+  });
+  await assertRegularExecutable(destinationExecutablePath, "Packaged Chromium executable");
+
+  const configuredExecutablePath = path.relative(cliRuntimePath, destinationExecutablePath).split(path.sep).join("/");
+  if (
+    path.posix.isAbsolute(configuredExecutablePath) ||
+    configuredExecutablePath === ".." ||
+    configuredExecutablePath.startsWith("../")
+  ) {
+    fail(`Packaged Chromium executable path escapes cli-runtime: ${configuredExecutablePath}`);
+  }
+  await writeFile(
+    path.join(cliRuntimePath, "browser-runtime.json"),
+    `${JSON.stringify({ schemaVersion: 1, executablePath: configuredExecutablePath }, null, 2)}\n`
+  );
+  await assertNoBrokenSymlinks(cliRuntimePath);
+  return {
+    codePaths: await findRegularFiles(
+      destinationRuntimePath,
+      (name) => name === "chrome-headless-shell" || name.endsWith(".dylib")
+    ),
+    executablePath: destinationExecutablePath,
+    revision: headlessShell.revision,
+    runtimePath: destinationRuntimePath,
+    version: headlessShell.browserVersion ?? null
+  };
+}
+
 async function assertNoBrokenSymlinks(rootPath) {
   const pending = [rootPath];
   while (pending.length > 0) {
@@ -290,6 +403,7 @@ async function deployDesktopRuntime(appResourcesPath) {
   const coreRequire = createRequire(path.join(root, "packages", "core", "package.json"));
   const jszipRequire = createRequire(compilerRequire.resolve("jszip/package.json"));
   const pdfLibRequire = createRequire(compilerRequire.resolve("pdf-lib/package.json"));
+  const postcssRequire = createRequire(compilerRequire.resolve("postcss/package.json"));
   const workspaceRuntimePackages = [
     ["@htmlslide/agent", path.join(root, "packages", "agent")],
     ["@htmlslide/agent-adapters", path.join(root, "packages", "agent-adapters")],
@@ -302,10 +416,15 @@ async function deployDesktopRuntime(appResourcesPath) {
   const npmRuntimePackages = [
     [compilerRequire, "jszip"],
     [compilerRequire, "pdf-lib"],
+    [compilerRequire, "playwright-core"],
+    [compilerRequire, "postcss"],
     [coreRequire, "zod"],
     [pdfLibRequire, "@pdf-lib/standard-fonts"],
     [pdfLibRequire, "@pdf-lib/upng"],
     [pdfLibRequire, "tslib"],
+    [postcssRequire, "nanoid"],
+    [postcssRequire, "picocolors"],
+    [postcssRequire, "source-map-js"],
     [jszipRequire, "core-util-is"],
     [jszipRequire, "immediate"],
     [jszipRequire, "inherits"],
@@ -365,6 +484,30 @@ function requiredEnv(name) {
 
 function developerIdIdentity() {
   return requiredEnv("APPLE_DEVELOPER_ID_APPLICATION");
+}
+
+function signBrowserRuntime(browserRuntime, config) {
+  const shouldSign = config.signing === "developer-id" ||
+    (config.adHocSign && process.env.HTMLSLIDE_ALPHA_SKIP_ADHOC_SIGN !== "1");
+  if (!shouldSign) {
+    return;
+  }
+
+  const identity = config.signing === "developer-id" ? developerIdIdentity() : "-";
+  const orderedCodePaths = [...browserRuntime.codePaths].sort((left, right) => {
+    const leftExecutable = path.basename(left) === "chrome-headless-shell";
+    const rightExecutable = path.basename(right) === "chrome-headless-shell";
+    return Number(leftExecutable) - Number(rightExecutable) || left.localeCompare(right);
+  });
+  for (const codePath of orderedCodePaths) {
+    const args = ["--force"];
+    if (config.signing === "developer-id") {
+      args.push("--options", "runtime", "--timestamp");
+    }
+    args.push("--sign", identity, codePath);
+    run("codesign", args);
+    run("codesign", ["--verify", "--strict", "--verbose=2", codePath]);
+  }
 }
 
 function signAppBundle(appPath, config) {
@@ -490,9 +633,15 @@ await cp(desktopDist, path.join(appResourcesPath, "dist"), {
   verbatimSymlinks: true
 });
 await writeRuntimePackage(appResourcesPath, desktopPackage, version);
-await deployDesktopRuntime(appResourcesPath);
-await deployCliRuntime(appResourcesPath);
-restoreWorkspaceInstallState();
+let browserRuntime;
+try {
+  await deployDesktopRuntime(appResourcesPath);
+  await deployCliRuntime(appResourcesPath);
+  browserRuntime = await deployBrowserRuntime(appResourcesPath);
+} finally {
+  restoreWorkspaceInstallState();
+}
+signBrowserRuntime(browserRuntime, config);
 
 const plistPath = path.join(appPath, "Contents", "Info.plist");
 plistSet(plistPath, "CFBundleName", config.appName);
@@ -528,6 +677,11 @@ await writeFile(
       arch,
       channel,
       bundleIdentifier: config.bundleIdentifier,
+      browserRuntime: {
+        kind: "chromium-headless-shell",
+        revision: browserRuntime.revision,
+        version: browserRuntime.version
+      },
       documentTypes: [config.deckPackageDocumentType?.extension ?? "deckpkg"],
       signing,
       notarized: notarization.notarized,

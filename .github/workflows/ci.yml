@@ -89,6 +89,9 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Browser visual regression
+        run: pnpm test:visual:browser
+
       - name: Performance smoke
         run: pnpm perf:smoke
 

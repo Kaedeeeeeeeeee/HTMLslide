@@ -49,8 +49,6 @@ const testDir = path.dirname(fileURLToPath(import.meta.url));
 const fixtureRootPath = path.resolve(testDir, "../../test-fixtures/decks");
 const goldenOutputRootPath = path.resolve(testDir, "goldens");
 const basicFixtureName = "golden-export-basic";
-const visualDiffOutputPath = path.resolve(testDir, "../../../dist/visual-regression/compiler");
-const fallbackThumbnailDiffThreshold = 0;
 const compilerRegressionFixtures = [
   { name: "minimal-deck", expectedSlideCount: 1 },
   { name: "text-heavy-deck", expectedSlideCount: 2 },
@@ -131,7 +129,7 @@ const artifactHashes = async (project: CompilerProjectInput) => {
   };
 };
 
-describe("exportDeck", () => {
+describe("exportDeck", { timeout: 20_000 }, () => {
   it("writes verifiable HTML, PDF, notes, thumbnails, and deckpkg artifacts", async () => {
     const { root, projectPath, project } = await copyCompilerFixture(basicFixtureName);
     try {
@@ -236,11 +234,16 @@ describe("exportDeck", () => {
       ]);
 
       expect(await readPdfPageCount(await zipBytes(deckpkg, "deck.pdf"))).toBe(2);
+      expect(Buffer.from(await zipBytes(deckpkg, "deck.pdf")).equals(await readFile(exported.artifacts.pdf!))).toBe(true);
       expect(JSON.parse(await zipText(deckpkg, "notes.json"))).toEqual(notes);
       expect(JSON.parse(await zipText(deckpkg, "presenter-settings.json")).schemaVersion).toBe(
         DECK_PACKAGE_SCHEMA_VERSION
       );
       expect(readPngSize(await zipBytes(deckpkg, "thumbnails/001-title.png"))).toEqual({ width: 960, height: 540 });
+      expect(Buffer.from(await zipBytes(deckpkg, "thumbnails/001-title.png")).equals(firstThumbnail)).toBe(true);
+      expect(Buffer.from(await zipBytes(deckpkg, "thumbnails/002-artifacts.png")).equals(secondThumbnail)).toBe(true);
+      expect((await readFile(exported.artifacts.thumbnailCache![0]!)).equals(firstThumbnail)).toBe(true);
+      expect((await readFile(exported.artifacts.thumbnailCache![1]!)).equals(secondThumbnail)).toBe(true);
 
       const exportManifest = ExportManifestSchema.parse(
         JSON.parse(await readFile(exported.metadata.manifest, "utf8"))
@@ -278,6 +281,47 @@ describe("exportDeck", () => {
           sizeBytes: artifact.sizeBytes
         });
       }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("snapshots and rewrites the complete nested CSS asset dependency graph", async () => {
+    const { root, project, projectPath } = await copyCompilerFixture(basicFixtureName);
+    try {
+      const stylesPath = path.join(projectPath, "assets", "styles");
+      await mkdir(stylesPath, { recursive: true });
+      await writeFile(
+        path.join(stylesPath, "base.css"),
+        '@import "./nested.css";\n.slide { border-image-source: url("../accent.svg"); }\n'
+      );
+      await writeFile(
+        path.join(stylesPath, "nested.css"),
+        '.slide { background-image: url("../accent.svg"); }\n'
+      );
+      const slidePath = path.join(projectPath, "slides", "001-title.html");
+      await writeFile(
+        slidePath,
+        `<link rel="stylesheet" href="../assets/styles/base.css">\n` +
+        `<style>@import "../assets/styles/base.css"; .inline { background: url("../assets/accent.svg"); }</style>\n` +
+        await readFile(slidePath, "utf8")
+      );
+
+      const exported = await exportDeck(project);
+      const deckpkg = await JSZip.loadAsync(await readFile(exported.artifacts.deckpkg!));
+      expect(deckpkg.file("assets/styles/base.css")).toBeTruthy();
+      expect(deckpkg.file("assets/styles/nested.css")).toBeTruthy();
+      expect(await zipText(deckpkg, "assets/styles/base.css")).toContain('@import "./nested.css"');
+      expect(await zipText(deckpkg, "assets/styles/base.css")).toContain('url("../accent.svg")');
+      expect(await zipText(deckpkg, "assets/styles/nested.css")).toContain('url("../accent.svg")');
+      expect(await zipText(deckpkg, "deck.html")).toContain('@import "assets/styles/base.css"');
+
+      const manifest = ExportManifestSchema.parse(JSON.parse(await readFile(exported.metadata.manifest, "utf8")));
+      expect(manifest.sources.map((source) => source.path)).toEqual(expect.arrayContaining([
+        "assets/accent.svg",
+        "assets/styles/base.css",
+        "assets/styles/nested.css"
+      ]));
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -358,32 +402,6 @@ describe("exportDeck", () => {
         const thumbnailPath = path.join(projectPath, "exports", "thumbnails", `${slide.id}.png`);
         expect(readPngSize(await readFile(thumbnailPath))).toEqual({ width: 960, height: 540 });
         expect(readPngSize(await zipBytes(deckpkg, `thumbnails/${slide.id}.png`))).toEqual({ width: 960, height: 540 });
-      }
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  it.each(visualGoldenFixtures)("matches golden fallback thumbnail PNGs for $name", async ({ name }) => {
-    const { root, project } = await copyCompilerFixture(name);
-    try {
-      await rm(visualDiffOutputPath, { recursive: true, force: true });
-      const exported = await exportDeck(project);
-      expect(exported.artifacts.thumbnails).toHaveLength(project.slides.length);
-
-      for (const thumbnailPath of exported.artifacts.thumbnails ?? []) {
-        const result = await comparePngWithGolden({
-          actualPath: thumbnailPath,
-          goldenPath: path.join(goldenOutputRootPath, name, "thumbnails", path.basename(thumbnailPath)),
-          artifactDir: visualDiffOutputPath,
-          artifactName: `${name}-${path.basename(thumbnailPath, ".png")}`,
-          maxDiffRatio: fallbackThumbnailDiffThreshold
-        });
-        expect({
-          height: result.height,
-          width: result.width
-        }).toEqual({ width: 960, height: 540 });
-        expect(result.diffRatio, result.message).toBeLessThanOrEqual(fallbackThumbnailDiffThreshold);
       }
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -536,6 +554,29 @@ describe("exportDeck", () => {
     }
   });
 
+  it("preserves the committed generation and cleans staging after Chromium fails", async () => {
+    const { root, project, projectPath } = await copyCompilerFixture(basicFixtureName);
+    try {
+      const previous = await exportDeck(project);
+      const previousManifestJson = await readFile(previous.metadata.manifest, "utf8");
+      const previousManifest = ExportManifestSchema.parse(JSON.parse(previousManifestJson));
+
+      await expect(exportDeck(project, {
+        chromiumExecutablePath: path.join(root, "missing-chromium")
+      })).rejects.toMatchObject({ code: "CHROMIUM_UNAVAILABLE" });
+
+      expect(await readFile(previous.metadata.manifest, "utf8")).toBe(previousManifestJson);
+      for (const artifact of previousManifest.artifacts) {
+        const current = await fingerprintProjectFile(projectPath, artifact.path);
+        expect(current).toMatchObject({ sha256: artifact.sha256, sizeBytes: artifact.sizeBytes });
+      }
+      await expect(access(path.join(projectPath, ".htmlslide", "cache", "export.lock"))).rejects.toThrow();
+      expect(await readdir(path.join(projectPath, ".htmlslide", "cache", "export-staging"))).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("refuses an exports directory symlink without writing outside the project", async () => {
     const { root, project, projectPath } = await copyCompilerFixture(basicFixtureName);
     const outsideExports = path.join(root, "outside-exports");
@@ -579,23 +620,24 @@ describe("exportDeck", () => {
       const previous = await exportDeck(project);
       const previousManifest = await readFile(previous.metadata.manifest, "utf8");
       const recorded = ExportManifestSchema.parse(JSON.parse(previousManifest));
+      const previousCache = await Promise.all(
+        previous.artifacts.thumbnailCache!.map(async (cachePath) => [cachePath, await readFile(cachePath)] as const)
+      );
       const deckPath = path.join(projectPath, "deck.json");
       const deck = JSON.parse(await readFile(deckPath, "utf8")) as DeckJson;
       deck.title = "Renamed Deck";
       await writeFile(deckPath, `${JSON.stringify(deck, null, 2)}\n`);
       await mkdir(path.join(projectPath, "exports", "renamed-deck.html"));
 
-      await expect(exportDeck(project, {
-        pdf: false,
-        html: true,
-        deckpkg: false,
-        thumbnails: false
-      })).rejects.toThrow("must be a regular file");
+      await expect(exportDeck(project)).rejects.toThrow("must be a regular file");
 
       expect(await readFile(previous.metadata.manifest, "utf8")).toBe(previousManifest);
       for (const artifact of recorded.artifacts) {
         const actual = await fingerprintProjectFile(projectPath, artifact.path);
         expect(actual).toMatchObject({ sha256: artifact.sha256, sizeBytes: artifact.sizeBytes });
+      }
+      for (const [cachePath, expectedBytes] of previousCache) {
+        expect(Buffer.from(await readFile(cachePath)).equals(expectedBytes)).toBe(true);
       }
     } finally {
       await rm(root, { recursive: true, force: true });

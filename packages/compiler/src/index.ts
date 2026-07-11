@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { deflateSync } from "node:zlib";
 import JSZip from "jszip";
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import { PDFDocument } from "pdf-lib";
+import postcss from "postcss";
 import {
   changedFingerprintPaths,
   compareFingerprintPaths,
@@ -31,6 +31,9 @@ import {
   PREVIEW_CONTENT_SECURITY_POLICY as RENDERER_PREVIEW_CONTENT_SECURITY_POLICY,
   type RenderDeck
 } from "@htmlslide/renderer";
+import { renderWithChromium, type BrowserRenderResult } from "./browser-renderer.js";
+
+export { BrowserRenderError, inspectChromiumRuntime } from "./browser-renderer.js";
 
 export type CompilerSlideInput = {
   id: string;
@@ -70,6 +73,7 @@ export type ExportOptions = {
   deckpkg?: boolean;
   thumbnails?: boolean;
   thumbnailSize?: ThumbnailSize;
+  chromiumExecutablePath?: string;
 };
 
 export type ExportVerification = {
@@ -218,7 +222,6 @@ const DEFAULT_SAFE_AREA: NonNullable<CompilerProjectInput["safeArea"]> = {
 };
 
 const ZIP_DATE = new Date("2000-01-01T00:00:00.000Z");
-const PDF_DATE = new Date("2000-01-01T00:00:00.000Z");
 const ZIP_FILE_PERMISSIONS = 0o100644;
 const ZIP_DIR_PERMISSIONS = 0o40755;
 const PACKAGE_HTML_PATH = "deck.html";
@@ -329,6 +332,22 @@ const createProjectUrlSerializer = (input: {
       : rawValue;
   };
 
+const createPackageCssUrlSerializer = (assetPaths: Set<string>): ProjectUrlSerializer =>
+  (sourcePath, rawValue) => {
+    const target = resolveProjectRelativeUrl(sourcePath, rawValue);
+    if (!target) {
+      return rawValue;
+    }
+    const firstSegment = target.projectRelativePath.split("/")[0] ?? "";
+    if (!PACKAGE_ASSET_TOP_LEVEL_DIRS.has(firstSegment)) {
+      return rawValue;
+    }
+    assetPaths.add(target.projectRelativePath);
+    const relativePath = path.posix.relative(path.posix.dirname(normalizeProjectPath(sourcePath)), target.projectRelativePath);
+    const browserRelativePath = relativePath.startsWith(".") ? relativePath : `./${relativePath}`;
+    return `${browserRelativePath}${target.suffix}`;
+  };
+
 const rewriteSrcsetUrls = (
   sourcePath: string,
   rawValue: string,
@@ -355,6 +374,9 @@ const rewriteHtmlUrls = (
   serializeUrl: ProjectUrlSerializer
 ): string =>
   html
+    .replace(/<style\b([^>]*)>([\s\S]*?)<\/style>/gi, (_match, attributes: string, css: string) =>
+      `<style${attributes}>${rewriteCssUrls(sourcePath, css, serializeUrl)}</style>`
+    )
     .replace(/\b(src|href|poster|srcset)\s*=\s*(["'])([^"']+)\2/gi, (match, attr: string, quote: string, value: string) => {
       const rewrittenValue = attr.toLowerCase() === "srcset"
         ? rewriteSrcsetUrls(sourcePath, value, serializeUrl)
@@ -366,15 +388,41 @@ const rewriteHtmlUrls = (
       return `url(${quote}${rewrittenValue}${quote})`;
     });
 
+const rewriteCssValueUrls = (
+  sourcePath: string,
+  value: string,
+  serializeUrl: ProjectUrlSerializer
+): string =>
+  value.replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (_match, quote: string, rawUrl: string) => {
+    const rewrittenValue = serializeUrl(sourcePath, rawUrl);
+    return `url(${quote}${rewrittenValue}${quote})`;
+  });
+
+const rewriteCssImportParams = (
+  sourcePath: string,
+  params: string,
+  serializeUrl: ProjectUrlSerializer
+): string => {
+  const rewrittenUrl = rewriteCssValueUrls(sourcePath, params, serializeUrl);
+  return rewrittenUrl.replace(/^(\s*)(["'])([^"']+)\2/, (_match, spacing: string, quote: string, rawUrl: string) =>
+    `${spacing}${quote}${serializeUrl(sourcePath, rawUrl)}${quote}`
+  );
+};
+
 const rewriteCssUrls = (
   sourcePath: string,
   css: string,
   serializeUrl: ProjectUrlSerializer
-): string =>
-  css.replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (_match, quote: string, value: string) => {
-    const rewrittenValue = serializeUrl(sourcePath, value);
-    return `url(${quote}${rewrittenValue}${quote})`;
+): string => {
+  const root = postcss.parse(css, { from: sourcePath });
+  root.walkDecls((declaration) => {
+    declaration.value = rewriteCssValueUrls(sourcePath, declaration.value, serializeUrl);
   });
+  root.walkAtRules("import", (atRule) => {
+    atRule.params = rewriteCssImportParams(sourcePath, atRule.params, serializeUrl);
+  });
+  return root.toString();
+};
 
 const mimeTypeForAssetPath = (assetPath: string): string => {
   const extension = path.posix.extname(assetPath).slice(1).toLowerCase();
@@ -463,6 +511,7 @@ const buildPreparedProject = async (
     mode: "package",
     assetPaths: packageAssetPaths
   });
+  const packageCssUrlSerializer = createPackageCssUrlSerializer(packageAssetPaths);
   const sourceFingerprints = createSourceFingerprintCollector(initialFingerprints);
   const themeSnapshot = project.themeCssPath
     ? await readProjectFileSnapshot(
@@ -520,13 +569,29 @@ const buildPreparedProject = async (
   }
 
   const packageAssets: PackageAssetEntry[] = [];
-  for (const assetPath of [...packageAssetPaths].sort()) {
+  const processedPackageAssets = new Set<string>();
+  const pendingPackageAssets = [...packageAssetPaths].sort();
+  while (pendingPackageAssets.length > 0) {
+    const assetPath = pendingPackageAssets.shift();
+    if (!assetPath || processedPackageAssets.has(assetPath)) {
+      continue;
+    }
     if (!isSafePackageAssetPath(assetPath)) {
       throw new Error(`Unsafe package asset path: ${assetPath}`);
     }
     const assetSnapshot = await readProjectFileSnapshot(project.projectPath, assetPath);
     sourceFingerprints.add(assetSnapshot.fingerprint);
-    packageAssets.push({ packagePath: assetPath, bytes: assetSnapshot.bytes });
+    const bytes = path.posix.extname(assetPath).toLowerCase() === ".css"
+      ? Buffer.from(rewriteCssUrls(assetPath, assetSnapshot.bytes.toString("utf8"), packageCssUrlSerializer))
+      : assetSnapshot.bytes;
+    packageAssets.push({ packagePath: assetPath, bytes });
+    processedPackageAssets.add(assetPath);
+    for (const discoveredPath of [...packageAssetPaths].sort()) {
+      if (!processedPackageAssets.has(discoveredPath) && !pendingPackageAssets.includes(discoveredPath)) {
+        pendingPackageAssets.push(discoveredPath);
+      }
+    }
+    pendingPackageAssets.sort();
   }
 
   return {
@@ -567,6 +632,13 @@ const buildStandaloneHtml = (renderable: RenderDeck): string =>
     mode: "print",
     includeRuntimeScript: true,
     includeNotesPanel: true
+  })}\n`;
+
+const buildPrintHtml = (renderable: RenderDeck): string =>
+  `${buildDeckHtml(renderable, {
+    mode: "print",
+    includeRuntimeScript: false,
+    includeNotesPanel: false
   })}\n`;
 
 export const buildSlidePreviewDocument = async (
@@ -762,237 +834,6 @@ export const buildDeckPackageManifest = (
   };
 };
 
-const htmlToText = (html: string): string =>
-  html
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&#(\d+);/g, (_match, codePoint: string) => String.fromCodePoint(Number(codePoint)))
-    .replace(/\s+/g, " ")
-    .trim();
-
-const toPdfSafeText = (value: string): string => value.replace(/[^\x20-\x7E]/g, "?");
-
-const wrapWords = (value: string, maxCharacters: number): string[] => {
-  const words = toPdfSafeText(value).split(/\s+/).filter(Boolean);
-  const lines: string[] = [];
-  let current = "";
-
-  for (const word of words) {
-    if (current.length === 0) {
-      current = word;
-    } else if (current.length + word.length + 1 <= maxCharacters) {
-      current = `${current} ${word}`;
-    } else {
-      lines.push(current);
-      current = word;
-    }
-
-    while (current.length > maxCharacters) {
-      lines.push(current.slice(0, maxCharacters));
-      current = current.slice(maxCharacters);
-    }
-  }
-
-  if (current.length > 0) {
-    lines.push(current);
-  }
-
-  return lines;
-};
-
-const drawWrappedText = (
-  page: PDFPage,
-  font: PDFFont,
-  value: string,
-  options: {
-    x: number;
-    y: number;
-    size: number;
-    lineHeight: number;
-    maxCharacters: number;
-    maxLines: number;
-    color: ReturnType<typeof rgb>;
-  }
-): number => {
-  const lines = wrapWords(value, options.maxCharacters).slice(0, options.maxLines);
-  let y = options.y;
-
-  for (const line of lines) {
-    page.drawText(line, {
-      x: options.x,
-      y,
-      size: options.size,
-      font,
-      color: options.color
-    });
-    y -= options.lineHeight;
-  }
-
-  return y;
-};
-
-type Rgba = readonly [number, number, number, number];
-
-const colorFromString = (value: string): Rgba => {
-  let hash = 2166136261;
-  for (const char of value) {
-    hash ^= char.charCodeAt(0);
-    hash = Math.imul(hash, 16777619);
-  }
-
-  return [
-    56 + (hash & 0x5f),
-    72 + ((hash >>> 8) & 0x5f),
-    96 + ((hash >>> 16) & 0x5f),
-    255
-  ];
-};
-
-const writeRect = (
-  buffer: Buffer,
-  size: ThumbnailSize,
-  rect: { x: number; y: number; width: number; height: number },
-  color: Rgba
-): void => {
-  const stride = size.width * 4 + 1;
-  const startX = Math.max(0, Math.floor(rect.x));
-  const startY = Math.max(0, Math.floor(rect.y));
-  const endX = Math.min(size.width, Math.ceil(rect.x + rect.width));
-  const endY = Math.min(size.height, Math.ceil(rect.y + rect.height));
-
-  for (let y = startY; y < endY; y += 1) {
-    for (let x = startX; x < endX; x += 1) {
-      const offset = y * stride + 1 + x * 4;
-      buffer[offset] = color[0];
-      buffer[offset + 1] = color[1];
-      buffer[offset + 2] = color[2];
-      buffer[offset + 3] = color[3];
-    }
-  }
-};
-
-let crcTable: Uint32Array | undefined;
-
-const getCrcTable = (): Uint32Array => {
-  if (crcTable) {
-    return crcTable;
-  }
-
-  const table = new Uint32Array(256);
-  for (let n = 0; n < 256; n += 1) {
-    let c = n;
-    for (let k = 0; k < 8; k += 1) {
-      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    }
-    table[n] = c >>> 0;
-  }
-  crcTable = table;
-  return table;
-};
-
-const crc32 = (buffers: Buffer[]): number => {
-  const table = getCrcTable();
-  let crc = 0xffffffff;
-  for (const buffer of buffers) {
-    for (const byte of buffer) {
-      crc = (crc >>> 8) ^ (table[(crc ^ byte) & 0xff] ?? 0);
-    }
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-};
-
-const pngChunk = (type: string, data: Buffer): Buffer => {
-  const typeBuffer = Buffer.from(type, "ascii");
-  const length = Buffer.alloc(4);
-  length.writeUInt32BE(data.length, 0);
-  const checksum = Buffer.alloc(4);
-  checksum.writeUInt32BE(crc32([typeBuffer, data]), 0);
-  return Buffer.concat([length, typeBuffer, data, checksum]);
-};
-
-const encodePng = (size: ThumbnailSize, paint: (raw: Buffer) => void): Buffer => {
-  const raw = Buffer.alloc((size.width * 4 + 1) * size.height);
-  for (let y = 0; y < size.height; y += 1) {
-    raw[y * (size.width * 4 + 1)] = 0;
-  }
-
-  paint(raw);
-
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(size.width, 0);
-  ihdr.writeUInt32BE(size.height, 4);
-  ihdr[8] = 8;
-  ihdr[9] = 6;
-  ihdr[10] = 0;
-  ihdr[11] = 0;
-  ihdr[12] = 0;
-
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    pngChunk("IHDR", ihdr),
-    pngChunk("IDAT", deflateSync(raw, { level: 9 })),
-    pngChunk("IEND", Buffer.alloc(0))
-  ]);
-};
-
-const renderThumbnailPng = (project: CompilerProjectInput, slide: PreparedSlide, size: ThumbnailSize): Buffer => {
-  const accent = colorFromString(`${project.title}:${slide.id}`);
-  const secondary = colorFromString(`${slide.title}:${slide.index}`);
-  const text = htmlToText(slide.sourceHtml);
-  const hash = colorFromString(text || slide.title);
-  const scaleX = size.width / project.viewport.width;
-  const scaleY = size.height / project.viewport.height;
-  const safe = project.safeArea ?? { top: 72, right: 96, bottom: 72, left: 96 };
-  const safeRect = {
-    x: safe.left * scaleX,
-    y: safe.top * scaleY,
-    width: Math.max(48, (project.viewport.width - safe.left - safe.right) * scaleX),
-    height: Math.max(48, (project.viewport.height - safe.top - safe.bottom) * scaleY)
-  };
-
-  return encodePng(size, (raw) => {
-    writeRect(raw, size, { x: 0, y: 0, width: size.width, height: size.height }, [248, 249, 251, 255]);
-    writeRect(raw, size, { x: 0, y: 0, width: size.width, height: Math.max(10, size.height * 0.04) }, accent);
-    writeRect(raw, size, safeRect, [255, 255, 255, 255]);
-    writeRect(raw, size, { x: safeRect.x, y: safeRect.y, width: Math.max(8, safeRect.width * 0.015), height: safeRect.height }, secondary);
-
-    const lineCount = Math.max(4, Math.min(9, wrapWords(text || slide.title, 44).length + 2));
-    for (let index = 0; index < lineCount; index += 1) {
-      const blockWidthSeed = (hash[(index % 3) as 0 | 1 | 2] ?? 72) / 255;
-      const blockWidth = safeRect.width * (0.35 + blockWidthSeed * 0.55);
-      const blockHeight = Math.max(8, size.height * 0.018);
-      const blockY = safeRect.y + safeRect.height * 0.2 + index * blockHeight * 2.3;
-      const shade = 52 + index * 10;
-      writeRect(raw, size, { x: safeRect.x + safeRect.width * 0.08, y: blockY, width: blockWidth, height: blockHeight }, [
-        Math.min(210, shade),
-        Math.min(216, shade + 8),
-        Math.min(226, shade + 18),
-        255
-      ]);
-    }
-
-    const pageBadgeSize = Math.max(36, size.height * 0.09);
-    writeRect(
-      raw,
-      size,
-      {
-        x: size.width - pageBadgeSize - 18,
-        y: size.height - pageBadgeSize - 18,
-        width: pageBadgeSize,
-        height: pageBadgeSize
-      },
-      accent
-    );
-  });
-};
-
 export const readPngSize = (bytes: Uint8Array): ThumbnailSize => {
   const buffer = Buffer.from(bytes);
   if (buffer.length < 24 || buffer.toString("ascii", 1, 4) !== "PNG") {
@@ -1004,103 +845,50 @@ export const readPngSize = (bytes: Uint8Array): ThumbnailSize => {
   };
 };
 
-const buildPdfBytes = async (project: CompilerProjectInput, prepared: PreparedProject): Promise<Uint8Array> => {
-  const pdf = await PDFDocument.create();
-  pdf.setTitle(project.title);
-  pdf.setCreator("HTMLslide compiler");
-  pdf.setProducer("HTMLslide compiler");
-  pdf.setCreationDate(PDF_DATE);
-  pdf.setModificationDate(PDF_DATE);
-
-  const regularFont = await pdf.embedFont(StandardFonts.Helvetica);
-  const boldFont = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const pageWidth = project.viewport.width * 0.75;
-  const pageHeight = project.viewport.height * 0.75;
-
-  for (const slide of prepared.slides) {
-    const page = pdf.addPage([pageWidth, pageHeight]);
-    const accent = colorFromString(`${project.title}:${slide.id}`);
-    const accentColor = rgb(accent[0] / 255, accent[1] / 255, accent[2] / 255);
-
-    page.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: rgb(0.98, 0.985, 0.99) });
-    page.drawRectangle({ x: 0, y: pageHeight - 18, width: pageWidth, height: 18, color: accentColor });
-    page.drawText(toPdfSafeText(project.title), {
-      x: 48,
-      y: pageHeight - 64,
-      size: 13,
-      font: regularFont,
-      color: rgb(0.35, 0.38, 0.43)
-    });
-    page.drawText(`${slide.pdfPage}/${prepared.slides.length}`, {
-      x: pageWidth - 88,
-      y: pageHeight - 64,
-      size: 12,
-      font: regularFont,
-      color: rgb(0.35, 0.38, 0.43)
-    });
-
-    let y = drawWrappedText(page, boldFont, slide.title, {
-      x: 48,
-      y: pageHeight - 112,
-      size: 30,
-      lineHeight: 38,
-      maxCharacters: 40,
-      maxLines: 2,
-      color: rgb(0.06, 0.08, 0.12)
-    });
-
-    y -= 24;
-    y = drawWrappedText(page, regularFont, htmlToText(slide.sourceHtml), {
-      x: 64,
-      y,
-      size: 16,
-      lineHeight: 24,
-      maxCharacters: 84,
-      maxLines: 12,
-      color: rgb(0.13, 0.16, 0.22)
-    });
-
-    page.drawText(toPdfSafeText(`slide-id: ${slide.id}`), {
-      x: 48,
-      y: 48,
-      size: 10,
-      font: regularFont,
-      color: rgb(0.42, 0.45, 0.5)
-    });
-    page.drawText(toPdfSafeText(`notes: ${slide.notesPath ?? "none"}`), {
-      x: 48,
-      y: 32,
-      size: 10,
-      font: regularFont,
-      color: rgb(0.42, 0.45, 0.5)
-    });
-
-    if (y < 80) {
-      page.drawText("Content truncated in deterministic fallback PDF.", {
-        x: pageWidth - 260,
-        y: 32,
-        size: 9,
-        font: regularFont,
-        color: rgb(0.55, 0.29, 0.08)
-      });
-    }
-  }
-
-  return pdf.save({ useObjectStreams: false });
-};
-
 export const readPdfPageCount = async (input: string | Uint8Array): Promise<number> => {
   const bytes = typeof input === "string" ? await readFile(input) : input;
   const pdf = await PDFDocument.load(bytes);
   return pdf.getPageCount();
 };
 
+const renderBrowserArtifacts = async (
+  project: CompilerProjectInput,
+  prepared: PreparedProject,
+  stagingRoot: string,
+  thumbnailSize: ThumbnailSize,
+  chromiumExecutablePath?: string
+): Promise<BrowserRenderResult> => {
+  const renderRoot = path.join(stagingRoot, "render-runtime");
+  const htmlPath = path.join(renderRoot, PACKAGE_HTML_PATH);
+  await mkdir(renderRoot);
+  await writeFile(htmlPath, buildPrintHtml(prepared.packageRenderable));
+
+  for (const asset of prepared.packageAssets) {
+    const assetPath = path.resolve(renderRoot, ...asset.packagePath.split("/"));
+    const relativePath = path.relative(renderRoot, assetPath);
+    if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+      throw new Error(`Render asset path escapes the isolated workspace: ${asset.packagePath}`);
+    }
+    await mkdir(path.dirname(assetPath), { recursive: true });
+    await writeFile(assetPath, asset.bytes);
+  }
+
+  return renderWithChromium({
+    executablePath: chromiumExecutablePath,
+    htmlPath,
+    slideIds: prepared.slides.map((slide) => slide.id),
+    thumbnailSize,
+    title: project.title,
+    viewport: project.viewport
+  });
+};
+
 const writeThumbnails = async (
   project: CompilerProjectInput,
   prepared: PreparedProject,
+  rendered: BrowserRenderResult,
   stagingExportsPath: string,
-  finalExportsPath: string,
-  size: ThumbnailSize
+  finalExportsPath: string
 ): Promise<ThumbnailEntry[]> => {
   const stagingThumbnailsPath = path.join(stagingExportsPath, "thumbnails");
   const finalThumbnailsPath = path.join(finalExportsPath, "thumbnails");
@@ -1109,7 +897,10 @@ const writeThumbnails = async (
 
   const entries: ThumbnailEntry[] = [];
   for (const slide of prepared.slides) {
-    const bytes = renderThumbnailPng(project, slide, size);
+    const bytes = rendered.thumbnails.get(slide.id);
+    if (!bytes) {
+      throw new Error(`Chromium did not return a thumbnail for slide "${slide.id}".`);
+    }
     const fileName = `${slide.id}.png`;
     const stagingPath = path.join(stagingThumbnailsPath, fileName);
     const exportPath = path.join(finalThumbnailsPath, fileName);
@@ -1252,6 +1043,7 @@ const commitStagedExports = async (input: {
   sourceFingerprints: ExportFileFingerprint[];
   stagedArtifacts: StagedArtifact[];
   stagingManifestPath: string;
+  thumbnailEntries: ThumbnailEntry[];
 }): Promise<void> => {
   await ensureSafeProjectDirectory(input.projectRoot, "exports");
   const currentManifest = await readExistingExportManifest(input.projectRoot);
@@ -1274,8 +1066,18 @@ const commitStagedExports = async (input: {
   const backupRoot = path.join(path.dirname(path.dirname(input.stagingManifestPath)), "backup");
   const backups: ExportArtifactBackup[] = [];
   const committedArtifacts: StagedArtifact[] = [];
+  const cacheProjectPath = ".htmlslide/cache/thumbnails";
+  const cacheBackupPath = path.join(backupRoot, "thumbnail-cache");
+  let cacheBackedUp = false;
 
   try {
+    if (input.thumbnailEntries.length > 0) {
+      const cachePath = await ensureSafeProjectDirectory(input.projectRoot, cacheProjectPath);
+      await mkdir(path.dirname(cacheBackupPath), { recursive: true });
+      await rename(cachePath, cacheBackupPath);
+      cacheBackedUp = true;
+      await writeThumbnailCache(input.projectRoot, input.thumbnailEntries);
+    }
     for (const oldArtifact of currentManifest?.artifacts ?? []) {
       await ensureSafeProjectDirectory(input.projectRoot, path.posix.dirname(oldArtifact.path));
       const finalPath = path.join(input.projectRoot, ...oldArtifact.path.split("/"));
@@ -1317,7 +1119,27 @@ const commitStagedExports = async (input: {
     }
     await replaceStagedFile(input.projectRoot, input.stagingManifestPath, EXPORT_MANIFEST_PROJECT_PATH);
   } catch (error) {
-    await rollbackExportCommit(input.projectRoot, committedArtifacts, backups, error);
+    const rollbackErrors: unknown[] = [];
+    try {
+      await rollbackExportCommit(input.projectRoot, committedArtifacts, backups, error);
+    } catch (rollbackError) {
+      rollbackErrors.push(rollbackError);
+    }
+    if (cacheBackedUp) {
+      try {
+        const cachePath = path.join(input.projectRoot, ...cacheProjectPath.split("/"));
+        await rm(cachePath, { recursive: true, force: true });
+        await rename(cacheBackupPath, cachePath);
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    if (rollbackErrors.length > 0) {
+      throw new AggregateError(
+        [error, ...rollbackErrors],
+        "Export commit failed and the previous artifact or thumbnail cache state could not be fully restored."
+      );
+    }
     throw error;
   }
 };
@@ -1671,7 +1493,8 @@ const exportDeckLocked = async (
     html: options.html ?? DEFAULT_OPTIONS.html,
     deckpkg: options.deckpkg ?? DEFAULT_OPTIONS.deckpkg,
     thumbnails: options.thumbnails ?? DEFAULT_OPTIONS.thumbnails,
-    thumbnailSize: options.thumbnailSize ?? DEFAULT_THUMBNAIL_SIZE
+    thumbnailSize: options.thumbnailSize ?? DEFAULT_THUMBNAIL_SIZE,
+    chromiumExecutablePath: options.chromiumExecutablePath
   };
   const { project, deckFingerprint } = await loadCompilerProjectSnapshot(projectRoot);
   const exportsPath = path.join(project.projectPath, "exports");
@@ -1722,9 +1545,22 @@ const exportDeckLocked = async (
       artifacts.html = htmlArtifact.finalPath;
     }
 
+    const rendered = resolvedOptions.pdf || resolvedOptions.deckpkg || resolvedOptions.thumbnails
+      ? await renderBrowserArtifacts(
+          project,
+          prepared,
+          stagingRoot,
+          resolvedOptions.thumbnailSize,
+          resolvedOptions.chromiumExecutablePath
+        )
+      : undefined;
+
     let pdfBytes: Uint8Array | undefined;
     if (resolvedOptions.pdf || resolvedOptions.deckpkg) {
-      pdfBytes = await buildPdfBytes(project, prepared);
+      if (!rendered) {
+        throw new Error("Chromium rendering did not return the required PDF artifact.");
+      }
+      pdfBytes = rendered.pdf;
       verification.pdfPageCount = await readPdfPageCount(pdfBytes);
       verification.pdfPageCountMatches = verification.pdfPageCount === verification.expectedPageCount;
       if (!verification.pdfPageCountMatches) {
@@ -1748,12 +1584,15 @@ const exportDeckLocked = async (
 
     let thumbnailEntries: ThumbnailEntry[] = [];
     if (resolvedOptions.thumbnails || resolvedOptions.deckpkg) {
+      if (!rendered) {
+        throw new Error("Chromium rendering did not return the required thumbnail artifacts.");
+      }
       thumbnailEntries = await writeThumbnails(
         project,
         prepared,
+        rendered,
         stagingExportsPath,
-        exportsPath,
-        resolvedOptions.thumbnailSize
+        exportsPath
       );
       for (const entry of thumbnailEntries) {
         stagedArtifacts.push({
@@ -1837,13 +1676,13 @@ const exportDeckLocked = async (
     }
     const stagingManifestPath = path.join(stagingExportsPath, EXPORT_MANIFEST_FILE_NAME);
     await writeFile(stagingManifestPath, manifestJson);
-    await writeThumbnailCache(project.projectPath, thumbnailEntries);
     await commitStagedExports({
       manifestJson,
       projectRoot: project.projectPath,
       sourceFingerprints: prepared.sourceFingerprints,
       stagedArtifacts,
-      stagingManifestPath
+      stagingManifestPath,
+      thumbnailEntries
     });
     return {
       projectPath: project.projectPath,

@@ -3,6 +3,7 @@
 The standard local checks are:
 
 ```bash
+pnpm exec playwright install chromium
 pnpm docs:check
 pnpm docs:build
 pnpm version:check
@@ -32,7 +33,9 @@ pnpm package:release:macos
 ## Coverage expectations
 
 - Unit tests cover core, CLI, compiler, linter, agent, MCP, skills, and desktop services, including CLI MCP tool discovery, project harness status checks, and stdio client smoke coverage.
-- Visual regression tests compare deterministic fallback thumbnails and browser-rendered full-slide Chromium screenshots, writing `before`, `after`, and `diff` artifacts under `dist/visual-regression/` when they fail.
+- Browser renderer tests cover production `playwright-core` Chromium output, render-root and network isolation, disabled page JavaScript, resource/readiness failures, normalized PDF metadata, unavailable-browser failure, and repeated-byte determinism.
+- Compiler regression runs the minimal, text-heavy, data chart, image-heavy, notes, and multi-theme fixture families through Chromium. PNG visual regression compares vector-only full-slide captures at 0.2 percent and real DOM thumbnails at 0.5 percent, writing `before`, `after`, and `diff` artifacts under `dist/visual-regression/` when they fail.
+- PDF verification covers page count, normalized metadata, repeated-byte determinism for the pinned Chromium build, and generation from the same staged DOM as thumbnails. It does not claim raster PDF visual regression.
 - CLI tests cover BYOK provider validation with fake fetch and fake environment variables so `htmlslide agent validate-provider` remains deterministic and does not print API key values.
 - Desktop Electron E2E covers onboarding, project library, mock generation, checks, QA panel role semantics, export, presenter, deckpkg open, CLI setup, and official skills setup.
 - Official skills E2E covers the inspectable Skills library, including install-state and deck-type filtering, expanded metadata review, risk flags, install paths, and markdown previews before installation.
@@ -45,7 +48,15 @@ pnpm package:release:macos
 - Electron E2E may run a detected fake built-in Claude or Codex path, plus the Generic command path, without provider credentials or network access. Gemini coverage is detection-only and must prove that it cannot become headless-ready.
 - Release-candidate acceptance uses `pnpm rc:checklist` to generate the mandatory manual evidence template for clean-account install, first launch, provider flows, fake external agent automation, real Claude/Codex claim validation or explicit no-claim N/A, Gemini detection-only status, export, external monitor presentation, reopen, revert, CLI uninstall, and post-delete cleanup. Alpha Package and Release macOS upload a prefilled but incomplete checklist next to candidate artifacts so manual evidence stays tied to the exact run.
 - Release evidence script tests cover deterministic RC checklist and release-note rendering so run-bound metadata, manual-evidence requirements, signed-release gates, and empty release-range warnings do not regress.
-- package smoke covers manifest artifact size/SHA-256 verification, DMG mount, packaged app launch, first-run CLI shim, official skills, moved-app CLI repair, deckpkg argument open, packaged CLI export, packaged MCP diagnostics, `htmlslide doctor`, and CLI uninstall. Release workflow contracts cover Developer ID signing, notarization, stapling, manifest integrity checks, and artifact upload wiring.
+- package smoke validates the private `browser-runtime.json` and bundled Chromium, forces the packaged CLI package operation through that executable rather than the development Playwright cache, and covers manifest artifact size/SHA-256 verification, PDF page count, PNG dimensions, DMG mount, packaged app launch, first-run CLI shim, official skills, moved-app CLI repair, deckpkg argument open, packaged MCP diagnostics, `htmlslide doctor`, and CLI uninstall. The release workflow runs the same smoke against the final Developer ID signed, notarized, and stapled DMG before artifact upload.
+
+Focused Phase 2 export verification:
+
+```bash
+pnpm test -- packages/compiler/test/browser-renderer.test.ts packages/compiler/test/export.test.ts
+pnpm test:visual:browser
+pnpm verify:package:alpha
+```
 
 ## External Adapter Evidence
 

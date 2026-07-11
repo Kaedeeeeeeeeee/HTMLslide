@@ -81,9 +81,36 @@ describe("macOS alpha packaging contract", () => {
     expect(desktopRuntimeBlock).toContain('"@htmlslide/compiler"');
     expect(desktopRuntimeBlock).toContain('"@htmlslide/renderer"');
     expect(desktopRuntimeBlock).toContain('[compilerRequire, "pdf-lib"]');
+    expect(desktopRuntimeBlock).toContain('[compilerRequire, "playwright-core"]');
+    expect(desktopRuntimeBlock).toContain('[compilerRequire, "postcss"]');
+    expect(desktopRuntimeBlock).toContain('[postcssRequire, "nanoid"]');
     expect(desktopRuntimeBlock).toContain('[pdfLibRequire, "@pdf-lib/standard-fonts"]');
     expect(desktopRuntimeBlock).toContain('[pdfLibRequire, "@pdf-lib/upng"]');
     expect(desktopRuntimeBlock).toContain('[pdfLibRequire, "tslib"]');
+
+    const browserRuntimeBlock = packageScript.slice(
+      packageScript.indexOf("async function deployBrowserRuntime"),
+      packageScript.indexOf("async function assertNoBrokenSymlinks")
+    );
+    expect(browserRuntimeBlock).toContain('compilerRequire.resolve("playwright-core/package.json")');
+    expect(browserRuntimeBlock).toContain('path.join(playwrightCoreRoot, "browsers.json")');
+    expect(browserRuntimeBlock).toContain('browser.name === "chromium-headless-shell"');
+    expect(browserRuntimeBlock).toContain("chromium_headless_shell-${headlessShell.revision}");
+    expect(browserRuntimeBlock).toContain('path.join(browserRuntimePath, "chromium-headless-shell")');
+    expect(browserRuntimeBlock).toContain('path.join(cliRuntimePath, "browser-runtime.json")');
+    expect(browserRuntimeBlock).toContain("schemaVersion: 1");
+    expect(browserRuntimeBlock).toContain("assertContainedPath");
+    expect(browserRuntimeBlock).toContain("assertRegularExecutable(destinationExecutablePath");
+    expect(browserRuntimeBlock).toContain("assertNoBrokenSymlinks(cliRuntimePath)");
+    expect(browserRuntimeBlock).toContain('name.endsWith(".dylib")');
+    expect(packageScript.indexOf("await deployBrowserRuntime(appResourcesPath)")).toBeGreaterThan(
+      packageScript.indexOf("await deployCliRuntime(appResourcesPath)")
+    );
+    expect(packageScript).toContain("signBrowserRuntime(browserRuntime, config)");
+    expect(packageScript).toContain('kind: "chromium-headless-shell"');
+    expect(packageScript.indexOf("restoreWorkspaceInstallState();")).toBeGreaterThan(
+      packageScript.indexOf("finally {")
+    );
   });
 
   it("keeps signed release artifact metadata explicit", async () => {
@@ -131,9 +158,67 @@ describe("macOS alpha packaging contract", () => {
     expect(smokeScript).toContain("\"mcp\", projectPath, \"--status\", \"--json\"");
     expect(smokeScript).toContain("HTMLSLIDE_SMOKE_QUIT_AFTER_READY");
     expect(smokeScript).toContain("unsigned-alpha");
-    expect(smokeScript).toContain("manifest.notarized !== false");
+    expect(smokeScript).toContain("manifest.notarized !== expectedNotarized");
+    expect(smokeScript).toContain('manifest.browserRuntime?.kind !== "chromium-headless-shell"');
     expect(smokeScript).toContain("assertArtifactMetadata");
     expect(smokeScript).toContain("buildArtifactMetadata");
+
+    const browserValidationBlock = smokeScript.slice(
+      smokeScript.indexOf("async function packagedBrowserExecutablePath"),
+      smokeScript.indexOf("function assertDeckPackageDocumentType")
+    );
+    expect(browserValidationBlock).toContain('path.join(cliRuntimePath, "browser-runtime.json")');
+    expect(browserValidationBlock).toContain("config.schemaVersion !== 1");
+    expect(browserValidationBlock).toContain("path.posix.isAbsolute(config.executablePath)");
+    expect(browserValidationBlock).toContain("realpath(executablePath)");
+    expect(browserValidationBlock).toContain("executableStats.isFile()");
+    expect(browserValidationBlock).toContain("constants.X_OK");
+
+    const packagedCliEnvironmentBlock = smokeScript.slice(
+      smokeScript.indexOf("async function packagedCliEnvironment"),
+      smokeScript.indexOf("function assertDeckPackageDocumentType")
+    );
+    expect(packagedCliEnvironmentBlock).toContain("HTMLSLIDE_CHROMIUM_EXECUTABLE");
+    expect(packagedCliEnvironmentBlock).toContain("await packagedBrowserExecutablePath(appPath)");
+    expect(smokeScript).toContain("env: await packagedCliEnvironment(appPath");
+    expect(smokeScript).toContain("const env = await packagedCliEnvironment(movedAppPath");
+
+    const assetExportBlock = smokeScript.slice(
+      smokeScript.indexOf("async function exportFixtureDeckPackageWithPackagedCli"),
+      smokeScript.indexOf("function assertPackagedDeckPackageAssets")
+    );
+    expect(assetExportBlock).toContain('HTMLSLIDE_CHROMIUM_EXECUTABLE: ""');
+    expect(assetExportBlock).toContain("PLAYWRIGHT_BROWSERS_PATH: emptyBrowserCache");
+    expect(assetExportBlock).not.toContain("env: await packagedCliEnvironment(appPath");
+
+    const shimSmokeBlock = smokeScript.slice(
+      smokeScript.indexOf("async function smokeCliShim"),
+      smokeScript.indexOf("async function smokePackagedCliPresent")
+    );
+    expect(shimSmokeBlock).toContain("const env = await packagedCliEnvironment(appPath");
+    expect(shimSmokeBlock).toContain("run(process.execPath");
+    expect(shimSmokeBlock).toContain("run(shimPath");
+
+    const presentSmokeBlock = smokeScript.slice(
+      smokeScript.indexOf("async function smokePackagedCliPresent"),
+      smokeScript.indexOf("async function smokePackagedCliOpenProject")
+    );
+    expect(presentSmokeBlock).toContain("const env = await packagedCliEnvironment(appPath");
+    expect(presentSmokeBlock).toContain('run(shimPath, ["present"');
+
+    const openSmokeBlock = smokeScript.slice(
+      smokeScript.indexOf("async function smokePackagedCliOpenProject"),
+      smokeScript.indexOf("async function smokePackagedCliSkills")
+    );
+    expect(openSmokeBlock).toContain("env: await packagedCliEnvironment(appPath");
+    expect(openSmokeBlock).toContain('run(shimPath, ["open"');
+
+    const movedAppSmokeBlock = smokeScript.slice(
+      smokeScript.indexOf("async function smokeMovedAppCliRepair"),
+      smokeScript.indexOf("async function main")
+    );
+    expect(movedAppSmokeBlock).toContain("const env = await packagedCliEnvironment(movedAppPath");
+    expect(movedAppSmokeBlock).toContain('run(shimPath, ["doctor"');
   });
 
   it("keeps the alpha packaging workflow gated and artifact-producing", async () => {
@@ -142,11 +227,14 @@ describe("macOS alpha packaging contract", () => {
     const smokeIndex = workflow.indexOf("run: pnpm smoke:package:alpha");
 
     expect(workflow).toContain("runs-on: macos-26");
+    expect(workflow).toContain("pull_request:");
+    expect(workflow).toContain('      - "packages/compiler/**"');
     expect(workflow).toContain("CSC_IDENTITY_AUTO_DISCOVERY: \"false\"");
     expect(workflow).toContain("'docs:check', 'docs:build'");
     expect(workflow).toContain("version:check");
     expect(workflow).toContain("pnpm docs:build");
     expect(workflow).toContain("pnpm version:check");
+    expect(workflow).toContain("run: pnpm test:visual:browser");
     expect(packageIndex).toBeGreaterThan(-1);
     expect(smokeIndex).toBeGreaterThan(packageIndex);
     expect(workflow).toContain("pnpm rc:checklist --");
@@ -185,6 +273,7 @@ describe("macOS alpha packaging contract", () => {
     expect(workflow).toContain("version:check");
     expect(workflow).toContain("pnpm docs:build");
     expect(workflow).toContain("pnpm version:check");
+    expect(workflow).toContain("run: pnpm test:visual:browser");
     expect(installChromiumIndex).toBeGreaterThan(installDependenciesIndex);
     expect(testIndex).toBeGreaterThan(installChromiumIndex);
     expect(workflow).toContain("package:release:macos");
@@ -196,6 +285,9 @@ describe("macOS alpha packaging contract", () => {
     expect(workflow).toContain("APPLE_APP_SPECIFIC_PASSWORD");
     expect(workflow).toContain("security import");
     expect(workflow).toContain("pnpm package:release:macos");
+    expect(workflow).toContain("HTMLSLIDE_PACKAGE_SMOKE_CHANNEL: release");
+    expect(workflow).toContain("HTMLSLIDE_PACKAGE_SMOKE_DIR: dist/release");
+    expect(workflow).toContain("run: pnpm smoke:package:alpha");
     expect(workflow).toContain("manifest.notarized !== true");
     expect(workflow).toContain("manifest.stapled !== true");
     expect(workflow).toContain("manifest.artifactMetadata");

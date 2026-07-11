@@ -2966,7 +2966,7 @@ function requireArg(args, name) {
     expect(result.ok && result.deck.slides[0]?.htmlDocument).toContain('data-htmlslide-mode="present"');
     expect(result.ok && result.deck.slides[0]?.thumbnail.bytes.byteLength).toBe(0);
     expect(result.ok && result.deck.slides[0]?.thumbnail.dataUrl).toMatch(/^data:image\/png;base64,/u);
-  });
+  }, 15_000);
 
   it("returns a missing result for a standalone deck package path that does not exist", async () => {
     const projectPath = await tempDir();

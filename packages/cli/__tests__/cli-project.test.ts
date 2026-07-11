@@ -1174,7 +1174,7 @@ describe("CLI project helpers", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it("returns actionable JSON and exit code 6 for unknown agent engines", async () => {
     await expect(

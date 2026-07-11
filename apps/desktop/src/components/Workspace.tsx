@@ -24,11 +24,13 @@ import {
 } from "@htmlslide/shared-ui";
 import {
   Activity,
+  Ban,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   CircleDot,
+  CircleX,
   Clock3,
   Download,
   FileText,
@@ -79,6 +81,8 @@ import type {
   SlideSummary
 } from "../model";
 import type {
+  DesktopAgentEngine,
+  DesktopAgentRunStatus,
   DesktopAudienceSlidePayload,
   DesktopAudienceWindowRequest,
   DesktopAudienceWindowState,
@@ -88,6 +92,13 @@ import type {
 
 interface WorkspaceProps {
   activeStageIndex: number;
+  agentCanCancel: boolean;
+  agentCanPause: boolean;
+  agentCanRetry: boolean;
+  agentCancelPending: boolean;
+  agentEngine: DesktopAgentEngine;
+  agentRunId?: string;
+  agentRunStatus?: DesktopAgentRunStatus;
   commandValue: string;
   inspectorTab: InspectorTab;
   project: ProjectSummary;
@@ -234,6 +245,13 @@ function toolbarIcon(action: keyof typeof toolbarActionLabels): ReactNode {
 
 export function Workspace({
   activeStageIndex,
+  agentCanCancel,
+  agentCanPause,
+  agentCanRetry,
+  agentCancelPending,
+  agentEngine,
+  agentRunId,
+  agentRunStatus,
   agentRunEvents,
   agentRunLogs,
   commandValue,
@@ -461,6 +479,7 @@ export function Workspace({
   return (
     <main className={diffReview?.open ? "workspace-shell workspace-shell--with-diff" : "workspace-shell"}>
       <Toolbar
+        canRetry={agentCanRetry}
         issueCounts={issueCounts}
         onInspectorTabChange={onInspectorTabChange}
         onRunAction={onRunAction}
@@ -468,6 +487,7 @@ export function Workspace({
         onToolbarAction={handleWorkspaceToolbarAction}
         operationStatus={operationStatus}
         project={project}
+        running={running}
         statuses={commandActionStatuses}
       />
 
@@ -501,6 +521,10 @@ export function Workspace({
       </section>
 
       <AgentRunConsole
+        canCancel={agentCanCancel}
+        canPause={agentCanPause}
+        canRetry={agentCanRetry}
+        cancelPending={agentCancelPending}
         commandValue={commandValue}
         diffReview={diffReview}
         onAcceptDiff={onAcceptDiff}
@@ -510,6 +534,9 @@ export function Workspace({
         onRevertDiff={onRevertDiff}
         onRunAction={onRunAction}
         onViewDiff={onViewDiff}
+        engine={agentEngine}
+        runId={agentRunId}
+        runStatus={agentRunStatus}
         running={running}
         statuses={commandActionStatuses}
         stages={runtimeStages}
@@ -1185,9 +1212,11 @@ function togglePresenterFullscreen(element: HTMLElement | null): void {
 }
 
 interface ToolbarProps {
+  canRetry: boolean;
   issueCounts: Record<"error" | "warning" | "suggestion", number>;
   operationStatus: OperationStatus;
   project: ProjectSummary;
+  running: boolean;
   statuses: CommandActionStatuses;
   onInspectorTabChange: (tab: InspectorTab) => void;
   onRunAction: (action: "start" | "pause" | "cancel" | "retry") => void;
@@ -1196,6 +1225,7 @@ interface ToolbarProps {
 }
 
 function Toolbar({
+  canRetry,
   issueCounts,
   onInspectorTabChange,
   onRunAction,
@@ -1203,6 +1233,7 @@ function Toolbar({
   onToolbarAction,
   operationStatus,
   project,
+  running,
   statuses
 }: ToolbarProps): ReactNode {
   const localPathLoaded = project.path.length > 0 && !project.path.startsWith("~");
@@ -1219,11 +1250,13 @@ function Toolbar({
       <div className="toolbar-actions">
         {(["generate", "check", "export", "present"] as const).map((action) => (
           <Button
+            disabled={action === "generate" && running}
             icon={toolbarIcon(action)}
             key={action}
             onClick={() => {
               if (action === "generate") {
                 onRunAction("start");
+                return;
               }
 
               if (action === "check") {
@@ -1242,11 +1275,13 @@ function Toolbar({
           </Button>
         ))}
         <Button
+          disabled={running || !canRetry}
           icon={<RotateCcw />}
           onClick={() => onRunAction("retry")}
+          title={canRetry ? "Retry the failed or cancelled agent run." : "Retry is available after a failed or cancelled run."}
           variant="secondary"
         >
-          Repair
+          Retry
         </Button>
       </div>
 
@@ -1859,9 +1894,16 @@ function ExportPanel({
 }
 
 interface AgentRunConsoleProps {
+  canCancel: boolean;
+  canPause: boolean;
+  canRetry: boolean;
+  cancelPending: boolean;
   commandValue: string;
   diffReview?: AgentDiffReview;
   running: boolean;
+  engine: DesktopAgentEngine;
+  runId?: string;
+  runStatus?: DesktopAgentRunStatus;
   stages: ReturnType<typeof buildRuntimeStages>;
   statuses: CommandActionStatuses;
   onAcceptDiff?: () => void;
@@ -1874,6 +1916,10 @@ interface AgentRunConsoleProps {
 }
 
 function AgentRunConsole({
+  canCancel,
+  canPause,
+  canRetry,
+  cancelPending,
   commandValue,
   diffReview,
   onAcceptDiff,
@@ -1883,28 +1929,58 @@ function AgentRunConsole({
   onRevertDiff,
   onRunAction,
   onViewDiff,
+  engine,
+  runId,
+  runStatus,
   running,
   statuses,
   stages
 }: AgentRunConsoleProps): ReactNode {
+  const logDetailsRefs = useRef(new Map<string, HTMLDetailsElement>());
+  const hasLogs = stages.some((stage) => Boolean(stage.runId) && stage.logs.length > 0);
+  const engineLabel = agentEngineLabels[engine];
+  const pauseUnavailableLabel = `${engineLabel} does not support pause.`;
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
+    if (running) {
+      return;
+    }
     onCommandSubmit();
   };
 
+  const handleOpenLogs = (): void => {
+    const firstStageWithLogs = stages.find((stage) => Boolean(stage.runId) && stage.logs.length > 0);
+    if (!firstStageWithLogs) {
+      return;
+    }
+    const details = logDetailsRefs.current.get(firstStageWithLogs.id);
+    if (!details) {
+      return;
+    }
+    details.open = true;
+    window.requestAnimationFrame(() => details.querySelector("summary")?.focus());
+  };
+
   return (
-    <footer className={diffReview?.open ? "agent-console agent-console--with-diff" : "agent-console"}>
+    <footer
+      className={diffReview?.open ? "agent-console agent-console--with-diff" : "agent-console"}
+      data-agent-run-id={runId}
+      data-agent-run-status={runStatus}
+    >
       <section className="agent-console__timeline">
         {stages.map((stage) => (
           <article
             className={`agent-stage is-${stage.status}`}
             key={stage.id}
+            aria-label={`${stage.label}: ${stage.status}`}
           >
             <span className="agent-stage__dot">
               {stage.status === "complete" ? <CheckCircle2 /> : null}
               {stage.status === "running" ? <Activity /> : null}
               {stage.status === "queued" ? <CircleDot /> : null}
               {stage.status === "paused" ? <Pause /> : null}
+              {stage.status === "failed" ? <CircleX /> : null}
+              {stage.status === "cancelled" ? <Ban /> : null}
             </span>
             <div>
               <strong>{stage.label}</strong>
@@ -1912,7 +1988,15 @@ function AgentRunConsole({
               <small>
                 Files {stage.filesChanged} · Issues {stage.issuesFound} · Next {stage.nextAction}
               </small>
-              <details>
+              <details
+                ref={(element) => {
+                  if (element) {
+                    logDetailsRefs.current.set(stage.id, element);
+                  } else {
+                    logDetailsRefs.current.delete(stage.id);
+                  }
+                }}
+              >
                 <summary>Logs</summary>
                 {stage.logs.map((log) => (
                   <code key={log}>{log}</code>
@@ -1936,18 +2020,31 @@ function AgentRunConsole({
       <section className="command-bar">
         <div className="command-bar__controls">
           <Button
-            icon={running ? <Pause /> : <Play />}
-            onClick={() => onRunAction(running ? "pause" : "start")}
-            variant={running ? "secondary" : "primary"}
+            disabled={running}
+            icon={<Play />}
+            onClick={() => onRunAction("start")}
+            variant="primary"
           >
-            {running ? "Pause" : "Run"}
+            Run
+          </Button>
+          <Button
+            aria-label={pauseUnavailableLabel}
+            disabled={!canPause}
+            icon={<Pause />}
+            onClick={() => onRunAction("pause")}
+            title={pauseUnavailableLabel}
+            variant="secondary"
+          >
+            Pause unavailable
           </Button>
           <IconButton
+            disabled={!canCancel || cancelPending}
             icon={<Square />}
-            label="Cancel run"
+            label={cancelPending ? "Cancelling agent run" : "Cancel run"}
             onClick={() => onRunAction("cancel")}
           />
           <IconButton
+            disabled={running || !canRetry}
             icon={<RotateCcw />}
             label="Retry run"
             onClick={() => onRunAction("retry")}
@@ -1960,9 +2057,10 @@ function AgentRunConsole({
             selected={Boolean(diffReview?.open)}
           />
           <IconButton
-            disabled
+            disabled={!hasLogs}
             icon={<TerminalSquare />}
             label="Open logs"
+            onClick={handleOpenLogs}
           />
         </div>
         <div
@@ -1991,6 +2089,7 @@ function AgentRunConsole({
             value={commandValue}
           />
           <Button
+            disabled={running}
             icon={<Send />}
             size="sm"
             type="submit"
@@ -2003,6 +2102,12 @@ function AgentRunConsole({
     </footer>
   );
 }
+
+const agentEngineLabels: Record<DesktopAgentEngine, string> = {
+  "external-agent": "External agent",
+  "htmlslide-agent": "HTMLslide Agent",
+  "mock-agent": "Local Mock"
+};
 
 function DiffReviewPanel({
   onAccept,

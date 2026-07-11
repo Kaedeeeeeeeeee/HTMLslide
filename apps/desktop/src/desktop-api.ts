@@ -300,6 +300,47 @@ export type DesktopExternalAgentRunResult = {
   summary: DesktopExternalAgentRunSummary;
 };
 
+export type DesktopAgentEngine = "mock-agent" | "htmlslide-agent" | "external-agent";
+
+export type DesktopAgentRunRequest = {
+  engine: DesktopAgentEngine;
+  projectPath: string;
+  brief: string;
+  runExport?: boolean;
+  maxRepairRounds?: number;
+};
+
+export type DesktopAgentRunResult =
+  | DesktopMockAgentRunResult
+  | DesktopByokAgentRunResult
+  | DesktopExternalAgentRunResult;
+
+export type DesktopAgentRunStatus =
+  | "queued"
+  | "running"
+  | "cancelling"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+export type DesktopAgentRunSnapshot = {
+  runId: string;
+  projectPath: string;
+  engine: DesktopAgentEngine;
+  providerId?: DesktopAgentRunResult["providerId"];
+  status: DesktopAgentRunStatus;
+  sequence: number;
+  startedAt: string;
+  completedAt?: string;
+  canCancel: boolean;
+  canRetry: boolean;
+  canPause: false;
+  events: AgentRunEvent[];
+  logs: AgentRunLog[];
+  result?: DesktopAgentRunResult;
+  error?: string;
+};
+
 export type DesktopCheckpointRequest = {
   projectPath: string;
   runId?: string;
@@ -417,9 +458,12 @@ export type HtmlslideDesktopApi = {
   openAudienceWindow(request: DesktopAudienceWindowRequest): Promise<DesktopAudienceWindowState>;
   updateAudienceWindow(request: DesktopAudienceWindowRequest): Promise<DesktopAudienceWindowState>;
   closeAudienceWindow(): Promise<DesktopAudienceWindowState>;
-  runMockAgent(request: DesktopMockAgentRunRequest): Promise<DesktopMockAgentRunResult>;
-  runByokAgent(request: DesktopByokAgentRunRequest): Promise<DesktopByokAgentRunResult>;
-  runExternalAgent(request: DesktopExternalAgentRunRequest): Promise<DesktopExternalAgentRunResult>;
+  startAgentRun(request: DesktopAgentRunRequest): Promise<DesktopAgentRunSnapshot>;
+  getAgentRun(runId: string): Promise<DesktopAgentRunSnapshot | undefined>;
+  getActiveAgentRun(projectPath: string): Promise<DesktopAgentRunSnapshot | undefined>;
+  cancelAgentRun(runId: string): Promise<DesktopAgentRunSnapshot>;
+  retryAgentRun(runId: string): Promise<DesktopAgentRunSnapshot>;
+  onAgentRunUpdate(handler: (snapshot: DesktopAgentRunSnapshot) => void): () => void;
   diffCheckpoint(request: DesktopCheckpointRequest): Promise<FileCopyCheckpointDiff>;
   revertCheckpoint(request: DesktopCheckpointRequest): Promise<DesktopCheckpointRevertResult>;
 };

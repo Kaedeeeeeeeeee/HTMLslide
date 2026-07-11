@@ -464,4 +464,6 @@ export type AgentRunInput = {
 export type AgentOrchestratorOptions = {
   clock?: () => Date;
   defaultMaxRepairRounds?: number;
+  onEvent?: (event: AgentRunEvent) => void | Promise<void>;
+  onLog?: (log: AgentRunLog) => void | Promise<void>;
 };

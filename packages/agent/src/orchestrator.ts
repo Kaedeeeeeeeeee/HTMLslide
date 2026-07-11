@@ -151,6 +151,8 @@ export class AgentRunController {
   readonly #events: AgentRunEvent[] = [];
   readonly #logs: AgentRunLog[] = [];
   readonly #maxRepairRounds: number;
+  readonly #onEvent: AgentOrchestratorOptions["onEvent"];
+  readonly #onLog: AgentOrchestratorOptions["onLog"];
 
   #sequence = 0;
   #cancelled = false;
@@ -161,6 +163,8 @@ export class AgentRunController {
     this.#input = input;
     this.#clock = options.clock ?? (() => new Date());
     this.#maxRepairRounds = input.maxRepairRounds ?? options.defaultMaxRepairRounds ?? 3;
+    this.#onEvent = options.onEvent;
+    this.#onLog = options.onLog;
     this.runId = input.runId ?? createAgentRunId();
     this.#snapshot = {
       runId: this.runId,
@@ -494,7 +498,7 @@ export class AgentRunController {
     } = {}
   ): void {
     this.#sequence += 1;
-    this.#events.push({
+    const event: AgentRunEvent = {
       runId: this.runId,
       sequence: this.#sequence,
       type,
@@ -506,18 +510,32 @@ export class AgentRunController {
       issuesFound: extras.issuesFound,
       checkpointId: extras.checkpointId,
       metadata: extras.metadata
-    });
+    };
+    this.#events.push(event);
+    this.#notifyObserver(this.#onEvent, event);
   }
 
   #log(level: AgentLogLevel, message: string, stage?: AgentRunStage, metadata?: JsonObject): void {
-    this.#logs.push({
+    const log: AgentRunLog = {
       runId: this.runId,
       stage,
       level,
       message,
       createdAt: this.#now(),
       metadata
-    });
+    };
+    this.#logs.push(log);
+    this.#notifyObserver(this.#onLog, log);
+  }
+
+  #notifyObserver<T>(observer: ((record: T) => void | Promise<void>) | undefined, record: T): void {
+    try {
+      if (observer !== undefined) {
+        void Promise.resolve(observer(record)).catch(() => undefined);
+      }
+    } catch {
+      // Observer failures must not affect the run or recursively create logs.
+    }
   }
 
   #now(): string {

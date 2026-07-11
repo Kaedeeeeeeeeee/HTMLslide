@@ -1,7 +1,19 @@
 import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createMockPassedCheck, createMockProvider, type FetchLike, type ModelProvider } from "@htmlslide/agent";
+import {
+  COMMAND_CAPTURE_LIMIT_CHARS,
+  COMMAND_CAPTURE_TRUNCATION_MARKER
+} from "@htmlslide/agent-adapters";
+import {
+  createMockPassedCheck,
+  createMockProvider,
+  type AgentRunEvent,
+  type AgentRunLog,
+  type FetchLike,
+  type JsonObject,
+  type ModelProvider
+} from "@htmlslide/agent";
 import { OFFICIAL_SKILLS } from "@htmlslide/skills";
 import { exportDeck } from "../../../packages/compiler/src/index";
 import { afterEach, describe, expect, it } from "vitest";
@@ -25,7 +37,9 @@ import {
   revertDesktopCheckpoint,
   runDesktopByokAgent,
   runDesktopExternalAgent,
+  runHtmlslideCli,
   runDesktopMockAgent,
+  sanitizeDesktopAgentMetadata,
   summarizeDeckProject,
   uninstallDesktopCliIntegration,
   upsertRecentProject,
@@ -1068,6 +1082,264 @@ describe("desktop services", () => {
     expect(restoredDeck.slides).toHaveLength(1);
   });
 
+  it("delivers normalized core and desktop records live and keeps them in the final arrays", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const observedEvents: AgentRunEvent[] = [];
+    const observedLogs: AgentRunLog[] = [];
+    let coreDeliveredBeforeDesktopCheck = false;
+
+    const result = await runDesktopMockAgent(
+      {
+        brief: "Observe the live mock run.",
+        projectPath,
+        runExport: false,
+        runId: "run-mock-live-observers"
+      },
+      {
+        cliRuntime: {
+          cliPath: "/fake/htmlslide.js",
+          cwd: "/fake",
+          mode: "development",
+          rootPath: "/fake"
+        },
+        cliRunner: async (args) => {
+          coreDeliveredBeforeDesktopCheck = observedEvents.some((event) => event.type === "run-completed")
+            && observedLogs.some((log) => log.stage === "review");
+          expect(args[0]).toBe("check");
+          return {
+            ok: true,
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            json: {
+              status: "passed",
+              summary: { errors: 0, warnings: 0, info: 0, suggestions: 0 },
+              issues: []
+            }
+          };
+        },
+        onEvent: (event) => observedEvents.push(event),
+        onLog: (log) => observedLogs.push(log)
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    expect(coreDeliveredBeforeDesktopCheck).toBe(true);
+    expect(observedEvents).toEqual(result.events);
+    expect(observedLogs).toEqual(result.logs);
+    expect(result.events.map((event) => event.sequence)).toEqual(
+      Array.from({ length: result.events.length }, (_, index) => index + 1)
+    );
+    expect(result.events.some((event) => event.summary === "Applied mock agent source files.")).toBe(true);
+    expect(result.events.some((event) => event.summary === "Check passed after applying mock source files.")).toBe(true);
+    expect(result.logs.some((log) => log.message === "htmlslide check completed with exit code 0.")).toBe(true);
+    expect(result.events.filter((event) => event.type === "run-created")).toHaveLength(1);
+  });
+
+  it("isolates throwing BYOK observers while retaining credential, apply, and CLI records", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    let eventCalls = 0;
+    let logCalls = 0;
+
+    const result = await runDesktopByokAgent(
+      {
+        brief: "Run despite observer failures.",
+        projectPath,
+        runExport: false,
+        runId: "run-byok-observer-isolation"
+      },
+      {
+        cliRuntime: {
+          cliPath: "/fake/htmlslide.js",
+          cwd: "/fake",
+          mode: "development",
+          rootPath: "/fake"
+        },
+        cliRunner: async () => ({
+          ok: true,
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+          json: {
+            status: "passed",
+            summary: { errors: 0, warnings: 0, info: 0, suggestions: 0 },
+            issues: []
+          }
+        }),
+        credentialStore: createFakeCredentialStore({
+          "app.htmlslide.ai-key:provider:openai": "sk-observer-secret"
+        }),
+        onEvent: () => {
+          eventCalls += 1;
+          throw new Error("event observer failed");
+        },
+        onLog: () => {
+          logCalls += 1;
+          throw new Error("log observer failed");
+        },
+        providerFactory: () => createSourceWriteTestProvider("Observer Isolation Deck"),
+        settings: byokSettings("openai")
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    expect(eventCalls).toBe(result.events.length);
+    expect(logCalls).toBe(result.logs.length);
+    expect(result.events.map((event) => event.sequence)).toEqual(
+      Array.from({ length: result.events.length }, (_, index) => index + 1)
+    );
+    expect(result.events.some((event) => event.summary.includes("credential validated"))).toBe(true);
+    expect(result.events.some((event) => event.summary === "Applied HTMLslide Agent source writes.")).toBe(true);
+    expect(result.logs.some((log) => log.message === "htmlslide check completed with exit code 0.")).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("sk-observer-secret");
+  });
+
+  it("cancels a BYOK run while credential validation is pending", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const abortController = new AbortController();
+    let validationStarted = false;
+
+    const result = await runDesktopByokAgent(
+      {
+        brief: "Cancel credential validation.",
+        projectPath,
+        runExport: false,
+        runId: "run-byok-cancel-preflight"
+      },
+      {
+        signal: abortController.signal,
+        credentialStore: createFakeCredentialStore({
+          "app.htmlslide.ai-key:provider:openai": "sk-preflight-secret"
+        }),
+        providerFactory: () => ({
+          ...createSourceWriteTestProvider("Never Built"),
+          validateCredentials() {
+            validationStarted = true;
+            queueMicrotask(() => abortController.abort("Stop provider preflight."));
+            return new Promise(() => undefined);
+          }
+        }),
+        settings: byokSettings("openai")
+      }
+    );
+
+    expect(validationStarted).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.agent).toBeUndefined();
+    expect(result.summary.status).toBe("cancelled");
+    expect(result.stages.find((stage) => stage.stage === "brief")?.status).toBe("cancelled");
+    expect(result.events.at(-1)).toMatchObject({ status: "cancelled", type: "run-cancelled" });
+  });
+
+  it("cancels a BYOK run while Keychain credential retrieval is pending", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const abortController = new AbortController();
+    let receivedSignal: AbortSignal | undefined;
+    const credentialStore: DesktopCredentialStore = {
+      available: true,
+      label: "Pending Keychain",
+      getPassword(_service, _account, options) {
+        receivedSignal = options?.signal;
+        queueMicrotask(() => abortController.abort("Stop Keychain lookup."));
+        return new Promise(() => undefined);
+      },
+      async setPassword() {
+        return undefined;
+      },
+      async deletePassword() {
+        return undefined;
+      }
+    };
+
+    const result = await runDesktopByokAgent(
+      {
+        brief: "Cancel credential lookup.",
+        projectPath,
+        runExport: false,
+        runId: "run-byok-cancel-keychain"
+      },
+      {
+        signal: abortController.signal,
+        credentialStore,
+        settings: byokSettings("openai")
+      }
+    );
+
+    expect(receivedSignal).toBe(abortController.signal);
+    expect(result.ok).toBe(false);
+    expect(result.summary.status).toBe("cancelled");
+    expect(result.events.at(-1)).toMatchObject({ status: "cancelled", type: "run-cancelled" });
+  });
+
+  it("fails a BYOK run when Keychain credential retrieval exceeds its timeout", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const credentialStore: DesktopCredentialStore = {
+      available: true,
+      label: "Pending Keychain",
+      getPassword: () => new Promise(() => undefined),
+      async setPassword() {
+        return undefined;
+      },
+      async deletePassword() {
+        return undefined;
+      }
+    };
+
+    const result = await runDesktopByokAgent(
+      {
+        brief: "Bound credential lookup.",
+        projectPath,
+        runExport: false,
+        runId: "run-byok-timeout-keychain"
+      },
+      {
+        credentialAccessTimeoutMs: 20,
+        credentialStore,
+        settings: byokSettings("openai")
+      }
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.summary.status).toBe("failed");
+    expect(result.error).toBe("Pending Keychain credential retrieval timed out after 20ms.");
+  });
+
+  it("fails a BYOK run when credential validation exceeds its bounded preflight timeout", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+
+    const result = await runDesktopByokAgent(
+      {
+        brief: "Bound credential validation.",
+        projectPath,
+        runExport: false,
+        runId: "run-byok-timeout-preflight"
+      },
+      {
+        credentialStore: createFakeCredentialStore({
+          "app.htmlslide.ai-key:provider:openai": "sk-timeout-secret"
+        }),
+        credentialValidationTimeoutMs: 20,
+        providerFactory: () => ({
+          ...createSourceWriteTestProvider("Never Built"),
+          validateCredentials: () => new Promise(() => undefined)
+        }),
+        settings: byokSettings("openai")
+      }
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.agent).toBeUndefined();
+    expect(result.summary.status).toBe("failed");
+    expect(result.error).toBe("Provider credential validation timed out after 20ms.");
+    expect(JSON.stringify(result)).not.toContain("sk-timeout-secret");
+  });
+
   it("runs the default OpenAI BYOK provider through injected fetch and applies source writes", async () => {
     const projectPath = await tempDir();
     await writeDeck(projectPath);
@@ -1829,6 +2101,149 @@ describe("desktop services", () => {
     expect(calls).toEqual([["check", projectPath, "--json"]]);
   });
 
+  it("propagates cancellation into desktop CLI check and does not start export", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const abortController = new AbortController();
+    const calls: string[][] = [];
+    let receivedSignal: AbortSignal | undefined;
+
+    const result = await runDesktopMockAgent(
+      {
+        brief: "Cancel during the real check boundary.",
+        projectPath,
+        runId: "run-mock-cancel-during-check"
+      },
+      {
+        signal: abortController.signal,
+        cliRuntime: {
+          cliPath: "/fake/htmlslide.js",
+          cwd: "/fake",
+          mode: "development",
+          rootPath: "/fake"
+        },
+        cliRunner: async (args, options) => {
+          calls.push(args);
+          receivedSignal = options.signal;
+          expect(args[0]).toBe("check");
+          abortController.abort("Stop during desktop check.");
+          return {
+            ok: false,
+            exitCode: 6,
+            stdout: "",
+            stderr: "",
+            error: "check cancelled"
+          };
+        }
+      }
+    );
+
+    expect(receivedSignal).toBe(abortController.signal);
+    expect(calls).toEqual([["check", projectPath, "--json"]]);
+    expect(result.ok).toBe(false);
+    expect(result.export).toBeUndefined();
+    expect(result.project).toBeUndefined();
+    expect(result.agent.status).toBe("cancelled");
+    expect(result.summary.status).toBe("cancelled");
+    expect(result.events.at(-1)).toMatchObject({
+      sequence: result.events.length,
+      status: "cancelled",
+      type: "run-cancelled"
+    });
+    expect(result.stages.find((stage) => stage.stage === "check")?.status).toBe("cancelled");
+  });
+
+  it("waits for a desktop CLI process to exit after escalating cancellation", async () => {
+    const root = await tempDir();
+    const scriptPath = path.join(root, "stubborn-cli.mjs");
+    const readyPath = path.join(root, "ready.txt");
+    await writeFile(scriptPath, `
+import { writeFileSync } from "node:fs";
+process.on("SIGTERM", () => undefined);
+writeFileSync(process.argv[2], String(process.pid));
+setInterval(() => undefined, 1000);
+`, "utf8");
+    const abortController = new AbortController();
+    const run = runHtmlslideCli([readyPath], {
+      cliPath: scriptPath,
+      cwd: root,
+      signal: abortController.signal,
+      timeoutMs: 5_000
+    });
+
+    let pid: number | undefined;
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline && pid === undefined) {
+      try {
+        pid = Number(await readFile(readyPath, "utf8"));
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    }
+    expect(pid).toBeTypeOf("number");
+    abortController.abort("Stop stubborn CLI.");
+    const result = await run;
+
+    let processStillAlive = false;
+    try {
+      process.kill(pid as number, 0);
+      processStillAlive = true;
+    } catch {
+      processStillAlive = false;
+    }
+    if (processStillAlive) {
+      process.kill(pid as number, "SIGKILL");
+    }
+    expect(processStillAlive).toBe(false);
+    expect(result).toMatchObject({ ok: false, exitCode: 6 });
+    expect(result.error).toContain("cancelled: Stop stubborn CLI.");
+  });
+
+  it("bounds desktop CLI stdout and stderr captures while draining the process", async () => {
+    const root = await tempDir();
+    const scriptPath = path.join(root, "noisy-cli.mjs");
+    await writeFile(scriptPath, `
+process.stdout.write("o".repeat(${COMMAND_CAPTURE_LIMIT_CHARS + 16_384}));
+process.stderr.write("e".repeat(${COMMAND_CAPTURE_LIMIT_CHARS + 16_384}));
+`, "utf8");
+
+    const result = await runHtmlslideCli([], {
+      cliPath: scriptPath,
+      cwd: root,
+      timeoutMs: 5_000
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.length).toBe(COMMAND_CAPTURE_LIMIT_CHARS + COMMAND_CAPTURE_TRUNCATION_MARKER.length);
+    expect(result.stderr.length).toBe(COMMAND_CAPTURE_LIMIT_CHARS + COMMAND_CAPTURE_TRUNCATION_MARKER.length);
+    expect(result.stdout.match(/output truncated/gu)).toHaveLength(1);
+    expect(result.stderr.match(/output truncated/gu)).toHaveLength(1);
+  });
+
+  it("bounds and sanitizes desktop agent metadata before service storage", () => {
+    const secret = "sk-metadatasecret123456789";
+    let deep: JsonObject = { value: secret };
+    for (let index = 0; index < 20; index += 1) {
+      deep = { child: deep };
+    }
+    const metadata = {
+      deep,
+      items: Array.from({ length: 500 }, () => ({
+        message: `api_key=${secret} ${"x".repeat(10_000)}`,
+        values: Array.from({ length: 500 }, () => secret)
+      }))
+    } as JsonObject;
+
+    const sanitized = sanitizeDesktopAgentMetadata(metadata);
+    const serialized = JSON.stringify(sanitized);
+    const items = sanitized?.items as JsonObject[];
+
+    expect(items).toHaveLength(100);
+    expect(serialized).not.toContain(secret);
+    expect(serialized.length).toBeLessThan(100_000);
+    expect(JSON.stringify(sanitized?.deep)).not.toContain("value");
+  });
+
   it("runs a configured generic external agent through check and export", async () => {
     const projectPath = await tempDir();
     await writeDeck(projectPath);
@@ -1978,6 +2393,102 @@ function requireArg(args, name) {
     for (const file of await readProjectTextFiles(projectPath)) {
       expect(file.text, file.path).not.toContain("sk-external-secret123456");
     }
+  });
+
+  it("passes external cancellation to the adapter and streams redacted logs without CLI follow-up", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const abortController = new AbortController();
+    const cliCalls: string[][] = [];
+    const observedLogs: AgentRunLog[] = [];
+    let receivedSignal: AbortSignal | undefined;
+    let logDeliveredInsideRunner = false;
+    const commandTemplate = "fake-agent --project \"{{projectPath}}\" --prompt-file \"{{promptFile}}\" --writes-manifest \"{{writeManifest}}\"";
+
+    const result = await runDesktopExternalAgent(
+      {
+        brief: "Cancel the fake external agent.",
+        projectPath,
+        runId: "run-external-cancel"
+      },
+      {
+        signal: abortController.signal,
+        agentRunner: async (invocation) => {
+          receivedSignal = invocation.signal;
+          invocation.onOutput?.({
+            stream: "stdout",
+            text: "api_key=sk-external-observer-"
+          });
+          expect(observedLogs.some((log) => log.metadata?.stream === "stdout")).toBe(false);
+          invocation.onOutput?.({
+            stream: "stdout",
+            text: "secret123456\n"
+          });
+          logDeliveredInsideRunner = observedLogs.some((log) => log.message === "api_key=[redacted]");
+          abortController.abort("Stop external run.");
+          return {
+            exitCode: 1,
+            stdout: "api_key=sk-external-observer-secret123456",
+            stderr: "",
+            cancelled: true
+          };
+        },
+        cliRunner: async (args) => {
+          cliCalls.push(args);
+          throw new Error(`Unexpected CLI call: ${args.join(" ")}`);
+        },
+        onLog: (log) => observedLogs.push(log),
+        settings: externalAgentSettings(commandTemplate)
+      }
+    );
+
+    expect(receivedSignal).toBe(abortController.signal);
+    expect(logDeliveredInsideRunner).toBe(true);
+    expect(cliCalls).toEqual([]);
+    expect(result.ok).toBe(false);
+    expect(result.summary.status).toBe("cancelled");
+    expect(result.check).toBeUndefined();
+    expect(result.export).toBeUndefined();
+    expect(result.adapter?.status).toBe("cancelled");
+    expect(result.adapter?.adapter.capabilities.cancelRun).toBe(true);
+    expect(result.logs).toEqual(observedLogs);
+    expect(JSON.stringify(result)).not.toContain("sk-external-observer-secret123456");
+  });
+
+  it("bounds service-level external logs before registry delivery", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const abortController = new AbortController();
+    const commandTemplate = "fake-agent --project \"{{projectPath}}\" --prompt-file \"{{promptFile}}\" --writes-manifest \"{{writeManifest}}\"";
+
+    const result = await runDesktopExternalAgent(
+      {
+        brief: "Bound noisy command logs.",
+        projectPath,
+        runId: "run-external-log-limit"
+      },
+      {
+        signal: abortController.signal,
+        agentRunner: async (invocation) => {
+          invocation.onOutput?.({
+            stream: "stdout",
+            text: Array.from({ length: 700 }, (_, index) => `line ${index}`).join("\n") + "\n"
+          });
+          abortController.abort("Stop noisy command.");
+          return {
+            exitCode: 1,
+            stdout: "",
+            stderr: "",
+            cancelled: true
+          };
+        },
+        settings: externalAgentSettings(commandTemplate)
+      }
+    );
+
+    expect(result.summary.status).toBe("cancelled");
+    expect(result.logs).toHaveLength(500);
+    expect(result.logs.at(-1)?.message).toBe("Desktop service log limit reached (500 records).");
   });
 
   it("blocks external agent runs until Generic command is selected and configured", async () => {

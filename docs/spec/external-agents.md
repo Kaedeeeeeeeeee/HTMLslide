@@ -30,10 +30,15 @@ Each placeholder value renders as one argv token, even when it contains spaces. 
 
 Adapters must not execute generated shell text. Tests should use injected runners or controlled Node fake commands in temporary project directories.
 
-Generic command runs can stream stdout/stderr chunks through the adapter while still returning the complete stdout/stderr
-buffers when the process exits. The desktop external-agent path records redacted chunks as build-stage run logs so
-long-running local commands can surface progress before check/export gates run without persisting API keys or bearer
-tokens.
+Generic command runs can stream stdout/stderr chunks through the adapter while retaining bounded stdout/stderr
+diagnostic captures when the process exits. The command runner continues draining both pipes after each capture reaches
+its limit. The desktop external-agent path frames chunks into bounded complete lines before
+redaction and build-stage log delivery. This preserves live progress without allowing a secret split across transport
+chunks, an unbounded line, an API key, or a bearer token into desktop IPC.
+
+Desktop runs pass an `AbortSignal` from the Electron main-process run registry into the Generic adapter. On macOS and Linux the command runner owns an isolated process group, so cancellation and timeout send `SIGTERM` to the full command tree and escalate the group to `SIGKILL` after the grace period. Windows retains the direct-process fallback until a native tree-termination adapter is added. The run becomes terminal only after process-tree cleanup and bounded pipe drain, and the desktop service must not start check or export once aborted. The Generic adapter advertises `cancelRun` only when this signal path is wired.
+
+Live chunks are published as sanitized desktop run snapshots over the shared agent-run update channel. The renderer does not receive command handles, environment variables, credentials, prompt-file contents, or unsanitized stdout/stderr.
 
 ## Desktop Generic Command Runs
 

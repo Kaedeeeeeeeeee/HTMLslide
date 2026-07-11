@@ -301,6 +301,87 @@ function requireArg(args, name) {
   );
 }
 
+async function writeControlledExternalAgentScript(scriptPath: string): Promise<void> {
+  await writeFile(
+    scriptPath,
+    `
+import fs from "node:fs";
+import path from "node:path";
+
+const args = readPairs(process.argv.slice(2));
+const projectRoot = requireArg(args, "--project");
+const promptFile = requireArg(args, "--prompt-file");
+const manifestFile = requireArg(args, "--writes-manifest");
+const stateFile = process.env.HTMLSLIDE_E2E_AGENT_STATE_FILE;
+const completionReleaseFile = process.env.HTMLSLIDE_E2E_AGENT_COMPLETION_RELEASE_FILE;
+const prompt = fs.readFileSync(promptFile, "utf8");
+const cancelThenRetry = prompt.includes("CANCEL_THEN_RETRY");
+const completeBeforeCancel = prompt.includes("COMPLETE_BEFORE_CANCEL");
+
+if (!stateFile || (!cancelThenRetry && !completeBeforeCancel)) {
+  throw new Error("Controlled E2E agent did not receive its state file and prompt marker.");
+}
+
+if (completeBeforeCancel) {
+  if (!completionReleaseFile) {
+    throw new Error("Controlled E2E agent did not receive its completion release file.");
+  }
+  console.log("controlled agent awaiting completion release");
+  while (!fs.existsSync(completionReleaseFile)) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  writeSuccessfulRun("Completion won cancel race", "The completed run remained authoritative after local cancel intent.");
+  fs.writeFileSync(stateFile, "completed\\n");
+  console.log("controlled agent completed before cancel dispatch");
+  process.exit(0);
+}
+
+const retrying = fs.existsSync(stateFile);
+console.log(retrying ? "controlled agent retry started" : "controlled agent live output");
+
+if (!retrying) {
+  process.on("SIGTERM", () => {
+    fs.writeFileSync(stateFile, "cancelled\\n");
+    console.error("controlled agent received cancellation");
+    process.exit(0);
+  });
+  await new Promise((resolve) => setTimeout(resolve, 30_000));
+  throw new Error("Controlled E2E agent was not cancelled.");
+}
+
+writeSuccessfulRun("Retry completed", "The retried run completed through the shared desktop contract.");
+console.log("controlled agent retry wrote slides/001-title.html");
+
+function writeSuccessfulRun(title, subtitle) {
+  const slideFile = path.join(projectRoot, "slides", "001-title.html");
+  fs.writeFileSync(
+    slideFile,
+    '<section class="slide title-slide" data-slide-id="001-title"><p class="eyebrow">Controlled external agent</p><h1>' + title + '</h1><p class="subtitle">' + subtitle + '</p></section>\\n'
+  );
+  fs.mkdirSync(path.dirname(manifestFile), { recursive: true });
+  fs.writeFileSync(manifestFile, JSON.stringify({ writes: ["slides/001-title.html"] }, null, 2) + "\\n");
+}
+
+function readPairs(argv) {
+  const pairs = new Map();
+  for (let index = 0; index < argv.length; index += 2) {
+    pairs.set(argv[index], argv[index + 1]);
+  }
+  return pairs;
+}
+
+function requireArg(args, name) {
+  const value = args.get(name);
+  if (!value) {
+    throw new Error("Missing " + name);
+  }
+  return value;
+}
+`,
+    "utf8"
+  );
+}
+
 async function writeReadyCodexCli(commandPath: string): Promise<void> {
   await writeFile(
     commandPath,
@@ -931,6 +1012,220 @@ test.describe("HTMLslide desktop smoke", () => {
     const revertedSlide = await readFile(path.join(projectPath, "slides", "001-title.html"), "utf8");
     expect(revertedSlide).toContain("Generic Agent Demo");
     expect(revertedSlide).not.toContain("Edited by Generic E2E");
+
+    await expectNoFrameworkOverlay(page);
+    expect(browserErrors).toEqual([]);
+  });
+
+  test("streams, cancels, rejects concurrent starts, and retries a Generic agent run", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
+    const homeDir = path.join(tempRoot, "home");
+    const userDataDir = path.join(tempRoot, "user-data");
+    const workspaceDir = path.join(tempRoot, "workspace");
+    const projectPath = path.join(workspaceDir, "controlled-agent-run");
+    const fakeAgentScript = path.join(tempRoot, "controlled-agent.mjs");
+    const agentStateFile = path.join(tempRoot, "controlled-agent-state.txt");
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(userDataDir, { recursive: true });
+    await mkdir(workspaceDir, { recursive: true });
+    await cp(sampleProjectPath, projectPath, { recursive: true });
+    await writeControlledExternalAgentScript(fakeAgentScript);
+    const commandTemplate = `"${process.execPath}" "${fakeAgentScript}" --project "{{projectPath}}" --prompt-file "{{promptFile}}" --writes-manifest "{{writeManifest}}"`;
+    await writeFile(
+      path.join(userDataDir, "ai-engine-settings.json"),
+      `${JSON.stringify({
+        version: 1,
+        mode: "external-agent",
+        apiKey: { provider: "openai", model: "gpt-5-mini", hasKey: false },
+        externalAgent: { selectedId: "generic", customCommand: commandTemplate }
+      }, null, 2)}\n`,
+      "utf8"
+    );
+
+    electronApp = await electron.launch({
+      executablePath: electronExecutable,
+      args: [electronMain],
+      env: {
+        ...process.env,
+        ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+        HOME: homeDir,
+        HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir,
+        HTMLSLIDE_E2E_AGENT_STATE_FILE: agentStateFile,
+        HTMLSLIDE_E2E_OPEN_PROJECT_PATH: projectPath,
+        HTMLSLIDE_USER_DATA_DIR: userDataDir
+      }
+    });
+
+    const page = await electronApp.firstWindow();
+    const browserErrors = collectBrowserErrors(page);
+    await page.waitForLoadState("domcontentloaded");
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await page.locator(".library-main").getByRole("button", { name: "Open Folder", exact: true }).first().click();
+    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible({
+      timeout: 30_000
+    });
+
+    const agentConsole = page.locator(".agent-console");
+    const controls = page.locator(".command-bar__controls");
+    const commandBar = page.getByLabel("Command bar");
+    const sendButton = page.getByRole("button", { name: "Send", exact: true });
+    const runButton = controls.getByRole("button", { name: "Run", exact: true });
+    const pauseButton = controls.getByRole("button", { name: "External agent does not support pause.", exact: true });
+    const cancelButton = controls.getByRole("button", { name: "Cancel run", exact: true });
+    const retryButton = controls.getByRole("button", { name: "Retry run", exact: true });
+    const openLogsButton = controls.getByRole("button", { name: "Open logs", exact: true });
+
+    await expect(pauseButton).toBeVisible({ timeout: 30_000 });
+    await commandBar.fill("Generic command CANCEL_THEN_RETRY");
+    await sendButton.click();
+    await expect(agentConsole).toHaveAttribute("data-agent-run-status", "running");
+    const firstRunId = await agentConsole.getAttribute("data-agent-run-id");
+    expect(firstRunId).toMatch(/^run-/);
+    await expect(runButton).toBeDisabled();
+    await expect(sendButton).toBeDisabled();
+    await expect(page.locator(".workspace-toolbar").getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
+    await expect(pauseButton).toBeDisabled();
+    await expect(pauseButton).toHaveAttribute("title", "External agent does not support pause.");
+    await expect(cancelButton).toBeEnabled();
+    await expect(retryButton).toBeDisabled();
+
+    await expect(openLogsButton).toBeEnabled({ timeout: 30_000 });
+    await openLogsButton.click();
+    const liveLogStage = page.locator(".agent-stage").filter({ hasText: "controlled agent live output" });
+    await expect(liveLogStage.getByText("controlled agent live output")).toBeVisible();
+    await expect(liveLogStage.locator("summary")).toBeFocused();
+
+    const concurrentStartError = await page.evaluate(async (localProjectPath) => {
+      const desktopApi = (window as unknown as {
+        htmlslideDesktop?: { startAgentRun(request: unknown): Promise<unknown> };
+      }).htmlslideDesktop;
+      try {
+        await desktopApi?.startAgentRun({
+          engine: "external-agent",
+          projectPath: localProjectPath,
+          brief: "Concurrent start must fail."
+        });
+        return "";
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    }, projectPath);
+    expect(concurrentStartError).toContain("already active");
+
+    await cancelButton.click();
+    await expect(agentConsole).toHaveAttribute("data-agent-run-status", "cancelled", { timeout: 30_000 });
+    await expect(page.getByText("Generation cancelled", { exact: true }).first()).toBeVisible();
+    await expect(retryButton).toBeEnabled();
+    await expect(access(agentStateFile)).resolves.toBeUndefined();
+    await page.waitForTimeout(500);
+    await expect(page.getByText("External agent completed check and export", { exact: true })).toHaveCount(0);
+
+    await retryButton.click();
+    await expect.poll(() => agentConsole.getAttribute("data-agent-run-id")).not.toBe(firstRunId);
+    await expect(agentConsole).toHaveAttribute("data-agent-run-status", "succeeded", { timeout: 30_000 });
+    await expect(page.getByText("External agent completed check and export", { exact: true })).toBeVisible();
+    await expect(page.locator('iframe[title="HTML as source slide preview"]')).toBeVisible({ timeout: 30_000 });
+    expect(await readFile(path.join(projectPath, "slides", "001-title.html"), "utf8")).toContain("Retry completed");
+
+    await expectNoFrameworkOverlay(page);
+    expect(browserErrors).toEqual([]);
+  });
+
+  test("keeps a completed Generic agent run when completion wins the cancel race", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
+    const homeDir = path.join(tempRoot, "home");
+    const userDataDir = path.join(tempRoot, "user-data");
+    const workspaceDir = path.join(tempRoot, "workspace");
+    const projectPath = path.join(workspaceDir, "completion-wins-cancel-race");
+    const fakeAgentScript = path.join(tempRoot, "controlled-agent.mjs");
+    const agentStateFile = path.join(tempRoot, "controlled-agent-state.txt");
+    const completionReleaseFile = path.join(tempRoot, "release-agent-completion.txt");
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(userDataDir, { recursive: true });
+    await mkdir(workspaceDir, { recursive: true });
+    await cp(sampleProjectPath, projectPath, { recursive: true });
+    await writeControlledExternalAgentScript(fakeAgentScript);
+    const commandTemplate = `"${process.execPath}" "${fakeAgentScript}" --project "{{projectPath}}" --prompt-file "{{promptFile}}" --writes-manifest "{{writeManifest}}"`;
+    await writeFile(
+      path.join(userDataDir, "ai-engine-settings.json"),
+      `${JSON.stringify({
+        version: 1,
+        mode: "external-agent",
+        apiKey: { provider: "openai", model: "gpt-5-mini", hasKey: false },
+        externalAgent: { selectedId: "generic", customCommand: commandTemplate }
+      }, null, 2)}\n`,
+      "utf8"
+    );
+
+    electronApp = await electron.launch({
+      executablePath: electronExecutable,
+      args: [electronMain],
+      env: {
+        ...process.env,
+        ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+        HOME: homeDir,
+        HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir,
+        HTMLSLIDE_E2E_AGENT_COMPLETION_RELEASE_FILE: completionReleaseFile,
+        HTMLSLIDE_E2E_AGENT_STATE_FILE: agentStateFile,
+        HTMLSLIDE_E2E_OPEN_PROJECT_PATH: projectPath,
+        HTMLSLIDE_USER_DATA_DIR: userDataDir
+      }
+    });
+
+    const page = await electronApp.firstWindow();
+    const browserErrors = collectBrowserErrors(page);
+    await page.exposeFunction("releaseControlledAgentCompletion", async () => {
+      await writeFile(completionReleaseFile, "complete\n", "utf8");
+    });
+    await page.waitForLoadState("domcontentloaded");
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await page.locator(".library-main").getByRole("button", { name: "Open Folder", exact: true }).first().click();
+    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible({
+      timeout: 30_000
+    });
+
+    const agentConsole = page.locator(".agent-console");
+    const controls = page.locator(".command-bar__controls");
+    const commandBar = page.getByLabel("Command bar");
+    await expect(
+      controls.getByRole("button", { name: "External agent does not support pause.", exact: true })
+    ).toBeVisible({ timeout: 30_000 });
+    await commandBar.fill("Generic command COMPLETE_BEFORE_CANCEL");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(agentConsole).toHaveAttribute("data-agent-run-status", "running");
+    const openLogsButton = controls.getByRole("button", { name: "Open logs", exact: true });
+    await expect(openLogsButton).toBeEnabled({ timeout: 30_000 });
+    await openLogsButton.click();
+    const waitingLogStage = page.locator(".agent-stage").filter({ hasText: "controlled agent awaiting completion release" });
+    await expect(waitingLogStage.getByText("controlled agent awaiting completion release")).toBeVisible({
+      timeout: 30_000
+    });
+
+    await page.evaluate(() => {
+      const e2eWindow = window as Window & {
+        __HTMLSLIDE_E2E_BEFORE_AGENT_CANCEL__?: (runId: string) => Promise<void>;
+        releaseControlledAgentCompletion: () => Promise<void>;
+      };
+      e2eWindow.__HTMLSLIDE_E2E_BEFORE_AGENT_CANCEL__ = async () => {
+        await e2eWindow.releaseControlledAgentCompletion();
+        const deadline = Date.now() + 30_000;
+        while (document.querySelector(".agent-console")?.getAttribute("data-agent-run-status") !== "succeeded") {
+          if (Date.now() >= deadline) {
+            throw new Error("Timed out waiting for completion before cancel dispatch.");
+          }
+          await new Promise((resolve) => window.setTimeout(resolve, 10));
+        }
+      };
+    });
+
+    await controls.getByRole("button", { name: "Cancel run", exact: true }).click();
+    await expect(agentConsole).toHaveAttribute("data-agent-run-status", "succeeded", { timeout: 30_000 });
+    await expect(page.getByText("External agent completed check and export", { exact: true })).toBeVisible();
+    await expect(page.getByText("Generation cancelled", { exact: true })).toHaveCount(0);
+    await expect.poll(async () => readFile(agentStateFile, "utf8")).toBe("completed\n");
+    expect(await readFile(path.join(projectPath, "slides", "001-title.html"), "utf8")).toContain(
+      "Completion won cancel race"
+    );
 
     await expectNoFrameworkOverlay(page);
     expect(browserErrors).toEqual([]);

@@ -73,6 +73,20 @@ Every run records structured events with:
 
 Logs are separate from events and include `level`, `message`, optional `stage`, and optional metadata. Logs are for diagnostics; events are for run consoles, tests, and automation.
 
+Orchestrator callers may register synchronous or asynchronous event and log observers for live delivery. Observers receive the same normalized records that are appended to the run snapshot, in append order. Synchronous throws and rejected observer promises are isolated from the run. Desktop callers must sanitize provider and process text before publishing it across IPC.
+
+## Desktop Live Run Control
+
+Electron main owns active desktop agent runs. The renderer starts a run and receives a run id plus an initial snapshot without waiting for completion. Main publishes monotonically sequenced, sanitized snapshots as events and logs arrive; the renderer can also request the latest snapshot to recover from a missed update or renderer reload.
+
+Because an Electron push can arrive before the corresponding `invoke` response, the renderer fetches the returned run id once after start and retry, then keeps the highest snapshot sequence. A recreated project workspace can query the active run by canonical project path.
+
+Only one run may be active for a resolved project path. Cancellation is idempotent and aborts the core provider signal or external child process before any new apply, check, export, or reload step begins. Desktop Keychain retrieval and BYOK credential validation are both raced against cancellation and bounded timeouts so a stalled credential boundary cannot retain the active-run lock. A cancelled or failed run may be retried, but retry always creates a new run id and checkpoint from non-secret request metadata.
+
+Terminal desktop snapshots use a bounded IPC delivery shape rather than forwarding raw provider results. Provider `sourceWrites[].content` is removed after files are applied; file/count summaries remain available for review. CLI JSON and output, checkpoint diffs, adapter output, events, logs, metadata, strings, and collections have explicit delivery limits and secret sanitization before Electron structured cloning.
+
+Pause is capability-gated. The built-in HTTP providers and Generic external command do not currently provide portable pause/resume semantics, so the desktop console must expose Pause as unavailable rather than changing UI state while work continues.
+
 ## Checkpoint Metadata
 
 Each run creates checkpoint metadata before the `brief` stage. The default foundation is metadata-only:

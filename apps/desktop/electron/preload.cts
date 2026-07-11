@@ -47,26 +47,22 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
   openAudienceWindow: (request: unknown) => ipcRenderer.invoke("htmlslide:open-audience-window", request),
   updateAudienceWindow: (request: unknown) => ipcRenderer.invoke("htmlslide:update-audience-window", request),
   closeAudienceWindow: () => ipcRenderer.invoke("htmlslide:close-audience-window"),
-  runMockAgent: (request: {
+  startAgentRun: (request: {
+    engine: "mock-agent" | "htmlslide-agent" | "external-agent";
     projectPath: string;
     brief: string;
     runExport?: boolean;
     maxRepairRounds?: number;
-    runId?: string;
-  }) => ipcRenderer.invoke("htmlslide:run-mock-agent", request),
-  runByokAgent: (request: {
-    projectPath: string;
-    brief: string;
-    runExport?: boolean;
-    maxRepairRounds?: number;
-    runId?: string;
-  }) => ipcRenderer.invoke("htmlslide:run-byok-agent", request),
-  runExternalAgent: (request: {
-    projectPath: string;
-    brief: string;
-    runExport?: boolean;
-    runId?: string;
-  }) => ipcRenderer.invoke("htmlslide:run-external-agent", request),
+  }) => ipcRenderer.invoke("htmlslide:start-agent-run", request),
+  getAgentRun: (runId: string) => ipcRenderer.invoke("htmlslide:get-agent-run", runId),
+  getActiveAgentRun: (projectPath: string) => ipcRenderer.invoke("htmlslide:get-active-agent-run", projectPath),
+  cancelAgentRun: (runId: string) => ipcRenderer.invoke("htmlslide:cancel-agent-run", runId),
+  retryAgentRun: (runId: string) => ipcRenderer.invoke("htmlslide:retry-agent-run", runId),
+  onAgentRunUpdate: (handler: (snapshot: unknown) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, snapshot: unknown) => handler(snapshot);
+    ipcRenderer.on("htmlslide:agent-run-update", listener);
+    return () => ipcRenderer.removeListener("htmlslide:agent-run-update", listener);
+  },
   diffCheckpoint: (request: { projectPath: string; runId?: string; checkpointId?: string }) =>
     ipcRenderer.invoke("htmlslide:diff-checkpoint", request),
   revertCheckpoint: (request: { projectPath: string; runId?: string; checkpointId?: string; confirmed?: boolean }) =>

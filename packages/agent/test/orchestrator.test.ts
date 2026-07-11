@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   canTransitionAgentRunState,
   createMockFailedCheck,
@@ -6,6 +6,8 @@ import {
   createMockProvider,
   runAgent,
   startAgentRun,
+  type AgentRunEvent,
+  type AgentRunLog,
   type AgentRunStage,
   type ModelRequest,
   type ModelResponse
@@ -241,6 +243,172 @@ describe("agent orchestrator", () => {
       expect(result.error.code).toBe("cancelled");
     }
     expect(result.events.some((event) => event.type === "run-cancelled")).toBe(true);
+  });
+
+  it("delivers events and logs while a run is still in progress", async () => {
+    const baseProvider = createMockProvider({
+      checkResults: [createMockPassedCheck()]
+    });
+    let releaseBrief: (() => void) | undefined;
+    const briefGate = new Promise<void>((resolve) => {
+      releaseBrief = resolve;
+    });
+    const provider = {
+      ...baseProvider,
+      complete: async (request: ModelRequest): Promise<ModelResponse> => {
+        if (request.stage === "brief") {
+          await briefGate;
+        }
+        return baseProvider.complete(request);
+      }
+    };
+    const observedEvents: AgentRunEvent[] = [];
+    const observedLogs: AgentRunLog[] = [];
+    let doneSettled = false;
+
+    const controller = startAgentRun(
+      {
+        projectRoot,
+        brief: "Observe this run live.",
+        provider,
+        runId: "run-live-observer"
+      },
+      {
+        clock: fixedClock,
+        onEvent: (event) => observedEvents.push(event),
+        onLog: (log) => observedLogs.push(log)
+      }
+    );
+    void controller.done.then(() => {
+      doneSettled = true;
+    });
+
+    await vi.waitFor(() => {
+      expect(observedEvents.some((event) => event.type === "stage-started" && event.stage === "brief")).toBe(true);
+      expect(observedLogs.some((log) => log.stage === "brief" && log.message === "brief started.")).toBe(true);
+    });
+    expect(doneSettled).toBe(false);
+    expect(controller.getStatus().status).toBe("running");
+
+    releaseBrief?.();
+    await expect(controller.done).resolves.toMatchObject({
+      ok: true,
+      status: "succeeded"
+    });
+  });
+
+  it("delivers observers in the same append order as the final result", async () => {
+    const observedEvents: AgentRunEvent[] = [];
+    const observedLogs: AgentRunLog[] = [];
+    const result = await runAgent(
+      {
+        projectRoot,
+        brief: "Preserve observer ordering.",
+        provider: createMockProvider({
+          checkResults: [createMockPassedCheck()]
+        }),
+        runId: "run-observer-order"
+      },
+      {
+        clock: fixedClock,
+        onEvent: (event) => observedEvents.push(event),
+        onLog: (log) => observedLogs.push(log)
+      }
+    );
+
+    expect(observedEvents).toEqual(result.events);
+    expect(observedLogs).toEqual(result.logs);
+    expect(observedEvents.map((event) => event.sequence)).toEqual(
+      Array.from({ length: observedEvents.length }, (_, index) => index + 1)
+    );
+    expect(observedEvents.at(-1)?.type).toBe("run-completed");
+  });
+
+  it("isolates synchronous throws and async rejections without affecting the run", async () => {
+    let eventCalls = 0;
+    let logCalls = 0;
+    const unhandledRejections: unknown[] = [];
+    const recordUnhandledRejection = (reason: unknown): void => {
+      unhandledRejections.push(reason);
+    };
+    process.on("unhandledRejection", recordUnhandledRejection);
+
+    try {
+      const result = await runAgent(
+        {
+          projectRoot,
+          brief: "Ignore observer failures.",
+          provider: createMockProvider({
+            checkResults: [createMockPassedCheck()]
+          }),
+          runId: "run-observer-errors"
+        },
+        {
+          clock: fixedClock,
+          onEvent: () => {
+            eventCalls += 1;
+            if (eventCalls === 1) {
+              throw new Error("event observer threw");
+            }
+            return Promise.reject(new Error("event observer rejected"));
+          },
+          onLog: () => {
+            logCalls += 1;
+            if (logCalls === 1) {
+              throw new Error("log observer threw");
+            }
+            return Promise.reject(new Error("log observer rejected"));
+          }
+        }
+      );
+
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(result.ok).toBe(true);
+      expect(result.status).toBe("succeeded");
+      expect(eventCalls).toBe(result.events.length);
+      expect(logCalls).toBe(result.logs.length);
+      expect(result.logs.every((log) => log.level === "info")).toBe(true);
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.removeListener("unhandledRejection", recordUnhandledRejection);
+    }
+  });
+
+  it("delivers cancellation once without duplicating the terminal event", async () => {
+    const observedEvents: AgentRunEvent[] = [];
+    const observedLogs: AgentRunLog[] = [];
+    const controller = startAgentRun(
+      {
+        projectRoot,
+        brief: "Cancel after observer delivery starts.",
+        provider: createMockProvider({
+          delayMs: 1_000
+        }),
+        runId: "run-cancel-observer"
+      },
+      {
+        clock: fixedClock,
+        onEvent: (event) => observedEvents.push(event),
+        onLog: (log) => observedLogs.push(log)
+      }
+    );
+
+    await vi.waitFor(() => {
+      expect(observedEvents.some((event) => event.type === "stage-started" && event.stage === "brief")).toBe(true);
+    });
+    controller.cancel("Stopped by observer test.");
+
+    expect(observedEvents.filter((event) => event.type === "run-cancelled")).toHaveLength(1);
+    expect(observedLogs.filter((log) => log.level === "warning" && log.message === "Stopped by observer test.")).toHaveLength(
+      1
+    );
+
+    const result = await controller.done;
+    expect(result.status).toBe("cancelled");
+    expect(result.events.filter((event) => event.type === "run-cancelled")).toHaveLength(1);
+    expect(observedEvents).toEqual(result.events);
+    expect(observedLogs).toEqual(result.logs);
   });
 
   it("creates checkpoint metadata before model stages", async () => {

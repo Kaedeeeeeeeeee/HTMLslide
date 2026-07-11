@@ -9,13 +9,14 @@ import { ProjectLibrary } from "./components/ProjectLibrary";
 import { Workspace, type AgentDiffReview } from "./components/Workspace";
 import {
   getDesktopApi,
+  type DesktopAgentEngine,
+  type DesktopAgentRunResult,
+  type DesktopAgentRunSnapshot,
+  type DesktopAgentRunStatus,
   type DesktopCheckReport,
   type DesktopAudienceWindowRequest,
   type DesktopAudienceWindowState,
-  type DesktopByokAgentRunResult,
   type DesktopCliIntegrationState,
-  type DesktopExternalAgentRunResult,
-  type DesktopMockAgentRunResult,
   type DesktopOfficialSkillsState,
   type DesktopPresenterDeckResult,
   type DesktopProjectPreview,
@@ -67,9 +68,6 @@ const idleStatus: OperationStatus = {
 
 const nowIso = (): string => new Date().toISOString();
 
-type DesktopAgentRunResult = DesktopMockAgentRunResult | DesktopByokAgentRunResult | DesktopExternalAgentRunResult;
-type DesktopGenerationEngine = "mock-agent" | "htmlslide-agent" | "external-agent";
-
 type DirectPresenterOpen = {
   id: string;
   source: "deckpkg-file";
@@ -78,6 +76,25 @@ type DirectPresenterOpen = {
 };
 
 const presenterDeckAccents = ["#315fcb", "#267a4f", "#9a6410", "#286a8d", "#7b4ab8", "#bc3a3a"];
+const activeAgentRunStatuses = new Set<DesktopAgentRunStatus>(["queued", "running", "cancelling"]);
+
+type AgentCancelE2EWindow = Window & {
+  __HTMLSLIDE_E2E_BEFORE_AGENT_CANCEL__?: (runId: string) => void | Promise<void>;
+};
+
+function agentEngineLabel(engine: DesktopAgentEngine): string {
+  if (engine === "external-agent") {
+    return "External agent";
+  }
+  if (engine === "htmlslide-agent") {
+    return "HTMLslide Agent";
+  }
+  return "Mock generation";
+}
+
+function selectedAgentEngine(settings: AiEngineSettings): DesktopAgentEngine {
+  return settings.mode === "no-ai" ? "mock-agent" : settings.mode;
+}
 
 function formatPresenterDurationLabel(seconds: number): string {
   const safeSeconds = Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds) : 60;
@@ -227,7 +244,7 @@ function App(): React.ReactNode {
   const [qaFilter, setQaFilter] = useState<QaFilter>("all");
   const [qaIssues, setQaIssues] = useState<QaIssue[]>(sampleQaIssues);
   const [commandValue, setCommandValue] = useState("");
-  const [running, setRunning] = useState(true);
+  const [running, setRunning] = useState(false);
   const [activeStageIndex, setActiveStageIndex] = useState(4);
   const [operationStatus, setOperationStatus] = useState<OperationStatus>(idleStatus);
   const [commandActionStatuses, setCommandActionStatuses] = useState<CommandActionStatuses>(() =>
@@ -236,6 +253,12 @@ function App(): React.ReactNode {
   const [diffReview, setDiffReview] = useState<AgentDiffReview | undefined>();
   const [agentRunEvents, setAgentRunEvents] = useState<AgentRunEventLike[]>([]);
   const [agentRunLogs, setAgentRunLogs] = useState<AgentRunLogLike[]>([]);
+  const [agentRunSnapshot, setAgentRunSnapshot] = useState<DesktopAgentRunSnapshot | undefined>();
+  const [agentCancelPendingRunId, setAgentCancelPendingRunId] = useState<string | undefined>();
+  const agentRunSnapshotRef = useRef<DesktopAgentRunSnapshot | undefined>(undefined);
+  const agentStartPendingRef = useRef(false);
+  const appliedTerminalResultRunIdsRef = useRef(new Set<string>());
+  const handledTerminalSnapshotRunIdsRef = useRef(new Set<string>());
   const [aiEngineSettings, setAiEngineSettings] = useState<AiEngineSettings>(() => createDefaultAiEngineSettings());
   const aiEngineSettingsTouchedRef = useRef(false);
   const [cliIntegration, setCliIntegration] = useState<DesktopCliIntegrationState | undefined>();
@@ -647,7 +670,10 @@ function App(): React.ReactNode {
   }, []);
 
   const applyAgentRunResult = useCallback(
-    (result: DesktopAgentRunResult): void => {
+    (
+      result: DesktopAgentRunResult,
+      terminalStatus: Extract<DesktopAgentRunStatus, "succeeded" | "failed" | "cancelled">
+    ): void => {
       const checkReport = result.check?.json as DesktopCheckReport | undefined;
       const repairs = result.providerId === "external-generic" ? [] : result.agent?.outputs.repairs ?? [];
       const checkErrors = result.summary.checkErrors ?? 0;
@@ -659,6 +685,7 @@ function App(): React.ReactNode {
             ? "HTMLslide Agent"
             : "Mock agent";
       const generationOk = result.providerId === "external-generic" ? result.adapter?.ok === true : result.agent?.ok === true;
+      const cancelled = terminalStatus === "cancelled";
 
       if (result.project) {
         const generatedPreview = result.project;
@@ -693,8 +720,10 @@ function App(): React.ReactNode {
       );
       setRunning(false);
       setOperationStatus({
-        kind: result.ok ? "success" : "failed",
-        message: result.ok
+        kind: result.ok && !cancelled ? "success" : "failed",
+        message: cancelled
+          ? `${agentLabel} cancelled`
+          : result.ok
           ? `${agentLabel} completed check and export`
           : result.check?.ok === false
             ? `${agentLabel} completed, but check found issues`
@@ -703,8 +732,10 @@ function App(): React.ReactNode {
               : `${agentLabel} run failed`
       });
       updateCommandActionStatus("generate", {
-        kind: generationOk ? "success" : "failed",
-        message: generationOk
+        kind: generationOk && !cancelled ? "success" : "failed",
+        message: cancelled
+          ? "Generation cancelled"
+          : generationOk
           ? result.providerId === "external-generic"
             ? "External agent complete"
             : result.providerId === "htmlslide-byok"
@@ -737,36 +768,109 @@ function App(): React.ReactNode {
           : "Export skipped"
       });
       updateCommandActionStatus("review", {
-        kind: result.ok ? "success" : "failed",
-        message: result.ok ? "Ready for review" : "Review required"
+        kind: result.ok && !cancelled ? "success" : "failed",
+        message: cancelled ? "Run cancelled" : result.ok ? "Ready for review" : "Review required"
       });
     },
     [updateCommandActionStatus]
   );
 
+  const applyAgentRunSnapshot = useCallback(
+    (snapshot: DesktopAgentRunSnapshot, options: { replaceRun?: boolean } = {}): void => {
+      const current = agentRunSnapshotRef.current;
+      const sameRun = current?.runId === snapshot.runId;
+      if (!current && !options.replaceRun) {
+        return;
+      }
+      if (current && !sameRun && !options.replaceRun) {
+        return;
+      }
+      if (sameRun && !activeAgentRunStatuses.has(current.status) && activeAgentRunStatuses.has(snapshot.status)) {
+        return;
+      }
+      if (sameRun && snapshot.sequence <= current.sequence) {
+        return;
+      }
+
+      agentRunSnapshotRef.current = snapshot;
+      setAgentRunSnapshot(snapshot);
+      setAgentRunEvents(snapshot.events);
+      setAgentRunLogs(snapshot.logs);
+
+      const isActive = activeAgentRunStatuses.has(snapshot.status);
+      setRunning(isActive);
+      const agentLabel = agentEngineLabel(snapshot.engine);
+
+      if (isActive) {
+        const cancelling = snapshot.status === "cancelling";
+        setOperationStatus({
+          kind: "running",
+          message: cancelling ? `Cancelling ${agentLabel}` : `Running ${agentLabel}`
+        });
+        updateCommandActionStatus("generate", {
+          kind: "running",
+          message: cancelling ? "Cancelling generation" : `${agentLabel} running`
+        });
+        return;
+      }
+
+      if (snapshot.result && !appliedTerminalResultRunIdsRef.current.has(snapshot.runId)) {
+        appliedTerminalResultRunIdsRef.current.add(snapshot.runId);
+        applyAgentRunResult(
+          snapshot.result,
+          snapshot.status as Extract<DesktopAgentRunStatus, "succeeded" | "failed" | "cancelled">
+        );
+        return;
+      }
+
+      if (handledTerminalSnapshotRunIdsRef.current.has(snapshot.runId)) {
+        return;
+      }
+      handledTerminalSnapshotRunIdsRef.current.add(snapshot.runId);
+
+      if (snapshot.status === "cancelled") {
+        setOperationStatus({ kind: "failed", message: `${agentLabel} cancelled` });
+        updateCommandActionStatus("generate", { kind: "failed", message: "Generation cancelled" });
+        return;
+      }
+
+      if (snapshot.status === "failed") {
+        const message = snapshot.error ?? `${agentLabel} run failed`;
+        setOperationStatus({ kind: "failed", message });
+        updateCommandActionStatus("generate", { kind: "failed", message });
+        return;
+      }
+
+      setOperationStatus({ kind: "success", message: `${agentLabel} completed` });
+      updateCommandActionStatus("generate", { kind: "success", message: `${agentLabel} complete` });
+    },
+    [applyAgentRunResult, updateCommandActionStatus]
+  );
+
+  const agentRunUpdateHandlerRef = useRef(applyAgentRunSnapshot);
+  agentRunUpdateHandlerRef.current = applyAgentRunSnapshot;
+
+  useEffect(() => {
+    if (!desktopApi) {
+      return;
+    }
+    return desktopApi.onAgentRunUpdate((snapshot) => agentRunUpdateHandlerRef.current(snapshot));
+  }, [desktopApi]);
+
   const startAgentGeneration = useCallback(
-    (brief: string, options: { action?: "generate" | "retry"; engine?: DesktopGenerationEngine; forceMock?: boolean; projectPath?: string } = {}): void => {
+    (brief: string, options: { engine?: DesktopAgentEngine; forceMock?: boolean; projectPath?: string } = {}): void => {
+      const currentSnapshot = agentRunSnapshotRef.current;
+      if (agentStartPendingRef.current || (currentSnapshot && activeAgentRunStatuses.has(currentSnapshot.status))) {
+        return;
+      }
       const trimmedBrief = brief.trim();
       const prompt = trimmedBrief.length > 0 ? trimmedBrief : "Create or revise this HTMLslide deck.";
-      const action = options.action ?? "generate";
-      const selectedEngine: DesktopGenerationEngine = options.forceMock
+      const selectedEngine: DesktopAgentEngine = options.forceMock
         ? "mock-agent"
-        : options.engine ?? (aiEngineSettings.mode === "no-ai" ? "mock-agent" : aiEngineSettings.mode);
-      const useByokAgent = selectedEngine === "htmlslide-agent";
-      const useExternalAgent = selectedEngine === "external-agent";
-      const agentLabel = useExternalAgent ? "External agent" : useByokAgent ? "HTMLslide Agent" : "Mock generation";
-      const generateMessage = useExternalAgent
-        ? action === "retry"
-          ? "Retrying external agent"
-          : "External agent running"
-        : useByokAgent
-          ? action === "retry"
-            ? "Retrying HTMLslide Agent"
-            : "HTMLslide Agent running"
-        : action === "retry"
-          ? "Retrying mock generation"
-          : "Mock generation running";
+        : options.engine ?? selectedAgentEngine(aiEngineSettings);
+      const agentLabel = agentEngineLabel(selectedEngine);
 
+      agentStartPendingRef.current = true;
       setRunning(true);
       setActiveStageIndex(0);
       setInspectorTab("qa");
@@ -777,7 +881,7 @@ function App(): React.ReactNode {
         ...defaultCommandActionStatuses(),
         generate: {
           kind: "running",
-          message: generateMessage
+          message: `${agentLabel} running`
         },
         review: {
           kind: "idle",
@@ -796,39 +900,109 @@ function App(): React.ReactNode {
           setOperationStatus({ kind: "failed", message: "Open a local deck project before Generate" });
           setRunning(false);
         }
+        agentStartPendingRef.current = false;
         return;
       }
 
       setOperationStatus({ kind: "running", message: `Running ${agentLabel}` });
-      const run = useExternalAgent
-        ? desktopApi.runExternalAgent({
-            brief: prompt,
-            projectPath: options.projectPath,
-            runExport: true
-          })
-        : useByokAgent
-          ? desktopApi.runByokAgent({
-              brief: prompt,
-              projectPath: options.projectPath,
-              runExport: true
-            })
-        : desktopApi.runMockAgent({
-            brief: prompt,
-            projectPath: options.projectPath,
-            runExport: true
-          });
-
-      run
-        .then(applyAgentRunResult)
+      desktopApi.startAgentRun({
+        brief: prompt,
+        engine: selectedEngine,
+        projectPath: options.projectPath,
+        runExport: true
+      })
+        .then(async (snapshot) => {
+          applyAgentRunSnapshot(snapshot, { replaceRun: true });
+          const latest = await desktopApi.getAgentRun(snapshot.runId);
+          if (latest) {
+            applyAgentRunSnapshot(latest);
+          }
+        })
         .catch((error: unknown) => {
           const message = error instanceof Error ? error.message : String(error);
           setRunning(false);
           setOperationStatus({ kind: "failed", message });
           updateCommandActionStatus("generate", { kind: "failed", message });
+        })
+        .finally(() => {
+          agentStartPendingRef.current = false;
         });
     },
-    [aiEngineSettings.mode, applyAgentRunResult, desktopApi, seedMockAgentRun, updateCommandActionStatus]
+    [aiEngineSettings, applyAgentRunSnapshot, desktopApi, seedMockAgentRun, updateCommandActionStatus]
   );
+
+  const cancelAgentGeneration = useCallback((): void => {
+    const snapshot = agentRunSnapshotRef.current;
+    if (!desktopApi || !snapshot?.canCancel || agentCancelPendingRunId === snapshot.runId) {
+      return;
+    }
+
+    const { runId } = snapshot;
+    setAgentCancelPendingRunId(runId);
+    setOperationStatus({ kind: "running", message: `Cancelling ${agentEngineLabel(snapshot.engine)}` });
+    updateCommandActionStatus("generate", { kind: "running", message: "Cancelling generation" });
+
+    const beforeCancel = (window as AgentCancelE2EWindow).__HTMLSLIDE_E2E_BEFORE_AGENT_CANCEL__;
+    Promise.resolve(beforeCancel?.(runId))
+      .then(() => desktopApi.cancelAgentRun(runId))
+      .then((nextSnapshot) => applyAgentRunSnapshot(nextSnapshot))
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        setOperationStatus({ kind: "failed", message });
+        updateCommandActionStatus("generate", { kind: "failed", message });
+        void desktopApi.getAgentRun(runId)
+          .then((latest) => {
+            if (latest) {
+              applyAgentRunSnapshot(latest);
+            }
+          })
+          .catch(() => undefined);
+      })
+      .finally(() => {
+        setAgentCancelPendingRunId((current) => current === runId ? undefined : current);
+      });
+  }, [agentCancelPendingRunId, applyAgentRunSnapshot, desktopApi, updateCommandActionStatus]);
+
+  const retryAgentGeneration = useCallback((): void => {
+    const snapshot = agentRunSnapshotRef.current;
+    if (
+      !desktopApi ||
+      !snapshot?.canRetry ||
+      (snapshot.status !== "failed" && snapshot.status !== "cancelled") ||
+      agentStartPendingRef.current
+    ) {
+      return;
+    }
+
+    agentStartPendingRef.current = true;
+    setRunning(true);
+    setAgentCancelPendingRunId(undefined);
+    setDiffReview(undefined);
+    setOperationStatus({ kind: "running", message: `Retrying ${agentEngineLabel(snapshot.engine)}` });
+    setCommandActionStatuses({
+      ...defaultCommandActionStatuses(),
+      generate: { kind: "running", message: `Retrying ${agentEngineLabel(snapshot.engine)}` },
+      review: { kind: "idle", message: "Waiting for retried result" }
+    });
+
+    desktopApi.retryAgentRun(snapshot.runId)
+      .then(async (nextSnapshot) => {
+        applyAgentRunSnapshot(nextSnapshot, { replaceRun: true });
+        const latest = await desktopApi.getAgentRun(nextSnapshot.runId);
+        if (latest) {
+          applyAgentRunSnapshot(latest);
+        }
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        setRunning(false);
+        setOperationStatus({ kind: "failed", message });
+        updateCommandActionStatus("generate", { kind: "failed", message });
+      })
+      .finally(() => {
+        agentStartPendingRef.current = false;
+      });
+  }, [applyAgentRunSnapshot, desktopApi, updateCommandActionStatus]);
 
   const activeProject = useMemo(() => {
     const selectedPreview = projectPreviews[selectedProjectId];
@@ -839,6 +1013,23 @@ function App(): React.ReactNode {
   const activeProjectIsDeckPackage = Boolean(
     directPresenterOpen && activeProject?.path === directPresenterOpen.deckpkgPath
   );
+
+  useEffect(() => {
+    if (!desktopApi || !activeProject || activeProject.path.startsWith("~") || activeProjectIsDeckPackage) {
+      return;
+    }
+    let disposed = false;
+    void desktopApi.getActiveAgentRun(activeProject.path)
+      .then((snapshot) => {
+        if (!disposed && snapshot) {
+          applyAgentRunSnapshot(snapshot, { replaceRun: true });
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+    };
+  }, [activeProject, activeProjectIsDeckPackage, applyAgentRunSnapshot, desktopApi]);
 
   const handleOpenProject = useCallback(
     (projectId: string): void => {
@@ -1414,9 +1605,8 @@ function App(): React.ReactNode {
   }, [activeProject, activeProjectIsDeckPackage, desktopApi, diffReview, updateCommandActionStatus]);
 
   const runAgentGeneration = useCallback(
-    (brief: string, action: "generate" | "retry" = "generate"): void => {
+    (brief: string): void => {
       startAgentGeneration(brief, {
-        action,
         projectPath: activeProject && !activeProject.path.startsWith("~") && !activeProjectIsDeckPackage
           ? activeProject.path
           : undefined
@@ -1486,6 +1676,13 @@ function App(): React.ReactNode {
   return (
     <Workspace
       activeStageIndex={activeStageIndex}
+      agentCanCancel={Boolean(agentRunSnapshot?.canCancel && !agentCancelPendingRunId)}
+      agentCanPause={agentRunSnapshot?.canPause ?? false}
+      agentCanRetry={Boolean(agentRunSnapshot?.canRetry && !running)}
+      agentCancelPending={agentCancelPendingRunId === agentRunSnapshot?.runId || agentRunSnapshot?.status === "cancelling"}
+      agentEngine={agentRunSnapshot?.engine ?? selectedAgentEngine(aiEngineSettings)}
+      agentRunId={agentRunSnapshot?.runId}
+      agentRunStatus={agentRunSnapshot?.status}
       commandValue={commandValue}
       diffReview={diffReview}
       inspectorTab={inspectorTab}
@@ -1510,15 +1707,14 @@ function App(): React.ReactNode {
       onQaFilterChange={setQaFilter}
       onRevertDiff={handleRevertDiff}
       onRunAction={(action) => {
-        if (action === "start" || action === "retry") {
-          runAgentGeneration(commandValue.trim(), action === "retry" ? "retry" : "generate");
+        if (action === "start") {
+          runAgentGeneration(commandValue.trim());
         }
-        if (action === "pause" || action === "cancel") {
-          setRunning(false);
-          updateCommandActionStatus("generate", {
-            kind: action === "cancel" ? "failed" : "idle",
-            message: action === "cancel" ? "Generation cancelled" : "Generation paused"
-          });
+        if (action === "cancel") {
+          cancelAgentGeneration();
+        }
+        if (action === "retry") {
+          retryAgentGeneration();
         }
       }}
       onSelectSlide={setSelectedSlideId}

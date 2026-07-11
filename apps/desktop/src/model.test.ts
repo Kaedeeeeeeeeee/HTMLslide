@@ -144,6 +144,30 @@ describe("desktop model helpers", () => {
     });
   });
 
+  it("keeps failed and cancelled agent stages distinct", () => {
+    const runtimeStages = buildAgentRunStages([
+      {
+        createdAt: "2026-07-11T00:00:00.000Z",
+        runId: "run-failed",
+        sequence: 1,
+        stage: "build",
+        status: "failed",
+        summary: "Build failed."
+      },
+      {
+        createdAt: "2026-07-11T00:01:00.000Z",
+        runId: "run-cancelled",
+        sequence: 2,
+        stage: "check",
+        status: "cancelled",
+        summary: "Check cancelled."
+      }
+    ], []);
+
+    expect(runtimeStages.find((stage) => stage.id === "build")?.status).toBe("failed");
+    expect(runtimeStages.find((stage) => stage.id === "check")?.status).toBe("cancelled");
+  });
+
   it("creates explicit default command action statuses", () => {
     expect(defaultCommandActionStatuses()).toMatchObject({
       check: { kind: "idle", message: "Not checked" },

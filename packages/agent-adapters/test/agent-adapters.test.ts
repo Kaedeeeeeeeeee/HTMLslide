@@ -5,12 +5,15 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  COMMAND_CAPTURE_LIMIT_CHARS,
+  COMMAND_CAPTURE_TRUNCATION_MARKER,
   createCapabilitySet,
   detectClaudeCli,
   detectCodexCli,
   detectGeminiCli,
   readJsonFileWriteManifest,
   renderCommandTemplate,
+  runCommand,
   runGenericAgentAdapter,
   validateReportedFileWrites,
   type CommandRunner,
@@ -324,6 +327,173 @@ setTimeout(() => process.exit(0), 45);
     expect(result.stderr).toBe("stream:progress\n");
   });
 
+  it("bounds captured output while continuing to drain and stream a noisy real child", async () => {
+    const project = await createFakeProject("bounded-output");
+    const overflowLength = COMMAND_CAPTURE_LIMIT_CHARS + 16_384;
+    const stdoutTail = "stdout:after-limit\n";
+    const stderrTail = "stderr:after-limit\n";
+    const scriptFile = await writeFakeAgentScript(
+      project.projectRoot,
+      "bounded-output",
+      `
+const overflowLength = ${overflowLength};
+process.stdout.write("o".repeat(overflowLength));
+process.stdout.write(${JSON.stringify(stdoutTail)});
+process.stderr.write("e".repeat(overflowLength));
+process.stderr.write(${JSON.stringify(stderrTail)});
+`
+    );
+    const streamedLengths = { stdout: 0, stderr: 0 };
+    const streamedTails = { stdout: "", stderr: "" };
+
+    const result = await runCommand({
+      command: process.execPath,
+      args: [scriptFile],
+      cwd: project.projectRoot,
+      onOutput: (chunk) => {
+        streamedLengths[chunk.stream] += chunk.text.length;
+        const tailLength = chunk.stream === "stdout" ? stdoutTail.length : stderrTail.length;
+        streamedTails[chunk.stream] = (streamedTails[chunk.stream] + chunk.text).slice(-tailLength);
+      }
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("o".repeat(COMMAND_CAPTURE_LIMIT_CHARS) + COMMAND_CAPTURE_TRUNCATION_MARKER);
+    expect(result.stderr).toBe("e".repeat(COMMAND_CAPTURE_LIMIT_CHARS) + COMMAND_CAPTURE_TRUNCATION_MARKER);
+    expect(result.stdout.length).toBe(COMMAND_CAPTURE_LIMIT_CHARS + COMMAND_CAPTURE_TRUNCATION_MARKER.length);
+    expect(result.stderr.length).toBe(COMMAND_CAPTURE_LIMIT_CHARS + COMMAND_CAPTURE_TRUNCATION_MARKER.length);
+    expect(result.stdout.match(/output truncated/gu)).toHaveLength(1);
+    expect(result.stderr.match(/output truncated/gu)).toHaveLength(1);
+    expect(streamedLengths).toEqual({
+      stdout: overflowLength + stdoutTail.length,
+      stderr: overflowLength + stderrTail.length
+    });
+    expect(streamedTails).toEqual({ stdout: stdoutTail, stderr: stderrTail });
+  }, 10_000);
+
+  it("bounds pipe draining after a parent exits while a descendant holds inherited pipes", async () => {
+    const project = await createFakeProject("post-exit-pipe-drain");
+    const descendantPidFile = path.join(project.projectRoot, ".htmlslide", "descendant.pid");
+    const descendantSource = `
+process.on("SIGTERM", () => undefined);
+setTimeout(() => process.stdout.write("descendant:drained\\n"), 50);
+process.send?.("ready");
+setInterval(() => undefined, 1_000);
+`;
+    const scriptFile = await writeFakeAgentScript(
+      project.projectRoot,
+      "post-exit-pipe-drain",
+      `
+import fs from "node:fs";
+import { spawn } from "node:child_process";
+const descendant = spawn(process.execPath, ["-e", ${JSON.stringify(descendantSource)}], {
+  stdio: ["ignore", "inherit", "inherit", "ipc"]
+});
+descendant.once("message", () => {
+  fs.writeFileSync(${JSON.stringify(descendantPidFile)}, String(descendant.pid));
+  fs.writeSync(1, "parent:exiting\\n");
+  process.exit(17);
+});
+`
+    );
+    let deadline: NodeJS.Timeout | undefined;
+
+    try {
+      const startedAt = Date.now();
+      const result = await Promise.race([
+        runCommand({
+          command: process.execPath,
+          args: [scriptFile],
+          cwd: project.projectRoot
+        }),
+        new Promise<never>((_resolve, reject) => {
+          deadline = setTimeout(() => reject(new Error("runCommand did not finish after its direct child exited.")), 2_000);
+        })
+      ]);
+
+      expect(Date.now() - startedAt).toBeLessThan(2_000);
+      expect(result.exitCode).toBe(17);
+      expect(result.signal).toBeUndefined();
+      expect(result.stdout).toContain("parent:exiting\n");
+      expect(result.stdout).toContain("descendant:drained\n");
+    } finally {
+      if (deadline !== undefined) {
+        clearTimeout(deadline);
+      }
+      const descendantPid = Number(await fs.readFile(descendantPidFile, "utf8"));
+      await killProcess(descendantPid);
+    }
+  }, 10_000);
+
+  it.skipIf(process.platform === "win32")(
+    "terminates the full process group before a cancelled descendant can write",
+    async () => {
+      const project = await createFakeProject("cancel-process-group");
+      const descendantPidFile = path.join(project.projectRoot, ".htmlslide", "cancel-descendant.pid");
+      const lateMarkerFile = path.join(project.projectRoot, ".htmlslide", "late-descendant-write.txt");
+      const descendantSource = `
+import fs from "node:fs";
+process.on("SIGTERM", () => undefined);
+setTimeout(() => fs.writeFileSync(${JSON.stringify(lateMarkerFile)}, "descendant survived"), 1_400);
+process.send?.("ready");
+setInterval(() => undefined, 1_000);
+`;
+      const scriptFile = await writeFakeAgentScript(
+        project.projectRoot,
+        "cancel-process-group",
+        `
+import fs from "node:fs";
+import { spawn } from "node:child_process";
+process.on("SIGTERM", () => undefined);
+const descendant = spawn(process.execPath, ["--input-type=module", "-e", ${JSON.stringify(descendantSource)}], {
+  stdio: ["ignore", "inherit", "inherit", "ipc"]
+});
+descendant.once("message", () => {
+  fs.writeFileSync(${JSON.stringify(descendantPidFile)}, String(descendant.pid));
+  process.stdout.write("tree:ready\\n");
+});
+setInterval(() => undefined, 1_000);
+`
+      );
+      const controller = new AbortController();
+      let descendantPid: number | undefined;
+      let ready: (() => void) | undefined;
+      const childReady = new Promise<void>((resolve) => {
+        ready = resolve;
+      });
+
+      try {
+        const run = runCommand({
+          command: process.execPath,
+          args: [scriptFile],
+          cwd: project.projectRoot,
+          signal: controller.signal,
+          onOutput: (chunk) => {
+            if (chunk.stream === "stdout" && chunk.text.includes("tree:ready")) {
+              ready?.();
+            }
+          }
+        });
+
+        await childReady;
+        controller.abort();
+        const result = await run;
+        descendantPid = Number(await fs.readFile(descendantPidFile, "utf8"));
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        expect(result.cancelled).toBe(true);
+        expect(result.signal).toBe("SIGKILL");
+        await expect(fs.access(lateMarkerFile)).rejects.toThrow();
+        expect(isProcessAlive(descendantPid)).toBe(false);
+      } finally {
+        if (descendantPid !== undefined) {
+          await killProcess(descendantPid);
+        }
+      }
+    },
+    10_000
+  );
+
   it("cancels long-running fake commands", async () => {
     const project = await createFakeProject("cancel");
     const scriptFile = await writeFakeAgentScript(
@@ -355,6 +525,48 @@ setInterval(() => undefined, 1000);
     expect(result.status).toBe("cancelled");
     expect(result.failure.type).toBe("cancelled");
   });
+
+  it("escalates cancellation to SIGKILL when a real child traps SIGTERM", async () => {
+    const project = await createFakeProject("cancel-sigterm-trap");
+    const scriptFile = await writeFakeAgentScript(
+      project.projectRoot,
+      "cancel-sigterm-trap",
+      `
+process.on("SIGTERM", () => {
+  process.stdout.write("sigterm trapped\\n");
+  setTimeout(() => process.exit(23), 2_500);
+});
+setInterval(() => undefined, 1_000);
+process.stdout.write("ready\\n");
+`
+    );
+    const controller = new AbortController();
+    let markReady: (() => void) | undefined;
+    const ready = new Promise<void>((resolve) => {
+      markReady = resolve;
+    });
+    const run = runCommand({
+      command: process.execPath,
+      args: [scriptFile],
+      cwd: project.projectRoot,
+      signal: controller.signal,
+      onOutput: (chunk) => {
+        if (chunk.stream === "stdout" && chunk.text.includes("ready")) {
+          markReady?.();
+        }
+      }
+    });
+
+    await ready;
+    const abortedAt = Date.now();
+    controller.abort();
+    const result = await run;
+
+    expect(Date.now() - abortedAt).toBeGreaterThanOrEqual(900);
+    expect(result.cancelled).toBe(true);
+    expect(result.signal).toBe("SIGKILL");
+    expect(result.stdout).toContain("sigterm trapped");
+  }, 10_000);
 
   it("detects forbidden writes reported by a fake command", async () => {
     const project = await createFakeProject("forbidden");
@@ -583,4 +795,45 @@ function createFakeAdapter(commandTemplate: string): GenericAgentAdapterConfig {
 
 function nodeCommandTemplate(): string {
   return `"${process.execPath}" "{{scriptFile}}" --project "{{projectPath}}" --prompt-file "{{promptFile}}" --writes-manifest "{{writeManifest}}"`;
+}
+
+async function killProcess(pid: number): Promise<void> {
+  if (!Number.isSafeInteger(pid) || pid <= 0 || pid === process.pid) {
+    throw new Error(`Refusing to kill invalid descendant pid: ${String(pid)}`);
+  }
+
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+      return;
+    }
+    throw error;
+  }
+
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+        return;
+      }
+      throw error;
+    }
+  }
+
+  throw new Error(`Descendant process ${pid} did not exit after SIGKILL.`);
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+      return false;
+    }
+    throw error;
+  }
 }

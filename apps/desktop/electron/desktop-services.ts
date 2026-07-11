@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { constants as fsConstants, existsSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import os from "node:os";
@@ -6,6 +5,7 @@ import path from "node:path";
 import {
   createCapabilitySet,
   readJsonFileWriteManifest,
+  runCommand,
   runGenericAgentAdapter,
   type AgentAdapterRunResult,
   type CommandRunner,
@@ -23,8 +23,8 @@ import {
   normalizeAgentSourceWrites,
   recordCheckpointChanges,
   revertFileCopyCheckpoint,
-  runAgent,
   sanitizeProviderText,
+  startAgentRun,
   type AgentSourceWrite,
   type AgentRunEvent,
   type AgentRunLog,
@@ -35,6 +35,8 @@ import {
   type FileCopyCheckpointDiff,
   type FileCopyCheckpointRevertResult,
   type FetchLike,
+  type JsonObject,
+  type JsonValue,
   type ModelProvider
 } from "@htmlslide/agent";
 import { buildSlidePreviewDocument } from "@htmlslide/compiler";
@@ -140,6 +142,7 @@ export type CliRunnerOptions = {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
+  signal?: AbortSignal;
 };
 
 export type DesktopCliRunner = (args: string[], options: CliRunnerOptions) => Promise<CliRunResult>;
@@ -508,6 +511,9 @@ export type DesktopPresenterDeckResult =
 export type DesktopMockAgentRunnerOptions = {
   cliRuntime?: CliRuntime;
   cliRunner?: DesktopCliRunner;
+  signal?: AbortSignal;
+  onEvent?: (event: AgentRunEvent) => void | Promise<void>;
+  onLog?: (log: AgentRunLog) => void | Promise<void>;
 };
 
 export type DesktopByokAgentProviderFactory = (input: {
@@ -518,7 +524,9 @@ export type DesktopByokAgentProviderFactory = (input: {
 }) => ModelProvider;
 
 export type DesktopByokAgentRunnerOptions = DesktopMockAgentRunnerOptions & {
+  credentialAccessTimeoutMs?: number;
   credentialStore?: DesktopCredentialStore;
+  credentialValidationTimeoutMs?: number;
   providerFetch?: FetchLike;
   providerFactory?: DesktopByokAgentProviderFactory;
   settings?: DesktopAiEngineSettings;
@@ -532,6 +540,9 @@ export type DesktopExternalAgentRunnerOptions = {
   settingsPath?: string;
   agentRunner?: CommandRunner;
   timeoutMs?: number;
+  signal?: AbortSignal;
+  onEvent?: (event: AgentRunEvent) => void | Promise<void>;
+  onLog?: (log: AgentRunLog) => void | Promise<void>;
 };
 
 export type DesktopAiEngineMode = "no-ai" | "htmlslide-agent" | "external-agent";
@@ -575,7 +586,11 @@ export type DesktopCredentialStatus = {
 export type DesktopCredentialStore = {
   available: boolean;
   label: string;
-  getPassword(service: string, account: string): Promise<string | undefined>;
+  getPassword(
+    service: string,
+    account: string,
+    options?: { signal?: AbortSignal; timeoutMs?: number }
+  ): Promise<string | undefined>;
   setPassword(service: string, account: string, password: string): Promise<void>;
   deletePassword(service: string, account: string): Promise<void>;
 };
@@ -1276,70 +1291,56 @@ export async function runHtmlslideCli(args: string[], options: CliRunnerOptions)
     };
   }
 
-  return new Promise<CliRunResult>((resolve) => {
-    const child = spawn(command, commandArgs, {
-      cwd: options.cwd ?? options.rootPath ?? path.dirname(cliPath),
-      env: {
-        ...process.env,
-        ELECTRON_RUN_AS_NODE: "1",
-        ...options.env
-      },
-      stdio: ["ignore", "pipe", "pipe"]
-    });
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      child.kill("SIGTERM");
-      resolve({
-        ok: false,
-        exitCode: 6,
-        stdout,
-        stderr,
-        error: `htmlslide ${args.join(" ")} timed out after ${timeoutMs}ms.`
-      });
-    }, timeoutMs);
+  if (options.signal?.aborted) {
+    return cancelledDesktopCliResult(args, "", "", options.signal);
+  }
 
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString("utf8");
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString("utf8");
-    });
-    child.once("error", (error) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      resolve({
-        ok: false,
-        exitCode: 1,
-        stdout,
-        stderr,
-        error: error.message
-      });
-    });
-    child.once("exit", (code) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      const exitCode = code ?? 1;
-      resolve({
-        ok: exitCode === 0,
-        exitCode,
-        stdout,
-        stderr,
-        json: parseJsonOutput(stdout)
-      });
-    });
+  const result = await runCommand({
+    command,
+    args: commandArgs,
+    cwd: options.cwd ?? options.rootPath ?? path.dirname(cliPath),
+    env: {
+      ELECTRON_RUN_AS_NODE: "1",
+      ...options.env
+    },
+    signal: options.signal,
+    timeoutMs
   });
+
+  if (result.cancelled) {
+    return cancelledDesktopCliResult(args, result.stdout, result.stderr, options.signal);
+  }
+  if (result.timedOut) {
+    return {
+      ok: false,
+      exitCode: 6,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      error: `htmlslide ${args.join(" ")} timed out after ${timeoutMs}ms.`
+    };
+  }
+  return {
+    ok: result.exitCode === 0,
+    exitCode: result.exitCode,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    json: parseJsonOutput(result.stdout)
+  };
+}
+
+function cancelledDesktopCliResult(
+  args: string[],
+  stdout: string,
+  stderr: string,
+  signal?: AbortSignal
+): CliRunResult {
+  return {
+    ok: false,
+    exitCode: 6,
+    stdout,
+    stderr,
+    error: `htmlslide ${args.join(" ")} cancelled: ${desktopAgentCancellationReason(signal)}`
+  };
 }
 
 function officialSkillsBaseState(options: DesktopOfficialSkillsOptions = {}): DesktopOfficialSkillsState {
@@ -1625,10 +1626,13 @@ export async function runDesktopMockAgent(
 ): Promise<DesktopMockAgentRunResult> {
   const projectPath = path.resolve(request.projectPath);
   const brief = request.brief.trim();
+  const events: AgentRunEvent[] = [];
   const logs: AgentRunLog[] = [];
   const cliRunner = options.cliRunner ?? runHtmlslideCli;
-
-  let agent = await runAgent({
+  const observerRunId = request.runId ?? "desktop-mock-pending";
+  const observers = createDesktopAgentObserverDispatcher(options, observerRunId, events, logs);
+  const addLog = createDesktopAgentLogRecorder(logs, observerRunId, observers);
+  const controller = startAgentRun({
     brief: brief.length > 0 ? brief : "Create or revise this HTMLslide deck.",
     maxRepairRounds: request.maxRepairRounds,
     projectRoot: projectPath,
@@ -1638,9 +1642,17 @@ export async function runDesktopMockAgent(
       mode: "desktop-mock-agent"
     },
     createCheckpoint: createFileCopyCheckpoint
+  }, {
+    onEvent: observers.event,
+    onLog: observers.log
   });
-
-  logs.push(...agent.logs);
+  const detachAbortSignal = bridgeDesktopAgentAbortSignal(options.signal, (reason) => controller.cancel(reason));
+  let agent: AgentRunResult;
+  try {
+    agent = await controller.done;
+  } finally {
+    detachAbortSignal();
+  }
 
   let applied: ApplyMockAgentProjectResult | undefined;
   let checkpointDiff: FileCopyCheckpointDiff | undefined;
@@ -1648,11 +1660,28 @@ export async function runDesktopMockAgent(
   let exportResult: CliRunResult | undefined;
   let project: DesktopProjectPreview | undefined;
 
+  if (agent.ok && options.signal?.aborted) {
+    agent = cancelDesktopCoreAgentResult(agent, "build", observers, options.signal);
+  }
+
+  if (agent.ok) {
+    notifyDesktopAgentEvent(observers, agent.runId, "build", "running", "Applying mock agent source files.", "stage-started", {
+      nextAction: "Write generated deck source"
+    });
+    if (options.signal?.aborted) {
+      agent = cancelDesktopCoreAgentResult(agent, "build", observers, options.signal);
+    }
+  }
+
   if (agent.ok) {
     applied = await applyMockAgentProject({
       brief,
       projectPath,
       result: agent
+    });
+    notifyDesktopAgentEvent(observers, agent.runId, "build", "succeeded", "Applied mock agent source files.", "stage-completed", {
+      filesChanged: applied.filesChanged,
+      nextAction: "Record checkpoint changes"
     });
     const checkpoint = await recordCheckpointChanges({
       projectRoot: projectPath,
@@ -1667,29 +1696,62 @@ export async function runDesktopMockAgent(
       projectRoot: projectPath,
       runId: agent.runId
     });
-    logs.push({
-      createdAt: new Date().toISOString(),
-      level: "info",
-      message: `Applied mock source files: ${applied.filesChanged.join(", ")}`,
-      runId: agent.runId,
-      stage: "build",
-      metadata: {
-        filesChanged: applied.filesChanged
-      }
+    addLog("info", `Applied mock source files: ${applied.filesChanged.join(", ")}`, "build", {
+      filesChanged: applied.filesChanged
     });
-
-    check = await runDesktopAgentCliStep(["check", projectPath, "--json"], options.cliRuntime, cliRunner);
-    logs.push(desktopAgentCliLog(agent.runId, "check", check));
-
-    if (check.ok && request.runExport !== false) {
-      exportResult = await runDesktopAgentCliStep(["export", projectPath, "--json"], options.cliRuntime, cliRunner);
-      logs.push(desktopAgentCliLog(agent.runId, "export", exportResult));
-    }
-
-    project = await loadProjectPreview(projectPath);
   }
 
-  const stages = summarizeAgentStages(agent.events);
+  if (agent.ok && options.signal?.aborted) {
+    agent = cancelDesktopCoreAgentResult(agent, "check", observers, options.signal);
+  }
+
+  if (agent.ok) {
+    notifyDesktopAgentEvent(observers, agent.runId, "check", "running", "Running htmlslide check after applying mock source files.", "stage-started", {
+      nextAction: "Validate source files"
+    });
+    check = await runDesktopAgentCliStep(["check", projectPath, "--json"], options.cliRuntime, cliRunner, options.signal);
+    const cliLog = desktopAgentCliLog(agent.runId, "check", check);
+    addLog(cliLog.level, cliLog.message, cliLog.stage, cliLog.metadata);
+    if (options.signal?.aborted) {
+      agent = cancelDesktopCoreAgentResult(agent, "check", observers, options.signal);
+    } else {
+      notifyDesktopAgentEvent(observers, agent.runId, "check", check.ok ? "succeeded" : "failed", check.ok ? "Check passed after applying mock source files." : "Check found issues after applying mock source files.", check.ok ? "stage-completed" : "stage-failed", {
+        issuesFound: checkIssueCount(check),
+        nextAction: check.ok ? "Export artifacts" : "Review QA issues"
+      });
+    }
+  }
+
+  if (agent.ok && check?.ok && request.runExport !== false) {
+    if (options.signal?.aborted) {
+      agent = cancelDesktopCoreAgentResult(agent, "export", observers, options.signal);
+    } else {
+      notifyDesktopAgentEvent(observers, agent.runId, "export", "running", "Exporting checked mock agent project.", "stage-started", {
+        nextAction: "Write project artifacts"
+      });
+      exportResult = await runDesktopAgentCliStep(["export", projectPath, "--json"], options.cliRuntime, cliRunner, options.signal);
+      const cliLog = desktopAgentCliLog(agent.runId, "export", exportResult);
+      addLog(cliLog.level, cliLog.message, cliLog.stage, cliLog.metadata);
+      if (options.signal?.aborted) {
+        agent = cancelDesktopCoreAgentResult(agent, "export", observers, options.signal);
+      } else {
+        notifyDesktopAgentEvent(observers, agent.runId, "export", exportResult.ok ? "succeeded" : "failed", exportResult.ok ? "Export completed for mock agent project." : "Export failed for mock agent project.", exportResult.ok ? "stage-completed" : "stage-failed");
+      }
+    }
+  }
+
+  if (agent.ok && options.signal?.aborted) {
+    agent = cancelDesktopCoreAgentResult(agent, "review", observers, options.signal);
+  }
+  if (agent.ok) {
+    project = await loadProjectPreview(projectPath);
+    if (options.signal?.aborted) {
+      agent = cancelDesktopCoreAgentResult(agent, "review", observers, options.signal);
+      project = undefined;
+    }
+  }
+
+  const stages = summarizeAgentStages(events);
   const summary = summarizeDesktopMockAgentRun(agent, check, exportResult);
   const agentReportPath = await writeDesktopAgentRunReport({
     agent,
@@ -1707,7 +1769,7 @@ export async function runDesktopMockAgent(
     providerId: "htmlslide-mock",
     projectPath,
     stages,
-    events: agent.events,
+    events,
     logs,
     agent,
     applied,
@@ -1731,8 +1793,9 @@ export async function runDesktopByokAgent(
   const logs: AgentRunLog[] = [];
   const cliRunner = options.cliRunner ?? runHtmlslideCli;
   const credentialStore = options.credentialStore ?? createDesktopCredentialStore();
-  const addEvent = createDesktopAgentEventRecorder(events, runId);
-  const addLog = createDesktopAgentLogRecorder(logs, runId);
+  const observers = createDesktopAgentObserverDispatcher(options, runId, events, logs);
+  const addEvent = createDesktopAgentEventRecorder(events, runId, observers);
+  const addLog = createDesktopAgentLogRecorder(logs, runId, observers);
   const settings = sanitizeAiEngineSettings(options.settings ?? (options.settingsPath
     ? await readAiEngineSettings(options.settingsPath)
     : DEFAULT_AI_ENGINE_SETTINGS));
@@ -1746,6 +1809,20 @@ export async function runDesktopByokAgent(
     metadata: settingsMetadata,
     nextAction: "Validate provider credential"
   });
+
+  if (options.signal?.aborted) {
+    return byokAgentCancellationResult({
+      addEvent,
+      addLog,
+      events,
+      logs,
+      projectPath,
+      runId,
+      settings: settingsSummary,
+      signal: options.signal,
+      stage: "brief"
+    });
+  }
 
   if (!settings.apiKey.hasKey) {
     return byokAgentFailureResult({
@@ -1776,7 +1853,58 @@ export async function runDesktopByokAgent(
   }
 
   const credentialAccount = aiEngineCredentialAccount(provider);
-  const apiKey = await credentialStore.getPassword(AI_ENGINE_CREDENTIAL_SERVICE, credentialAccount);
+  let apiKey: string | undefined;
+  try {
+    const credentialAccessTimeoutMs = options.credentialAccessTimeoutMs ?? DESKTOP_AGENT_CREDENTIAL_ACCESS_TIMEOUT_MS;
+    const credentialAccess = await waitForDesktopAgentOperation(
+      credentialStore.getPassword(AI_ENGINE_CREDENTIAL_SERVICE, credentialAccount, {
+        signal: options.signal,
+        timeoutMs: credentialAccessTimeoutMs
+      }),
+      options.signal,
+      credentialAccessTimeoutMs,
+      `${credentialStore.label} credential retrieval`
+    );
+    if (credentialAccess.status === "cancelled") {
+      return byokAgentCancellationResult({
+        addEvent,
+        addLog,
+        events,
+        logs,
+        projectPath,
+        runId,
+        settings: settingsSummary,
+        signal: options.signal,
+        stage: "brief"
+      });
+    }
+    apiKey = credentialAccess.value;
+  } catch (error) {
+    if (options.signal?.aborted) {
+      return byokAgentCancellationResult({
+        addEvent,
+        addLog,
+        events,
+        logs,
+        projectPath,
+        runId,
+        settings: settingsSummary,
+        signal: options.signal,
+        stage: "brief"
+      });
+    }
+    return byokAgentFailureResult({
+      addEvent,
+      addLog,
+      error: error instanceof Error ? error.message : String(error),
+      events,
+      logs,
+      projectPath,
+      runId,
+      settings: settingsSummary,
+      stage: "brief"
+    });
+  }
   if (typeof apiKey !== "string" || apiKey.length === 0) {
     return byokAgentFailureResult({
       addEvent,
@@ -1807,7 +1935,25 @@ export async function runDesktopByokAgent(
           model,
           provider
         });
-    const credentialStatus = await modelProvider.validateCredentials();
+    const credentialValidation = await waitForDesktopAgentOperation(
+      modelProvider.validateCredentials(),
+      options.signal,
+      options.credentialValidationTimeoutMs
+    );
+    if (credentialValidation.status === "cancelled") {
+      return byokAgentCancellationResult({
+        addEvent,
+        addLog,
+        events,
+        logs,
+        projectPath,
+        runId,
+        settings: settingsSummary,
+        signal: options.signal,
+        stage: "brief"
+      });
+    }
+    const credentialStatus = credentialValidation.value;
     if (!credentialStatus.ok) {
       return byokAgentFailureResult({
         addEvent,
@@ -1822,6 +1968,19 @@ export async function runDesktopByokAgent(
       });
     }
   } catch (error) {
+    if (options.signal?.aborted) {
+      return byokAgentCancellationResult({
+        addEvent,
+        addLog,
+        events,
+        logs,
+        projectPath,
+        runId,
+        settings: settingsSummary,
+        signal: options.signal,
+        stage: "brief"
+      });
+    }
     return byokAgentFailureResult({
       addEvent,
       addLog,
@@ -1835,7 +1994,18 @@ export async function runDesktopByokAgent(
     });
   }
 
-  let agent = await runAgent({
+  addEvent("brief", "succeeded", `${credentialStore.label} credential validated for ${provider}.`, "stage-completed", {
+    metadata: settingsMetadata,
+    nextAction: "Start HTMLslide Agent"
+  });
+  addLog("info", `${credentialStore.label} credential validated for ${provider}.`, "brief", {
+    credentialAccount,
+    ...(baseUrl ? { baseUrl } : {}),
+    model,
+    provider
+  });
+
+  const controller = startAgentRun({
     brief: brief.length > 0 ? brief : "Create or revise this HTMLslide deck.",
     maxRepairRounds: request.maxRepairRounds,
     projectRoot: projectPath,
@@ -1849,22 +2019,17 @@ export async function runDesktopByokAgent(
       provider
     },
     createCheckpoint: createFileCopyCheckpoint
+  }, {
+    onEvent: observers.event,
+    onLog: observers.log
   });
-
-  logs.push({
-    createdAt: new Date().toISOString(),
-    level: "info",
-    message: `${credentialStore.label} credential validated for ${provider}.`,
-    metadata: {
-      credentialAccount,
-      ...(baseUrl ? { baseUrl } : {}),
-      model,
-      provider
-    },
-    runId,
-    stage: "brief"
-  });
-  logs.push(...agent.logs);
+  const detachAbortSignal = bridgeDesktopAgentAbortSignal(options.signal, (reason) => controller.cancel(reason));
+  let agent: AgentRunResult;
+  try {
+    agent = await controller.done;
+  } finally {
+    detachAbortSignal();
+  }
 
   let applied: DesktopByokAgentAppliedResult | undefined;
   let checkpointDiff: FileCopyCheckpointDiff | undefined;
@@ -1872,10 +2037,29 @@ export async function runDesktopByokAgent(
   let exportResult: CliRunResult | undefined;
   let project: DesktopProjectPreview | undefined;
 
+  if (agent.ok && options.signal?.aborted) {
+    agent = cancelDesktopCoreAgentResult(agent, "build", observers, options.signal);
+  }
+
+  if (agent.ok) {
+    notifyDesktopAgentEvent(observers, agent.runId, "build", "running", "Applying HTMLslide Agent source writes.", "stage-started", {
+      metadata: settingsMetadata,
+      nextAction: "Write provider-generated deck source"
+    });
+    if (options.signal?.aborted) {
+      agent = cancelDesktopCoreAgentResult(agent, "build", observers, options.signal);
+    }
+  }
+
   if (agent.ok) {
     applied = await applyByokAgentSourceWrites({
       projectPath,
       result: agent
+    });
+    notifyDesktopAgentEvent(observers, agent.runId, "build", "succeeded", "Applied HTMLslide Agent source writes.", "stage-completed", {
+      filesChanged: applied.filesChanged,
+      metadata: settingsMetadata,
+      nextAction: "Record checkpoint changes"
     });
     const checkpoint = await recordCheckpointChanges({
       projectRoot: projectPath,
@@ -1890,33 +2074,66 @@ export async function runDesktopByokAgent(
       projectRoot: projectPath,
       runId: agent.runId
     });
-    logs.push({
-      createdAt: new Date().toISOString(),
-      level: "info",
-      message: `Applied HTMLslide Agent source writes: ${applied.filesChanged.join(", ")}`,
-      runId: agent.runId,
-      stage: "build",
-      metadata: {
-        filesChanged: applied.filesChanged,
-        source: applied.source,
-        writeCount: applied.writeCount,
-        model,
-        provider
-      }
+    addLog("info", `Applied HTMLslide Agent source writes: ${applied.filesChanged.join(", ")}`, "build", {
+      filesChanged: applied.filesChanged,
+      source: applied.source,
+      writeCount: applied.writeCount,
+      model,
+      provider
     });
-
-    check = await runDesktopAgentCliStep(["check", projectPath, "--json"], options.cliRuntime, cliRunner);
-    logs.push(desktopAgentCliLog(agent.runId, "check", check));
-
-    if (check.ok && request.runExport !== false) {
-      exportResult = await runDesktopAgentCliStep(["export", projectPath, "--json"], options.cliRuntime, cliRunner);
-      logs.push(desktopAgentCliLog(agent.runId, "export", exportResult));
-    }
-
-    project = await loadProjectPreview(projectPath);
   }
 
-  const stages = summarizeAgentStages(agent.events);
+  if (agent.ok && options.signal?.aborted) {
+    agent = cancelDesktopCoreAgentResult(agent, "check", observers, options.signal);
+  }
+
+  if (agent.ok) {
+    notifyDesktopAgentEvent(observers, agent.runId, "check", "running", "Running htmlslide check after applying HTMLslide Agent source writes.", "stage-started", {
+      nextAction: "Validate source files"
+    });
+    check = await runDesktopAgentCliStep(["check", projectPath, "--json"], options.cliRuntime, cliRunner, options.signal);
+    const cliLog = desktopAgentCliLog(agent.runId, "check", check);
+    addLog(cliLog.level, cliLog.message, cliLog.stage, cliLog.metadata);
+    if (options.signal?.aborted) {
+      agent = cancelDesktopCoreAgentResult(agent, "check", observers, options.signal);
+    } else {
+      notifyDesktopAgentEvent(observers, agent.runId, "check", check.ok ? "succeeded" : "failed", check.ok ? "Check passed after applying HTMLslide Agent source writes." : "Check found issues after applying HTMLslide Agent source writes.", check.ok ? "stage-completed" : "stage-failed", {
+        issuesFound: checkIssueCount(check),
+        nextAction: check.ok ? "Export artifacts" : "Review QA issues"
+      });
+    }
+  }
+
+  if (agent.ok && check?.ok && request.runExport !== false) {
+    if (options.signal?.aborted) {
+      agent = cancelDesktopCoreAgentResult(agent, "export", observers, options.signal);
+    } else {
+      notifyDesktopAgentEvent(observers, agent.runId, "export", "running", "Exporting checked HTMLslide Agent project.", "stage-started", {
+        nextAction: "Write project artifacts"
+      });
+      exportResult = await runDesktopAgentCliStep(["export", projectPath, "--json"], options.cliRuntime, cliRunner, options.signal);
+      const cliLog = desktopAgentCliLog(agent.runId, "export", exportResult);
+      addLog(cliLog.level, cliLog.message, cliLog.stage, cliLog.metadata);
+      if (options.signal?.aborted) {
+        agent = cancelDesktopCoreAgentResult(agent, "export", observers, options.signal);
+      } else {
+        notifyDesktopAgentEvent(observers, agent.runId, "export", exportResult.ok ? "succeeded" : "failed", exportResult.ok ? "Export completed for HTMLslide Agent project." : "Export failed for HTMLslide Agent project.", exportResult.ok ? "stage-completed" : "stage-failed");
+      }
+    }
+  }
+
+  if (agent.ok && options.signal?.aborted) {
+    agent = cancelDesktopCoreAgentResult(agent, "review", observers, options.signal);
+  }
+  if (agent.ok) {
+    project = await loadProjectPreview(projectPath);
+    if (options.signal?.aborted) {
+      agent = cancelDesktopCoreAgentResult(agent, "review", observers, options.signal);
+      project = undefined;
+    }
+  }
+
+  const stages = summarizeAgentStages(events);
   const summary = summarizeDesktopByokAgentRun(agent, check, exportResult, settingsSummary);
   const agentReportPath = await writeDesktopAgentRunReport({
     agent,
@@ -1935,7 +2152,7 @@ export async function runDesktopByokAgent(
     projectPath,
     settings: settingsSummary,
     stages,
-    events: agent.events,
+    events,
     logs,
     agent,
     applied,
@@ -1958,16 +2175,43 @@ export async function runDesktopExternalAgent(
   const events: AgentRunEvent[] = [];
   const logs: AgentRunLog[] = [];
   const cliRunner = options.cliRunner ?? runHtmlslideCli;
-  const addEvent = createDesktopAgentEventRecorder(events, runId);
-  const addLog = createDesktopAgentLogRecorder(logs, runId);
+  const observers = createDesktopAgentObserverDispatcher(options, runId, events, logs);
+  const addEvent = createDesktopAgentEventRecorder(events, runId, observers);
+  const addLog = createDesktopAgentLogRecorder(logs, runId, observers);
 
   addEvent("brief", "running", "External agent request accepted.", "run-created", {
     nextAction: "Prepare prompt"
   });
 
+  if (options.signal?.aborted) {
+    return externalAgentCancellationResult({
+      addEvent,
+      addLog,
+      events,
+      logs,
+      projectPath,
+      runId,
+      signal: options.signal,
+      stage: "brief"
+    });
+  }
+
   const settings = options.settings ?? (options.settingsPath
     ? await readAiEngineSettings(options.settingsPath)
     : sanitizeAiEngineSettings(DEFAULT_AI_ENGINE_SETTINGS));
+
+  if (options.signal?.aborted) {
+    return externalAgentCancellationResult({
+      addEvent,
+      addLog,
+      events,
+      logs,
+      projectPath,
+      runId,
+      signal: options.signal,
+      stage: "brief"
+    });
+  }
 
   if (settings.mode !== "external-agent") {
     return externalAgentFailureResult({
@@ -2018,6 +2262,19 @@ export async function runDesktopExternalAgent(
     nextAction: "Run generic command"
   });
 
+  if (options.signal?.aborted) {
+    return externalAgentCancellationResult({
+      addEvent,
+      addLog,
+      events,
+      logs,
+      projectPath,
+      runId,
+      signal: options.signal,
+      stage: "build"
+    });
+  }
+
   const runDirectory = path.join(projectPath, ".htmlslide", "runs", runId);
   const promptFile = path.join(runDirectory, "prompt.md");
   const writeManifest = path.join(runDirectory, "writes.json");
@@ -2029,12 +2286,25 @@ export async function runDesktopExternalAgent(
   }), "utf8");
   await fs.writeFile(writeManifest, `${JSON.stringify({ writes: [] }, null, 2)}\n`, "utf8");
 
+  if (options.signal?.aborted) {
+    return externalAgentCancellationResult({
+      addEvent,
+      addLog,
+      events,
+      logs,
+      projectPath,
+      runId,
+      signal: options.signal,
+      stage: "build"
+    });
+  }
+
   const adapterConfig: GenericAgentAdapterConfig = {
     id: "generic-command",
     label: "Generic command",
     kind: "generic",
     commandTemplate,
-    capabilities: createCapabilitySet(["headlessRun", "streamLogs", "readDiff"]),
+    capabilities: createCapabilitySet(["headlessRun", "streamLogs", "cancelRun", "readDiff"]),
     pathVariables: ["projectRoot", "projectPath", "promptFile", "writeManifest"],
     timeoutMs: options.timeoutMs ?? 120_000
   };
@@ -2043,6 +2313,7 @@ export async function runDesktopExternalAgent(
     nextAction: "Wait for reported writes"
   });
 
+  const outputBuffer = createDesktopExternalAgentOutputBuffer(addLog);
   const adapter = sanitizeAgentAdapterRunResult(
     await runGenericAgentAdapter({
       adapter: adapterConfig,
@@ -2051,21 +2322,14 @@ export async function runDesktopExternalAgent(
       variables: {
         writeManifest
       },
-      onOutput: (chunk) => {
-        const message = chunk.text.trim();
-        if (message.length === 0) {
-          return;
-        }
-
-        addLog(chunk.stream === "stdout" ? "info" : "warning", message, "build", {
-          stream: chunk.stream
-        });
-      },
+      signal: options.signal,
+      onOutput: (chunk) => outputBuffer.push(chunk.stream, chunk.text),
       runner: options.agentRunner,
       timeoutMs: options.timeoutMs,
       readReportedFileWrites: () => readJsonFileWriteManifest(projectPath, writeManifest)
     })
   );
+  outputBuffer.flush();
 
   if (!adapter.ok) {
     const error = adapter.failure.detail ?? adapter.failure.message;
@@ -2090,6 +2354,20 @@ export async function runDesktopExternalAgent(
   }
 
   const filesChanged = adapter.reportedWrites.map((reportedWrite) => projectRelativeSourcePath(projectPath, reportedWrite));
+  if (options.signal?.aborted) {
+    return externalAgentCancellationResult({
+      addEvent,
+      addLog,
+      adapter,
+      events,
+      filesChanged,
+      logs,
+      projectPath,
+      runId,
+      signal: options.signal,
+      stage: "build"
+    });
+  }
   await recordCheckpointChanges({
     projectRoot: projectPath,
     runId,
@@ -2108,11 +2386,44 @@ export async function runDesktopExternalAgent(
     filesChanged
   });
 
+  if (options.signal?.aborted) {
+    return externalAgentCancellationResult({
+      addEvent,
+      addLog,
+      adapter,
+      checkpointDiff,
+      events,
+      filesChanged,
+      logs,
+      projectPath,
+      runId,
+      signal: options.signal,
+      stage: "check"
+    });
+  }
+
   addEvent("check", "running", "Running htmlslide check after external agent changes.", "stage-started", {
     nextAction: "Validate source files"
   });
-  const check = await runDesktopAgentCliStep(["check", projectPath, "--json"], options.cliRuntime, cliRunner);
-  logs.push(desktopAgentCliLog(runId, "check", check));
+  const check = await runDesktopAgentCliStep(["check", projectPath, "--json"], options.cliRuntime, cliRunner, options.signal);
+  const checkLog = desktopAgentCliLog(runId, "check", check);
+  addLog(checkLog.level, checkLog.message, checkLog.stage, checkLog.metadata);
+  if (options.signal?.aborted) {
+    return externalAgentCancellationResult({
+      addEvent,
+      addLog,
+      adapter,
+      check,
+      checkpointDiff,
+      events,
+      filesChanged,
+      logs,
+      projectPath,
+      runId,
+      signal: options.signal,
+      stage: "check"
+    });
+  }
   const checkIssues = checkIssueCount(check);
   addEvent("check", check.ok ? "succeeded" : "failed", check.ok ? "Check passed after external agent run." : "Check found issues after external agent run.", check.ok ? "stage-completed" : "stage-failed", {
     issuesFound: checkIssues,
@@ -2121,17 +2432,85 @@ export async function runDesktopExternalAgent(
 
   let exportResult: CliRunResult | undefined;
   if (check.ok && request.runExport !== false) {
+    if (options.signal?.aborted) {
+      return externalAgentCancellationResult({
+        addEvent,
+        addLog,
+        adapter,
+        check,
+        checkpointDiff,
+        events,
+        filesChanged,
+        logs,
+        projectPath,
+        runId,
+        signal: options.signal,
+        stage: "export"
+      });
+    }
     addEvent("export", "running", "Exporting artifacts after external agent run.", "stage-started", {
       nextAction: "Write PDF, HTML, deckpkg, notes, and thumbnails"
     });
-    exportResult = await runDesktopAgentCliStep(["export", projectPath, "--json"], options.cliRuntime, cliRunner);
-    logs.push(desktopAgentCliLog(runId, "export", exportResult));
+    exportResult = await runDesktopAgentCliStep(["export", projectPath, "--json"], options.cliRuntime, cliRunner, options.signal);
+    const exportLog = desktopAgentCliLog(runId, "export", exportResult);
+    addLog(exportLog.level, exportLog.message, exportLog.stage, exportLog.metadata);
+    if (options.signal?.aborted) {
+      return externalAgentCancellationResult({
+        addEvent,
+        addLog,
+        adapter,
+        check,
+        checkpointDiff,
+        events,
+        exportResult,
+        filesChanged,
+        logs,
+        projectPath,
+        runId,
+        signal: options.signal,
+        stage: "export"
+      });
+    }
     addEvent("export", exportResult.ok ? "succeeded" : "failed", exportResult.ok ? "Export completed after external agent run." : "Export failed after external agent run.", exportResult.ok ? "stage-completed" : "stage-failed", {
       nextAction: exportResult.ok ? "Review generated changes" : "Inspect export failure"
     });
   }
 
+  if (options.signal?.aborted) {
+    return externalAgentCancellationResult({
+      addEvent,
+      addLog,
+      adapter,
+      check,
+      checkpointDiff,
+      events,
+      exportResult,
+      filesChanged,
+      logs,
+      projectPath,
+      runId,
+      signal: options.signal,
+      stage: "review"
+    });
+  }
   const project = await loadProjectPreview(projectPath).catch((): DesktopProjectPreview | undefined => undefined);
+  if (options.signal?.aborted) {
+    return externalAgentCancellationResult({
+      addEvent,
+      addLog,
+      adapter,
+      check,
+      checkpointDiff,
+      events,
+      exportResult,
+      filesChanged,
+      logs,
+      projectPath,
+      runId,
+      signal: options.signal,
+      stage: "review"
+    });
+  }
   const ok = check.ok && (exportResult === undefined || exportResult.ok);
   addEvent("review", ok ? "succeeded" : "failed", ok ? "External agent changes are ready for review." : "External agent changes need review.", ok ? "run-completed" : "run-failed", {
     filesChanged,
@@ -2392,90 +2771,56 @@ async function runDetectorSafely(
   }
 }
 
-function runDetectorCommand(invocation: Parameters<ExternalAgentDetectorRunner>[0]): Promise<Awaited<ReturnType<ExternalAgentDetectorRunner>>> {
-  return new Promise((resolve) => {
-    const child = spawn(invocation.command, [...invocation.args], {
-      cwd: invocation.cwd,
-      stdio: ["ignore", "pipe", "pipe"]
-    });
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      child.kill("SIGTERM");
-      resolve({
-        exitCode: 1,
-        stdout,
-        stderr: stderr || `Command ${invocation.command} timed out after ${invocation.timeoutMs}ms.`
-      });
-    }, invocation.timeoutMs);
-
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString("utf8");
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString("utf8");
-    });
-    child.once("error", (error) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      resolve({
-        exitCode: 1,
-        stdout,
-        stderr: error.message
-      });
-    });
-    child.once("exit", (code) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      resolve({
-        exitCode: code ?? 1,
-        stdout,
-        stderr
-      });
-    });
+async function runDetectorCommand(
+  invocation: Parameters<ExternalAgentDetectorRunner>[0]
+): Promise<Awaited<ReturnType<ExternalAgentDetectorRunner>>> {
+  const result = await runCommand({
+    command: invocation.command,
+    args: invocation.args,
+    cwd: invocation.cwd,
+    timeoutMs: invocation.timeoutMs
   });
+  return {
+    exitCode: result.exitCode,
+    stdout: result.stdout,
+    stderr: result.timedOut
+      ? result.stderr || `Command ${invocation.command} timed out after ${invocation.timeoutMs}ms.`
+      : result.stderr
+  };
 }
 
-function runSecurityCommand(args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  return new Promise((resolve) => {
-    const child = spawn("/usr/bin/security", args, {
-      stdio: ["ignore", "pipe", "pipe"]
+async function runSecurityCommand(
+  args: string[],
+  options: { signal?: AbortSignal; timeoutMs?: number } = {}
+): Promise<{ exitCode: number; stdout: string; stderr: string; cancelled?: boolean; timedOut?: boolean }> {
+  if (options.signal?.aborted) {
+    return Promise.resolve({
+      exitCode: 1,
+      stdout: "",
+      stderr: "macOS Keychain request cancelled.",
+      cancelled: true
     });
-    let stdout = "";
-    let stderr = "";
+  }
 
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString("utf8");
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString("utf8");
-    });
-    child.once("error", (error) => {
-      resolve({
-        exitCode: 1,
-        stdout,
-        stderr: error.message
-      });
-    });
-    child.once("exit", (code) => {
-      resolve({
-        exitCode: code ?? 1,
-        stdout,
-        stderr
-      });
-    });
+  const timeoutMs = Math.max(1, options.timeoutMs ?? DESKTOP_AGENT_CREDENTIAL_ACCESS_TIMEOUT_MS);
+  const result = await runCommand({
+    command: "/usr/bin/security",
+    args,
+    cwd: process.cwd(),
+    signal: options.signal,
+    timeoutMs
   });
+  return {
+    exitCode: result.exitCode,
+    stdout: result.stdout,
+    stderr: result.timedOut
+      ? result.stderr || `macOS Keychain request timed out after ${timeoutMs}ms.`
+      : result.cancelled
+        ? result.stderr || "macOS Keychain request cancelled."
+        : result.stderr,
+    cancelled: result.cancelled,
+    timedOut: result.timedOut
+  };
 }
 
 function aiEngineCredentialAccount(provider: DesktopApiKeyProvider): string {
@@ -2942,8 +3287,17 @@ export function createDesktopCredentialStore(platform: NodeJS.Platform = process
   return {
     available: true,
     label: "macOS Keychain",
-    async getPassword(service, account) {
-      const result = await runSecurityCommand(["find-generic-password", "-s", service, "-a", account, "-w"]);
+    async getPassword(service, account, options) {
+      const result = await runSecurityCommand(
+        ["find-generic-password", "-s", service, "-a", account, "-w"],
+        options
+      );
+      if (result.timedOut) {
+        throw new Error(result.stderr);
+      }
+      if (result.cancelled) {
+        return undefined;
+      }
       return result.exitCode === 0 && result.stdout.trim().length > 0 ? result.stdout.trim() : undefined;
     },
     async setPassword(service, account, password) {
@@ -2973,8 +3327,12 @@ export function createDesktopCredentialStore(platform: NodeJS.Platform = process
 async function runDesktopAgentCliStep(
   args: string[],
   cliRuntime: CliRuntime | undefined,
-  cliRunner: DesktopCliRunner
+  cliRunner: DesktopCliRunner,
+  signal?: AbortSignal
 ): Promise<CliRunResult> {
+  if (signal?.aborted) {
+    return cancelledDesktopCliResult(args, "", "", signal);
+  }
   if (!cliRuntime) {
     return {
       ok: false,
@@ -2988,7 +3346,8 @@ async function runDesktopAgentCliStep(
   return cliRunner(args, {
     cliPath: cliRuntime.cliPath,
     cwd: cliRuntime.cwd,
-    rootPath: cliRuntime.rootPath
+    rootPath: cliRuntime.rootPath,
+    signal
   });
 }
 
@@ -3009,8 +3368,63 @@ function desktopAgentCliLog(runId: string, stage: "check" | "export", result: Cl
 
 type DesktopAgentEventRecorder = ReturnType<typeof createDesktopAgentEventRecorder>;
 type DesktopAgentLogRecorder = ReturnType<typeof createDesktopAgentLogRecorder>;
+type DesktopAgentObserverDispatcher = ReturnType<typeof createDesktopAgentObserverDispatcher>;
 
-function createDesktopAgentEventRecorder(events: AgentRunEvent[], runId: string) {
+function createDesktopAgentObserverDispatcher(
+  options: Pick<DesktopMockAgentRunnerOptions, "onEvent" | "onLog">,
+  runId: string,
+  events: AgentRunEvent[],
+  logs: AgentRunLog[]
+) {
+  let logLimitReached = false;
+  return {
+    event(event: AgentRunEvent): void {
+      const normalized = normalizeDesktopAgentEvent(event, runId, events.length + 1);
+      events.push(normalized);
+      safelyNotifyDesktopAgentObserver(options.onEvent, normalized);
+    },
+    log(log: AgentRunLog): void {
+      if (logLimitReached) {
+        return;
+      }
+      if (logs.length >= DESKTOP_AGENT_LOG_RECORD_LIMIT - 1) {
+        logLimitReached = true;
+        const limitLog = normalizeDesktopAgentLog({
+          createdAt: new Date().toISOString(),
+          level: "warning",
+          message: `Desktop service log limit reached (${DESKTOP_AGENT_LOG_RECORD_LIMIT} records).`,
+          runId
+        }, runId);
+        logs.push(limitLog);
+        safelyNotifyDesktopAgentObserver(options.onLog, limitLog);
+        return;
+      }
+      const normalized = normalizeDesktopAgentLog(log, runId);
+      logs.push(normalized);
+      safelyNotifyDesktopAgentObserver(options.onLog, normalized);
+    }
+  };
+}
+
+function safelyNotifyDesktopAgentObserver<T>(
+  observer: ((value: T) => void | Promise<void>) | undefined,
+  value: T
+): void {
+  try {
+    const delivery = observer?.(value);
+    if (delivery && typeof delivery.then === "function") {
+      void delivery.catch(() => undefined);
+    }
+  } catch {
+    // Observer delivery is a UI side effect and must never affect the run.
+  }
+}
+
+function createDesktopAgentEventRecorder(
+  events: AgentRunEvent[],
+  runId: string,
+  observers?: DesktopAgentObserverDispatcher
+) {
   return (
     stage: AgentRunStage,
     status: AgentRunStatus,
@@ -3018,39 +3432,352 @@ function createDesktopAgentEventRecorder(events: AgentRunEvent[], runId: string)
     type: AgentRunEvent["type"],
     fields: Partial<Pick<AgentRunEvent, "checkpointId" | "filesChanged" | "issuesFound" | "nextAction" | "metadata">> = {}
   ): void => {
-    events.push({
+    const event: AgentRunEvent = {
       createdAt: new Date().toISOString(),
       runId,
-      sequence: events.length + 1,
       stage,
       status,
       summary,
       type,
       ...fields
-    });
+    };
+    if (observers) {
+      observers.event(event);
+    } else {
+      events.push(normalizeDesktopAgentEvent(event, runId, events.length + 1));
+    }
   };
 }
 
-function createDesktopAgentLogRecorder(logs: AgentRunLog[], runId: string) {
+function createDesktopAgentLogRecorder(
+  logs: AgentRunLog[],
+  runId: string,
+  observers?: DesktopAgentObserverDispatcher
+) {
   return (
     level: AgentRunLog["level"],
     message: string,
     stage?: AgentRunStage,
     metadata?: AgentRunLog["metadata"]
   ): void => {
-    logs.push({
+    const log: AgentRunLog = {
       createdAt: new Date().toISOString(),
       level,
-      message: sanitizeDesktopAgentText(message),
+      message,
       runId,
       stage,
       metadata
-    });
+    };
+    if (observers) {
+      observers.log(log);
+    } else {
+      logs.push(normalizeDesktopAgentLog(log, runId));
+    }
+  };
+}
+
+function normalizeDesktopAgentEvent(event: AgentRunEvent, runId: string, sequence: number): AgentRunEvent {
+  return {
+    ...event,
+    runId: event.runId ?? runId,
+    sequence,
+    summary: sanitizeAndTruncateDesktopAgentText(event.summary, DESKTOP_AGENT_EVENT_TEXT_LIMIT),
+    checkpointId: event.checkpointId === undefined
+      ? undefined
+      : sanitizeAndTruncateDesktopAgentText(event.checkpointId, DESKTOP_AGENT_EVENT_TEXT_LIMIT),
+    filesChanged: event.filesChanged
+      ?.slice(0, DESKTOP_AGENT_METADATA_ARRAY_LIMIT)
+      .map((file) => sanitizeAndTruncateDesktopAgentText(file, DESKTOP_AGENT_METADATA_STRING_LIMIT)),
+    nextAction: event.nextAction === undefined
+      ? undefined
+      : sanitizeAndTruncateDesktopAgentText(event.nextAction, DESKTOP_AGENT_EVENT_TEXT_LIMIT),
+    metadata: sanitizeDesktopAgentMetadata(event.metadata)
+  };
+}
+
+function normalizeDesktopAgentLog(log: AgentRunLog, runId: string): AgentRunLog {
+  return {
+    ...log,
+    runId: log.runId || runId,
+    message: sanitizeAndTruncateDesktopAgentText(log.message, DESKTOP_AGENT_LOG_MESSAGE_LIMIT),
+    metadata: sanitizeDesktopAgentMetadata(log.metadata)
+  };
+}
+
+export function sanitizeDesktopAgentMetadata(metadata: JsonObject | undefined): JsonObject | undefined {
+  return metadata === undefined ? undefined : sanitizeDesktopAgentJsonValue(metadata) as JsonObject;
+}
+
+type DesktopAgentMetadataSanitizeState = {
+  remainingNodes: number;
+  remainingTextChars: number;
+  seen: WeakSet<object>;
+};
+
+function sanitizeDesktopAgentJsonValue(
+  value: JsonValue,
+  state: DesktopAgentMetadataSanitizeState = {
+    remainingNodes: DESKTOP_AGENT_METADATA_NODE_LIMIT,
+    remainingTextChars: DESKTOP_AGENT_METADATA_TEXT_LIMIT,
+    seen: new WeakSet<object>()
+  },
+  depth = 0
+): JsonValue {
+  if (typeof value === "string") {
+    const limit = Math.max(0, Math.min(DESKTOP_AGENT_METADATA_STRING_LIMIT, state.remainingTextChars));
+    const sanitized = limit === 0 ? "" : sanitizeAndTruncateDesktopAgentText(value, limit);
+    state.remainingTextChars -= sanitized.length;
+    return sanitized;
+  }
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+  if (depth >= DESKTOP_AGENT_METADATA_DEPTH_LIMIT || state.remainingNodes <= 0 || state.seen.has(value)) {
+    return Array.isArray(value) ? [] : {};
+  }
+  state.seen.add(value);
+  state.remainingNodes -= 1;
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, DESKTOP_AGENT_METADATA_ARRAY_LIMIT)
+      .map((entry) => sanitizeDesktopAgentJsonValue(entry, state, depth + 1));
+  }
+  const result: JsonObject = {};
+  for (const [rawKey, entry] of Object.entries(value).slice(0, DESKTOP_AGENT_METADATA_OBJECT_KEY_LIMIT)) {
+    const key = sanitizeAndTruncateDesktopAgentText(rawKey, DESKTOP_AGENT_METADATA_KEY_LIMIT);
+    result[key] = sanitizeDesktopAgentJsonValue(entry, state, depth + 1);
+  }
+  return result;
+}
+
+function bridgeDesktopAgentAbortSignal(
+  signal: AbortSignal | undefined,
+  cancel: (reason?: string) => void
+): () => void {
+  if (!signal) {
+    return () => undefined;
+  }
+
+  const cancelRun = (): void => cancel(desktopAgentCancellationReason(signal));
+  if (signal.aborted) {
+    cancelRun();
+  } else {
+    signal.addEventListener("abort", cancelRun, { once: true });
+  }
+
+  return () => signal.removeEventListener("abort", cancelRun);
+}
+
+function desktopAgentCancellationReason(signal?: AbortSignal): string {
+  const reason = signal?.reason;
+  if (reason instanceof Error && reason.message.trim().length > 0) {
+    return sanitizeDesktopAgentText(reason.message);
+  }
+  if (typeof reason === "string" && reason.trim().length > 0) {
+    return sanitizeDesktopAgentText(reason);
+  }
+  return "Run cancelled by user.";
+}
+
+function notifyDesktopAgentEvent(
+  observers: DesktopAgentObserverDispatcher,
+  runId: string,
+  stage: AgentRunStage,
+  status: AgentRunStatus,
+  summary: string,
+  type: AgentRunEvent["type"],
+  fields: Partial<Pick<AgentRunEvent, "checkpointId" | "filesChanged" | "issuesFound" | "nextAction" | "metadata">> = {}
+): void {
+  observers.event({
+    createdAt: new Date().toISOString(),
+    runId,
+    stage,
+    status,
+    summary,
+    type,
+    ...fields
+  });
+}
+
+function cancelDesktopCoreAgentResult(
+  agent: AgentRunResult,
+  stage: AgentRunStage,
+  observers: DesktopAgentObserverDispatcher,
+  signal?: AbortSignal
+): AgentRunResult {
+  if (agent.status === "cancelled") {
+    return agent;
+  }
+
+  const message = desktopAgentCancellationReason(signal);
+  const createdAt = new Date().toISOString();
+  const sequence = agent.events.reduce((highest, event) => Math.max(highest, event.sequence ?? 0), 0) + 1;
+  const event = normalizeDesktopAgentEvent({
+    createdAt,
+    runId: agent.runId,
+    sequence,
+    stage,
+    status: "cancelled",
+    summary: message,
+    type: "run-cancelled"
+  }, agent.runId, sequence);
+  const log = normalizeDesktopAgentLog({
+    createdAt,
+    level: "warning",
+    message,
+    runId: agent.runId,
+    stage
+  }, agent.runId);
+  observers.event(event);
+  observers.log(log);
+
+  return {
+    ok: false,
+    status: "cancelled",
+    runId: agent.runId,
+    checkpoint: agent.checkpoint,
+    error: {
+      code: "cancelled",
+      message,
+      stage
+    },
+    outputs: agent.outputs,
+    events: [...agent.events, event],
+    logs: [...agent.logs, log]
   };
 }
 
 function sanitizeDesktopAgentText(value: string): string {
   return sanitizeProviderText(value);
+}
+
+const DESKTOP_AGENT_LOG_MESSAGE_LIMIT = 8_192;
+const DESKTOP_AGENT_LOG_RECORD_LIMIT = 500;
+const DESKTOP_AGENT_EVENT_TEXT_LIMIT = 8_192;
+const DESKTOP_AGENT_METADATA_STRING_LIMIT = 4_096;
+const DESKTOP_AGENT_METADATA_KEY_LIMIT = 128;
+const DESKTOP_AGENT_METADATA_ARRAY_LIMIT = 100;
+const DESKTOP_AGENT_METADATA_OBJECT_KEY_LIMIT = 100;
+const DESKTOP_AGENT_METADATA_DEPTH_LIMIT = 6;
+const DESKTOP_AGENT_METADATA_NODE_LIMIT = 1_000;
+const DESKTOP_AGENT_METADATA_TEXT_LIMIT = 65_536;
+const DESKTOP_AGENT_STREAM_LINE_LIMIT = 65_536;
+const DESKTOP_AGENT_CREDENTIAL_ACCESS_TIMEOUT_MS = 5_000;
+const DESKTOP_AGENT_PREFLIGHT_TIMEOUT_MS = 15_000;
+
+function truncateDesktopAgentText(value: string, limit: number): string {
+  if (value.length <= limit) {
+    return value;
+  }
+  return `${value.slice(0, Math.max(0, limit - 36))}\n[truncated for desktop delivery]`;
+}
+
+function sanitizeAndTruncateDesktopAgentText(value: string, limit: number): string {
+  if (limit <= 0) {
+    return "";
+  }
+  const boundedInput = value.slice(0, Math.min(value.length, limit + 256));
+  return truncateDesktopAgentText(sanitizeDesktopAgentText(boundedInput), limit);
+}
+
+function createDesktopExternalAgentOutputBuffer(addLog: DesktopAgentLogRecorder) {
+  type Stream = "stdout" | "stderr";
+  type StreamState = { text: string; truncated: boolean };
+  const states: Record<Stream, StreamState> = {
+    stdout: { text: "", truncated: false },
+    stderr: { text: "", truncated: false }
+  };
+
+  const append = (state: StreamState, text: string): void => {
+    const available = Math.max(0, DESKTOP_AGENT_STREAM_LINE_LIMIT - state.text.length);
+    state.text += text.slice(0, available);
+    if (text.length > available) {
+      state.truncated = true;
+    }
+  };
+  const emit = (stream: Stream): void => {
+    const state = states[stream];
+    const message = state.text.replace(/\r$/u, "").trim();
+    if (message.length > 0) {
+      addLog(
+        stream === "stdout" ? "info" : "warning",
+        state.truncated ? `${message}\n[stream line truncated]` : message,
+        "build",
+        { stream }
+      );
+    }
+    state.text = "";
+    state.truncated = false;
+  };
+
+  return {
+    push(stream: Stream, text: string): void {
+      let remaining = text;
+      while (remaining.length > 0) {
+        const newline = remaining.indexOf("\n");
+        if (newline < 0) {
+          append(states[stream], remaining);
+          return;
+        }
+        append(states[stream], remaining.slice(0, newline));
+        emit(stream);
+        remaining = remaining.slice(newline + 1);
+      }
+    },
+    flush(): void {
+      emit("stdout");
+      emit("stderr");
+    }
+  };
+}
+
+async function waitForDesktopAgentOperation<T>(
+  operation: Promise<T>,
+  signal?: AbortSignal,
+  timeoutMs = DESKTOP_AGENT_PREFLIGHT_TIMEOUT_MS,
+  label = "Provider credential validation"
+): Promise<{ status: "completed"; value: T } | { status: "cancelled" }> {
+  if (signal?.aborted) {
+    return { status: "cancelled" };
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = (): void => {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", cancel);
+    };
+    const finish = (result: { status: "completed"; value: T } | { status: "cancelled" }): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
+    const cancel = (): void => finish({ status: "cancelled" });
+    const timeout = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      reject(new Error(`${label} timed out after ${timeoutMs}ms.`));
+    }, timeoutMs);
+    timeout.unref();
+    signal?.addEventListener("abort", cancel, { once: true });
+    void operation.then(
+      (value) => finish({ status: "completed", value }),
+      (error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        reject(error);
+      }
+    );
+  });
 }
 
 function sanitizeAgentAdapterRunResult(adapter: AgentAdapterRunResult): AgentAdapterRunResult {
@@ -3093,10 +3820,11 @@ function externalAgentFailureResult({
   runId: string;
   stage: AgentRunStage;
 }): DesktopExternalAgentRunResult {
-  addEvent(stage, "failed", error, "stage-failed", {
+  const sanitizedError = sanitizeDesktopAgentText(error);
+  addEvent(stage, "failed", sanitizedError, "stage-failed", {
     nextAction: "Update AI Engines settings and retry."
   });
-  addLog("error", error, stage);
+  addLog("error", sanitizedError, stage);
 
   return {
     ok: false,
@@ -3105,8 +3833,59 @@ function externalAgentFailureResult({
     stages: summarizeAgentStages(events),
     events,
     logs,
-    error,
+    error: sanitizedError,
     summary: summarizeDesktopExternalAgentRun(runId, events, undefined, undefined, [])
+  };
+}
+
+function externalAgentCancellationResult({
+  addEvent,
+  addLog,
+  adapter,
+  check,
+  checkpointDiff,
+  events,
+  exportResult,
+  filesChanged = [],
+  logs,
+  projectPath,
+  runId,
+  signal,
+  stage
+}: {
+  addEvent: DesktopAgentEventRecorder;
+  addLog: DesktopAgentLogRecorder;
+  adapter?: AgentAdapterRunResult;
+  check?: CliRunResult;
+  checkpointDiff?: FileCopyCheckpointDiff;
+  events: AgentRunEvent[];
+  exportResult?: CliRunResult;
+  filesChanged?: string[];
+  logs: AgentRunLog[];
+  projectPath: string;
+  runId: string;
+  signal?: AbortSignal;
+  stage: AgentRunStage;
+}): DesktopExternalAgentRunResult {
+  const error = desktopAgentCancellationReason(signal);
+  addEvent(stage, "cancelled", error, "run-cancelled", {
+    nextAction: "Start a new run when ready."
+  });
+  addLog("warning", error, stage);
+
+  return {
+    ok: false,
+    providerId: "external-generic",
+    projectPath,
+    stages: summarizeAgentStages(events),
+    events,
+    logs,
+    adapter,
+    checkpointDiff,
+    check,
+    export: exportResult,
+    error,
+    summary: summarizeDesktopExternalAgentRun(runId, events, check, exportResult, filesChanged)
   };
 }
 
@@ -3135,11 +3914,57 @@ function byokAgentFailureResult({
   };
   stage: AgentRunStage;
 }): DesktopByokAgentRunResult {
-  addEvent(stage, "failed", error, "stage-failed", {
+  const sanitizedError = sanitizeDesktopAgentText(error);
+  addEvent(stage, "failed", sanitizedError, "stage-failed", {
     metadata: byokSettingsMetadata(settings),
     nextAction: "Update AI Engines settings and retry."
   });
-  addLog("error", error, stage, byokSettingsMetadata(settings));
+  addLog("error", sanitizedError, stage, byokSettingsMetadata(settings));
+
+  return {
+    ok: false,
+    providerId: "htmlslide-byok",
+    projectPath,
+    settings,
+    stages: summarizeAgentStages(events),
+    events,
+    logs,
+    error: sanitizedError,
+    summary: summarizeDesktopByokFailureRun(runId, events, settings)
+  };
+}
+
+function byokAgentCancellationResult({
+  addEvent,
+  addLog,
+  events,
+  logs,
+  projectPath,
+  runId,
+  settings,
+  signal,
+  stage
+}: {
+  addEvent: DesktopAgentEventRecorder;
+  addLog: DesktopAgentLogRecorder;
+  events: AgentRunEvent[];
+  logs: AgentRunLog[];
+  projectPath: string;
+  runId: string;
+  settings: {
+    baseUrl?: string;
+    provider: DesktopApiKeyProvider;
+    model: string;
+  };
+  signal?: AbortSignal;
+  stage: AgentRunStage;
+}): DesktopByokAgentRunResult {
+  const error = desktopAgentCancellationReason(signal);
+  addEvent(stage, "cancelled", error, "run-cancelled", {
+    metadata: byokSettingsMetadata(settings),
+    nextAction: "Start a new run when ready."
+  });
+  addLog("warning", error, stage, byokSettingsMetadata(settings));
 
   return {
     ok: false,
@@ -3586,7 +4411,10 @@ function summarizeAgentStages(events: readonly AgentRunEvent[]): DesktopMockAgen
     const stageEvents = events.filter((event) => event.stage === stage);
     const terminalEvent = lastMatchingEvent(
       stageEvents,
-      (event) => event.type === "stage-failed" || event.type === "stage-completed"
+      (event) => event.type === "stage-failed" ||
+        event.type === "stage-completed" ||
+        event.type === "run-cancelled" ||
+        event.status === "cancelled"
     );
     const lastEvent = terminalEvent ?? stageEvents.at(-1);
     return {

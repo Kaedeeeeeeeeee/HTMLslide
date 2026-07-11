@@ -80,7 +80,7 @@ export interface QaIssue {
   suggestedFix: string;
 }
 
-export type AgentStageStatus = "complete" | "running" | "queued" | "paused";
+export type AgentStageStatus = "complete" | "running" | "queued" | "paused" | "failed" | "cancelled";
 export type AgentRunStageId =
   | "brief"
   | "outline"
@@ -260,7 +260,7 @@ function mapEventStatusToStageStatus(status: AgentRunEventStatus): AgentStageSta
   }
 
   if (status === "failed" || status === "cancelled") {
-    return "paused";
+    return status;
   }
 
   return "queued";

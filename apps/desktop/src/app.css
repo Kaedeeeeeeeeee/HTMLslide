@@ -1785,6 +1785,14 @@ svg {
   color: var(--hs-warning);
 }
 
+.agent-stage.is-failed .agent-stage__dot {
+  color: var(--hs-danger);
+}
+
+.agent-stage.is-cancelled .agent-stage__dot {
+  color: var(--hs-text-muted);
+}
+
 .agent-stage strong,
 .agent-stage p,
 .agent-stage small {

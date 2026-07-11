@@ -39,6 +39,10 @@ import {
   type DesktopCredentialStore,
   type DesktopProjectRecord
 } from "./desktop-services.js";
+import {
+  DesktopAgentRunRegistry,
+  type DesktopAgentRunRequest
+} from "./agent-run-registry.js";
 
 const currentDir = fileURLToPath(new URL(".", import.meta.url));
 const devServerUrl = process.env.HTMLSLIDE_DESKTOP_DEV_SERVER_URL;
@@ -139,6 +143,69 @@ const cliIntegrationOptions = (): DesktopCliIntegrationOptions => ({
 });
 const officialSkillsOptions = () => ({
   env: process.env
+});
+
+const agentRunRegistry = new DesktopAgentRunRegistry({
+  execute: async (request, control) => {
+    const sharedOptions = {
+      cliRuntime,
+      signal: control.signal,
+      onEvent: control.onEvent,
+      onLog: control.onLog
+    };
+
+    if (request.engine === "mock-agent") {
+      return runDesktopMockAgent(
+        {
+          brief: request.brief,
+          maxRepairRounds: request.maxRepairRounds,
+          projectPath: request.projectPath,
+          runExport: request.runExport,
+          runId: request.runId
+        },
+        sharedOptions
+      );
+    }
+
+    if (request.engine === "htmlslide-agent") {
+      return runDesktopByokAgent(
+        {
+          brief: request.brief,
+          maxRepairRounds: request.maxRepairRounds,
+          projectPath: request.projectPath,
+          runExport: request.runExport,
+          runId: request.runId
+        },
+        {
+          ...sharedOptions,
+          settingsPath: aiEngineSettingsPath(),
+          ...(e2eCredentialStore ? { credentialStore: e2eCredentialStore } : {})
+        }
+      );
+    }
+
+    if (request.engine !== "external-agent") {
+      throw new Error(`Unsupported agent engine: ${String(request.engine)}`);
+    }
+
+    return runDesktopExternalAgent(
+      {
+        brief: request.brief,
+        projectPath: request.projectPath,
+        runExport: request.runExport,
+        runId: request.runId
+      },
+      {
+        ...sharedOptions,
+        settingsPath: aiEngineSettingsPath()
+      }
+    );
+  },
+  onUpdate: (snapshot) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("htmlslide:agent-run-update", snapshot);
+    }
+  }
 });
 
 type DesktopAudienceSlidePayload = {
@@ -847,50 +914,24 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle("htmlslide:close-audience-window", async () => closeAudienceWindow());
 
-  ipcMain.handle(
-    "htmlslide:run-mock-agent",
-    async (
-      _event,
-      request: {
-        projectPath: string;
-        brief: string;
-        runExport?: boolean;
-        maxRepairRounds?: number;
-        runId?: string;
-      }
-    ) => runDesktopMockAgent(request, { cliRuntime })
+  ipcMain.handle("htmlslide:start-agent-run", (_event, request: DesktopAgentRunRequest) =>
+    agentRunRegistry.start(request)
   );
 
-  ipcMain.handle(
-    "htmlslide:run-byok-agent",
-    async (
-      _event,
-      request: {
-        projectPath: string;
-        brief: string;
-        runExport?: boolean;
-        maxRepairRounds?: number;
-        runId?: string;
-      }
-    ) =>
-      runDesktopByokAgent(request, {
-        cliRuntime,
-        settingsPath: aiEngineSettingsPath(),
-        ...(e2eCredentialStore ? { credentialStore: e2eCredentialStore } : {})
-      })
+  ipcMain.handle("htmlslide:get-agent-run", (_event, runId: string) =>
+    agentRunRegistry.get(runId)
   );
 
-  ipcMain.handle(
-    "htmlslide:run-external-agent",
-    async (
-      _event,
-      request: {
-        projectPath: string;
-        brief: string;
-        runExport?: boolean;
-        runId?: string;
-      }
-    ) => runDesktopExternalAgent(request, { cliRuntime, settingsPath: aiEngineSettingsPath() })
+  ipcMain.handle("htmlslide:get-active-agent-run", (_event, projectPath: string) =>
+    agentRunRegistry.getActive(projectPath)
+  );
+
+  ipcMain.handle("htmlslide:cancel-agent-run", (_event, runId: string) =>
+    agentRunRegistry.cancel(runId)
+  );
+
+  ipcMain.handle("htmlslide:retry-agent-run", (_event, runId: string) =>
+    agentRunRegistry.retry(runId)
   );
 
   ipcMain.handle(
@@ -1034,4 +1075,22 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
+});
+
+let agentRunsDrainedForQuit = false;
+let agentRunDrainStarted = false;
+
+app.on("before-quit", (event) => {
+  if (agentRunsDrainedForQuit) {
+    return;
+  }
+  event.preventDefault();
+  if (agentRunDrainStarted) {
+    return;
+  }
+  agentRunDrainStarted = true;
+  void agentRunRegistry.cancelAllAndWait().finally(() => {
+    agentRunsDrainedForQuit = true;
+    app.quit();
+  });
 });

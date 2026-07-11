@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
   platform: process.platform,
   shell: "electron",
   getSetup: () => ipcRenderer.invoke("htmlslide:get-setup"),
+  completeOnboarding: () => ipcRenderer.invoke("htmlslide:complete-onboarding"),
   getCliIntegration: () => ipcRenderer.invoke("htmlslide:get-cli-integration"),
   installCliIntegration: () => ipcRenderer.invoke("htmlslide:install-cli-integration"),
   installOfficialSkills: () => ipcRenderer.invoke("htmlslide:install-official-skills"),

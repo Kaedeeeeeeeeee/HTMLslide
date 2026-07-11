@@ -88,6 +88,7 @@ export type DesktopProjectReference = {
 export type DesktopLibrary = {
   version: 1;
   defaultWorkspace: string;
+  onboardingCompleted: boolean;
   recentProjects: DesktopProjectRecord[];
 };
 
@@ -642,6 +643,7 @@ type DeckManifest = {
 };
 
 const DEFAULT_LIBRARY: Omit<DesktopLibrary, "defaultWorkspace"> = {
+  onboardingCompleted: false,
   version: 1,
   recentProjects: []
 };
@@ -806,6 +808,7 @@ export async function readDesktopLibrary(
         typeof parsed.defaultWorkspace === "string" && parsed.defaultWorkspace.length > 0
           ? parsed.defaultWorkspace
           : defaultWorkspace,
+      onboardingCompleted: parsed.onboardingCompleted !== false,
       recentProjects: Array.isArray(parsed.recentProjects)
         ? parsed.recentProjects.filter(isProjectRecord)
         : []

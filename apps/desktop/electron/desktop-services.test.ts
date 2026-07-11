@@ -520,12 +520,14 @@ describe("desktop services", () => {
 
     expect(await readDesktopLibrary(libraryPath, "/workspace")).toEqual({
       defaultWorkspace: "/workspace",
+      onboardingCompleted: false,
       recentProjects: [],
       version: 1
     });
 
     await writeDesktopLibrary(libraryPath, {
       defaultWorkspace: "/workspace",
+      onboardingCompleted: true,
       recentProjects: [firstProject],
       version: 1
     });
@@ -535,6 +537,22 @@ describe("desktop services", () => {
     const raw = JSON.parse(await readFile(libraryPath, "utf8")) as { recentProjects: DesktopProjectRecord[] };
     expect(raw.recentProjects.map((project) => project.title)).toEqual(["One", "Two"]);
     expect(raw.recentProjects[0]?.status).toBe("Ready");
+    expect((await readDesktopLibrary(libraryPath, "/workspace")).onboardingCompleted).toBe(true);
+  });
+
+  it("treats a legacy desktop library as already onboarded", async () => {
+    const root = await tempDir();
+    const libraryPath = path.join(root, "library.json");
+    await writeFile(libraryPath, JSON.stringify({
+      defaultWorkspace: "/legacy-workspace",
+      recentProjects: [],
+      version: 1
+    }));
+
+    expect(await readDesktopLibrary(libraryPath, "/workspace")).toMatchObject({
+      defaultWorkspace: "/legacy-workspace",
+      onboardingCompleted: true
+    });
   });
 
   it("removes and marks recent projects without touching project files", async () => {
@@ -547,6 +565,7 @@ describe("desktop services", () => {
 
     await writeDesktopLibrary(libraryPath, {
       defaultWorkspace: "/workspace",
+      onboardingCompleted: false,
       recentProjects: [firstProject, secondProject],
       version: 1
     });

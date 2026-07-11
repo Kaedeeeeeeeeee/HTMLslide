@@ -64,9 +64,7 @@ svg {
 
 .onboarding-shell {
   align-items: stretch;
-  background:
-    linear-gradient(135deg, rgba(49, 95, 203, 0.1), transparent 38%),
-    var(--hs-bg);
+  background: var(--hs-bg);
   display: grid;
   gap: 18px;
   grid-template-columns: minmax(0, 1fr) 360px;
@@ -96,14 +94,14 @@ svg {
 
 .onboarding-content {
   align-self: center;
-  max-width: 640px;
+  max-width: 720px;
 }
 
-.onboarding-content p {
+.onboarding-content .onboarding-description {
   color: var(--hs-text-muted);
   font-size: 20px;
   line-height: 1.55;
-  margin: 20px 0 28px;
+  margin: 20px 0 22px;
 }
 
 .onboarding-content .hs-panel-header h2 {
@@ -113,10 +111,173 @@ svg {
 
 .onboarding-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
+  margin-top: 24px;
+}
+
+.onboarding-overview {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.onboarding-overview span {
+  align-items: center;
+  border-top: 1px solid var(--hs-line);
+  color: var(--hs-text-muted);
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px 0 0;
+}
+
+.onboarding-overview svg,
+.onboarding-status-card__icon svg,
+.onboarding-summary__check svg {
+  height: 17px;
+  width: 17px;
+}
+
+.onboarding-status-card {
+  align-items: center;
+  border-bottom: 1px solid var(--hs-line);
+  border-top: 1px solid var(--hs-line);
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 38px minmax(0, 1fr);
+  padding: 16px 0;
+}
+
+.onboarding-status-card--capability {
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+}
+
+.onboarding-status-card__icon,
+.onboarding-summary__check {
+  align-items: center;
+  background: var(--hs-surface-muted);
+  border-radius: 7px;
+  color: var(--hs-text-muted);
+  display: inline-flex;
+  height: 38px;
+  justify-content: center;
+  width: 38px;
+}
+
+.onboarding-status-card__icon.is-complete,
+.onboarding-summary__check.is-complete {
+  background: var(--hs-success-soft);
+  color: var(--hs-success);
+}
+
+.onboarding-status-card small,
+.onboarding-summary small {
+  color: var(--hs-text-subtle);
+  display: block;
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+
+.onboarding-status-card strong,
+.onboarding-summary strong {
+  display: block;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.onboarding-status-card code {
+  color: var(--hs-text-muted);
+  display: block;
+  font-size: 11px;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+
+.onboarding-choice-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.onboarding-choice {
+  appearance: none;
+  background: var(--hs-surface);
+  border: 1px solid var(--hs-line);
+  border-radius: var(--hs-radius-md);
+  color: var(--hs-text);
+  cursor: pointer;
+  min-height: 116px;
+  padding: 15px;
+  text-align: left;
+}
+
+.onboarding-choice:hover {
+  background: var(--hs-surface-muted);
+  border-color: var(--hs-line-strong);
+}
+
+.onboarding-choice:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.onboarding-choice:focus-visible {
+  outline: 3px solid rgba(49, 95, 203, 0.22);
+  outline-offset: 2px;
+}
+
+.onboarding-choice.is-selected {
+  background: var(--hs-accent-soft);
+  border-color: rgba(49, 95, 203, 0.42);
+}
+
+.onboarding-choice strong,
+.onboarding-choice span {
+  display: block;
+}
+
+.onboarding-choice strong {
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.onboarding-choice span {
+  color: var(--hs-text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.onboarding-operation-status {
+  align-self: center;
+}
+
+.onboarding-choice-grid > .onboarding-operation-status {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.onboarding-summary {
+  border-bottom: 1px solid var(--hs-line);
+  border-top: 1px solid var(--hs-line);
+}
+
+.onboarding-summary > div {
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 38px minmax(0, 1fr);
+  padding: 10px 0;
+}
+
+.onboarding-summary > div + div {
+  border-top: 1px solid var(--hs-line);
 }
 
 .setup-rail {
+  align-content: start;
   display: grid;
   gap: 10px;
   list-style: none;
@@ -2725,6 +2886,20 @@ svg {
 
   .onboarding-content p {
     font-size: 16px;
+  }
+
+  .onboarding-overview,
+  .onboarding-choice-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .onboarding-status-card--capability {
+    align-items: flex-start;
+    grid-template-columns: 38px minmax(0, 1fr);
+  }
+
+  .onboarding-status-card--capability .onboarding-operation-status {
+    grid-column: 1 / -1;
   }
 
   .setup-rail {

@@ -673,6 +673,7 @@ function registerIpcHandlers(): void {
       platform: process.platform,
       libraryPath: libraryPath(),
       workspacePath: library.defaultWorkspace,
+      onboardingCompleted: library.onboardingCompleted,
       cli: {
         available: Boolean(cliRuntime),
         mode: cliRuntime?.mode ?? "missing",
@@ -697,6 +698,16 @@ function registerIpcHandlers(): void {
     rendererReadyForOpenRequests = true;
     flushPendingOpenRequests();
     return { ready: true };
+  });
+
+  ipcMain.handle("htmlslide:complete-onboarding", async () => {
+    const library = await readDesktopLibrary(libraryPath(), configuredWorkspacePath());
+    const completedLibrary = {
+      ...library,
+      onboardingCompleted: true
+    };
+    await writeDesktopLibrary(libraryPath(), completedLibrary);
+    return { completed: true };
   });
 
   ipcMain.handle("htmlslide:get-cli-integration", async () =>

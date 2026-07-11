@@ -48,6 +48,7 @@ import {
   createDefaultExternalAgentStatuses,
   formatRedactedKeyStatus,
   normalizeAiEngineSettings,
+  type AiEngineMode,
   type AiEngineSettings,
   type AiEngineSettingsDraft,
   type ExternalAgentStatus
@@ -482,6 +483,9 @@ function App(): React.ReactNode {
         }
         const projectSummaries = projectRecordsToSummaries(records);
         setWorkspacePath(setup.workspacePath);
+        if (setup.onboardingCompleted && !setup.initialOpen) {
+          setView("library");
+        }
         setProjects((current) => {
           if (openRequestEpochRef.current === startingOpenRequestEpoch) {
             return projectSummaries;
@@ -1166,16 +1170,85 @@ function App(): React.ReactNode {
       });
   }, [desktopApi, handleOpenProject, openPreview, startAgentGeneration, workspacePath]);
 
-  const handleChooseWorkspace = useCallback((): void => {
+  const handleChooseWorkspace = useCallback(async (): Promise<boolean> => {
     if (!desktopApi) {
+      return false;
+    }
+    try {
+      const nextWorkspace = await desktopApi.chooseWorkspace();
+      if (!nextWorkspace) {
+        return false;
+      }
+      setWorkspacePath(nextWorkspace);
+      setOperationStatus({ kind: "success", message: "Workspace updated" });
+      return true;
+    } catch (error) {
+      setOperationStatus({
+        kind: "failed",
+        message: error instanceof Error ? error.message : String(error)
+      });
+      return false;
+    }
+  }, [desktopApi]);
+
+  const handleSaveAiEngineSettings = useCallback(
+    async (draft: AiEngineSettingsDraft): Promise<boolean> => {
+      const nextSettings = buildAiEngineSettingsUpdate(aiEngineSettings, draft);
+      aiEngineSettingsTouchedRef.current = true;
+      setAiEngineSettings(nextSettings);
+      setAiEngineStatus({ kind: "running", message: "Saving AI engine settings" });
+
+      if (!desktopApi) {
+        setAiEngineStatus({ kind: "success", message: "AI engine metadata updated locally" });
+        return true;
+      }
+
+      try {
+        const savedSettings = await desktopApi.saveAiEngineSettings({
+          settings: nextSettings,
+          apiKeyInput: draft.apiKeyInput,
+          clearKey: draft.clearKey
+        });
+        const normalizedSettings = normalizeAiEngineSettings(savedSettings);
+        setAiEngineSettings(normalizedSettings);
+        setAiEngineStatus({
+          kind: "success",
+          message: draft.apiKeyInput?.trim() ? formatRedactedKeyStatus(normalizedSettings) : "AI engine settings saved"
+        });
+        return true;
+      } catch (error) {
+        setAiEngineSettings(aiEngineSettings);
+        setAiEngineStatus({
+          kind: "failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+        return false;
+      }
+    },
+    [aiEngineSettings, desktopApi]
+  );
+
+  const handleSelectOnboardingAiMode = useCallback((mode: AiEngineMode): Promise<boolean> => {
+    return handleSaveAiEngineSettings({
+      mode,
+      provider: aiEngineSettings.apiKey.provider,
+      model: aiEngineSettings.apiKey.model,
+      baseUrl: aiEngineSettings.apiKey.baseUrl,
+      externalAgentId: aiEngineSettings.externalAgent.selectedId,
+      customCommand: aiEngineSettings.externalAgent.customCommand
+    });
+  }, [aiEngineSettings, handleSaveAiEngineSettings]);
+
+  const handleCompleteOnboarding = useCallback((): void => {
+    if (!desktopApi) {
+      setView("library");
       return;
     }
-    desktopApi.chooseWorkspace()
-      .then((nextWorkspace) => {
-        if (nextWorkspace) {
-          setWorkspacePath(nextWorkspace);
-          setOperationStatus({ kind: "success", message: "Workspace updated" });
-        }
+    setOperationStatus({ kind: "running", message: "Saving setup" });
+    desktopApi.completeOnboarding()
+      .then(() => {
+        setOperationStatus({ kind: "success", message: "Setup complete" });
+        setView("library");
       })
       .catch((error: unknown) => {
         setOperationStatus({
@@ -1184,41 +1257,6 @@ function App(): React.ReactNode {
         });
       });
   }, [desktopApi]);
-
-  const handleSaveAiEngineSettings = useCallback(
-    (draft: AiEngineSettingsDraft): void => {
-      const nextSettings = buildAiEngineSettingsUpdate(aiEngineSettings, draft);
-      aiEngineSettingsTouchedRef.current = true;
-      setAiEngineSettings(nextSettings);
-      setAiEngineStatus({ kind: "running", message: "Saving AI engine settings" });
-
-      if (!desktopApi) {
-        setAiEngineStatus({ kind: "success", message: "AI engine metadata updated locally" });
-        return;
-      }
-
-      desktopApi.saveAiEngineSettings({
-        settings: nextSettings,
-        apiKeyInput: draft.apiKeyInput,
-        clearKey: draft.clearKey
-      })
-        .then((savedSettings) => {
-          const normalizedSettings = normalizeAiEngineSettings(savedSettings);
-          setAiEngineSettings(normalizedSettings);
-          setAiEngineStatus({
-            kind: "success",
-            message: draft.apiKeyInput?.trim() ? formatRedactedKeyStatus(normalizedSettings) : "AI engine settings saved"
-          });
-        })
-        .catch((error: unknown) => {
-          setAiEngineStatus({
-            kind: "failed",
-            message: error instanceof Error ? error.message : String(error)
-          });
-        });
-    },
-    [aiEngineSettings, desktopApi]
-  );
 
   const handleRefreshExternalAgents = useCallback((): void => {
     if (!desktopApi) {
@@ -1623,21 +1661,37 @@ function App(): React.ReactNode {
     return (
       <Onboarding
         activeStepIndex={activeStepIndex}
+        aiEngineSettings={aiEngineSettings}
+        aiEngineStatus={aiEngineStatus}
+        cliIntegration={cliIntegration}
+        cliIntegrationStatus={cliIntegrationStatus}
+        officialSkills={officialSkills}
+        officialSkillsStatus={officialSkillsStatus}
+        onChooseWorkspace={handleChooseWorkspace}
         onContinue={() => {
-          if (onboardingSteps[activeStepIndex]?.id === "cli") {
-            handleInstallCliIntegration();
-          }
-          if (onboardingSteps[activeStepIndex]?.id === "skills") {
-            handleInstallOfficialSkills();
-          }
           if (activeStepIndex >= onboardingSteps.length - 1) {
-            setView("library");
+            handleCompleteOnboarding();
             return;
           }
           setActiveStepIndex((index) => index + 1);
         }}
-        onSkip={() => setView("library")}
+        onInstallCli={handleInstallCliIntegration}
+        onInstallSkills={handleInstallOfficialSkills}
+        onSelectAiEngine={handleSelectOnboardingAiMode}
+        onSkip={async () => {
+          if (aiEngineSettings.mode !== "no-ai") {
+            if (!await handleSelectOnboardingAiMode("no-ai")) {
+              return;
+            }
+          }
+          if (activeStepIndex === 0 || activeStepIndex >= onboardingSteps.length - 1) {
+            handleCompleteOnboarding();
+            return;
+          }
+          setActiveStepIndex((index) => index + 1);
+        }}
         steps={onboardingSteps}
+        workspacePath={workspacePath}
       />
     );
   }

@@ -524,6 +524,137 @@ test.describe("HTMLslide desktop smoke", () => {
     await expectNoFrameworkOverlay(page);
   });
 
+  test("completes executable onboarding once and persists setup", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-onboarding-e2e-"));
+    const homeDir = path.join(tempRoot, "home");
+    const userDataDir = path.join(tempRoot, "user-data");
+    const defaultWorkspaceDir = path.join(tempRoot, "default-workspace");
+    const selectedWorkspaceDir = path.join(tempRoot, "selected-workspace");
+    const cliTargetDir = path.join(tempRoot, "bin");
+    const htmlslideHomeDir = path.join(tempRoot, "htmlslide-home");
+    const shimPath = path.join(cliTargetDir, "htmlslide");
+    await Promise.all([
+      mkdir(homeDir, { recursive: true }),
+      mkdir(userDataDir, { recursive: true }),
+      mkdir(defaultWorkspaceDir, { recursive: true }),
+      mkdir(selectedWorkspaceDir, { recursive: true })
+    ]);
+
+    const env = {
+      ...process.env,
+      ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+      HOME: homeDir,
+      HTMLSLIDE_CLI_TARGET_DIR: cliTargetDir,
+      HTMLSLIDE_DEFAULT_WORKSPACE: defaultWorkspaceDir,
+      HTMLSLIDE_E2E_CHOOSE_WORKSPACE_PATH: selectedWorkspaceDir,
+      HTMLSLIDE_HOME: htmlslideHomeDir,
+      HTMLSLIDE_USER_DATA_DIR: userDataDir
+    };
+
+    electronApp = await electron.launch({ executablePath: electronExecutable, args: [electronMain], env });
+    let page = await electronApp.firstWindow();
+    await page.waitForLoadState("domcontentloaded");
+
+    await page.getByRole("button", { name: "Start Setup", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Choose workspace", exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Current workspace" })).toContainText(defaultWorkspaceDir);
+    await page.getByRole("button", { name: "Choose Workspace", exact: true }).click();
+
+    await expect(page.getByRole("heading", { name: "Choose AI engine", exact: true })).toBeVisible();
+    const aiModes = page.getByRole("region", { name: "AI engine modes" });
+    await expect(aiModes.getByRole("button", { name: /No AI/ })).toHaveAttribute("aria-pressed", "true");
+    await expect(aiModes.getByRole("button", { name: /HTMLslide Agent/ })).toBeVisible();
+    const codingAgentMode = aiModes.getByRole("button", { name: /Coding Agent/ });
+    await codingAgentMode.click();
+    await expect(aiModes.getByRole("status", { name: "AI engine setup status" })).toContainText("AI engine settings saved");
+    await expect(codingAgentMode).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+
+    await expect(page.getByRole("heading", { name: "Install CLI integration", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Install CLI", exact: true }).click();
+    await expect(page.getByRole("status", { name: "Command line tool operation status" })).toContainText(
+      /Installed HTMLslide CLI shim/,
+      { timeout: 30_000 }
+    );
+    await expect(access(shimPath)).resolves.toBeUndefined();
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+
+    await expect(page.getByRole("heading", { name: "Install official skills", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Install Skills", exact: true }).click();
+    await expect(page.getByRole("status", { name: "Official skills operation status" })).toContainText(
+      /12 official skills installed/,
+      { timeout: 30_000 }
+    );
+    await expect(access(path.join(htmlslideHomeDir, "skills", "deck-architect", "SKILL.md"))).resolves.toBeUndefined();
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+
+    await expect(page.getByRole("heading", { name: "Ready", exact: true })).toBeVisible();
+    const setupSummary = page.getByRole("region", { name: "Setup summary" });
+    await expect(setupSummary).toContainText(selectedWorkspaceDir);
+    await expect(setupSummary).toContainText("Coding Agent");
+    await expect(setupSummary).toContainText("12 installed");
+    await page.getByRole("button", { name: "Open Library", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+
+    await electronApp.close();
+    electronApp = undefined;
+    electronApp = await electron.launch({ executablePath: electronExecutable, args: [electronMain], env });
+    page = await electronApp.firstWindow();
+    await page.waitForLoadState("domcontentloaded");
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Welcome to HTMLslide" })).toHaveCount(0);
+    await page.getByRole("button", { name: "AI Engines", exact: true }).click();
+    await expect(page.getByRole("region", { name: "AI engine modes" }).getByRole("button", { name: /Coding Agent/ }))
+      .toHaveAttribute("aria-pressed", "true");
+    await expectNoFrameworkOverlay(page);
+  });
+
+  test("waits for the engine skip path to persist No AI mode", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-onboarding-skip-e2e-"));
+    const homeDir = path.join(tempRoot, "home");
+    const userDataDir = path.join(tempRoot, "user-data");
+    const workspaceDir = path.join(tempRoot, "workspace");
+    await Promise.all([
+      mkdir(homeDir, { recursive: true }),
+      mkdir(userDataDir, { recursive: true }),
+      mkdir(workspaceDir, { recursive: true })
+    ]);
+    const env = {
+      ...process.env,
+      ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+      HOME: homeDir,
+      HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir,
+      HTMLSLIDE_E2E_CREDENTIAL_STORE: "memory",
+      HTMLSLIDE_USER_DATA_DIR: userDataDir
+    };
+
+    electronApp = await electron.launch({ executablePath: electronExecutable, args: [electronMain], env });
+    let page = await electronApp.firstWindow();
+    await page.getByRole("button", { name: "Start Setup", exact: true }).click();
+    await page.getByRole("button", { name: "Use default folder", exact: true }).click();
+
+    const aiModes = page.getByRole("region", { name: "AI engine modes" });
+    await aiModes.getByRole("button", { name: /Coding Agent/ }).click();
+    await expect(aiModes.getByRole("status", { name: "AI engine setup status" })).toContainText("AI engine settings saved");
+    await page.getByRole("button", { name: "Continue without AI", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Install CLI integration", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Skip CLI install", exact: true }).click();
+    await page.getByRole("button", { name: "Install later", exact: true }).click();
+    await expect(page.getByRole("region", { name: "Setup summary" })).toContainText("No AI");
+    await page.getByRole("button", { name: "Open Library", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+
+    await electronApp.close();
+    electronApp = undefined;
+    electronApp = await electron.launch({ executablePath: electronExecutable, args: [electronMain], env });
+    page = await electronApp.firstWindow();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "AI Engines", exact: true }).click();
+    await expect(page.getByRole("region", { name: "AI engine modes" }).getByRole("button", { name: /No AI/ }))
+      .toHaveAttribute("aria-pressed", "true");
+    await expectNoFrameworkOverlay(page);
+  });
+
   test("saves fake API key metadata from AI Engines settings", async () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
     const homeDir = path.join(tempRoot, "home");

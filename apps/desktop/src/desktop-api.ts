@@ -19,6 +19,7 @@ export type DesktopSetupState = {
   platform: string;
   libraryPath: string;
   workspacePath: string;
+  onboardingCompleted: boolean;
   initialOpen?: DesktopInitialOpenRequest;
   smoke?: {
     expectOpenDeckpkgPath?: string;
@@ -432,6 +433,7 @@ export type HtmlslideDesktopApi = {
   platform: string;
   shell: "electron";
   getSetup(): Promise<DesktopSetupState>;
+  completeOnboarding(): Promise<{ completed: true }>;
   getCliIntegration(): Promise<DesktopCliIntegrationState>;
   installCliIntegration(): Promise<DesktopCliIntegrationState>;
   installOfficialSkills(): Promise<DesktopOfficialSkillsState>;

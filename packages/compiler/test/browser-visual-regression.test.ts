@@ -40,6 +40,7 @@ const goldenOutputRootPath = path.resolve(testDir, "goldens");
 const browserVisualDiffOutputPath = path.resolve(testDir, "../../../dist/visual-regression/renderer");
 const browserSlideDiffThreshold = 0.002;
 const browserThumbnailDiffThreshold = 0.005;
+const thumbnailGoldenPlatform = `${process.platform}-${process.arch}`;
 const updateBrowserGoldens = process.env.HTMLSLIDE_UPDATE_BROWSER_GOLDENS === "1";
 const browserVisualFixtures = [
   {
@@ -125,6 +126,7 @@ describe("browser-rendered visual regression", () => {
     "matches full-slide browser screenshot goldens for $name",
     async ({ name, slideIds }) => {
       const { root, project } = await copyCompilerFixture(name);
+      const thumbnailDiffFailures: string[] = [];
       if (!browser) {
         throw new Error("Chromium was not available for browser visual regression.");
       }
@@ -192,7 +194,13 @@ describe("browser-rendered visual regression", () => {
             (candidate) => path.basename(candidate) === `${slideId}.png`
           );
           expect(thumbnailPath).toBeTruthy();
-          const thumbnailGoldenPath = path.join(goldenOutputRootPath, name, "thumbnails", `${slideId}.png`);
+          const thumbnailGoldenPath = path.join(
+            goldenOutputRootPath,
+            name,
+            "thumbnails",
+            thumbnailGoldenPlatform,
+            `${slideId}.png`
+          );
           if (updateBrowserGoldens) {
             await mkdir(path.dirname(thumbnailGoldenPath), { recursive: true });
             await copyFile(thumbnailPath!, thumbnailGoldenPath);
@@ -209,11 +217,13 @@ describe("browser-rendered visual regression", () => {
               height: 540,
               width: 960
             });
-            expect(thumbnailResult.diffRatio, thumbnailResult.message).toBeLessThanOrEqual(
-              browserThumbnailDiffThreshold
-            );
+            if (thumbnailResult.diffRatio > browserThumbnailDiffThreshold) {
+              thumbnailDiffFailures.push(thumbnailResult.message);
+            }
           }
         }
+
+        expect(thumbnailDiffFailures, thumbnailDiffFailures.join("\n")).toEqual([]);
 
         await page.close();
 

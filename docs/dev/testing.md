@@ -123,7 +123,7 @@ The visual gate applies to Chromium-generated PNGs:
 - Small thumbnails: at most 0.5 percent diff.
 - Full slide screenshots: at most 0.2 percent diff.
 
-`browser-visual-deck` deliberately uses deterministic vector content. Its full-slide browser captures use the 0.2 percent threshold, and its real compiler thumbnail captures use the 0.5 percent threshold. Browser visual regression failures write `before.png`, `after.png`, and `diff.png` under `dist/visual-regression/renderer/`. The PNG comparison helper is also covered for mismatch artifact generation under `dist/visual-regression/compiler/`.
+`browser-visual-deck` deliberately uses deterministic vector content. Its shared full-slide browser captures use the 0.2 percent threshold. Real compiler thumbnail captures use OS-and-architecture-specific baselines under `goldens/browser-visual-deck/thumbnails/<platform>-<arch>/` with a 0.5 percent threshold because Chromium's SVG raster path differs across host builds. Browser visual regression failures write `before.png`, `after.png`, and `diff.png` under `dist/visual-regression/renderer/`. The PNG comparison helper is also covered for mismatch artifact generation under `dist/visual-regression/compiler/`.
 
 PDF checks are structural, not raster visual regression: tests verify page count, normalized `pdf-lib` metadata, repeated-byte determinism for the pinned Chromium, operating-system image, and font environment, and that PDF and PNG outputs are produced from the same staged print DOM. Cross-machine byte equality is not claimed when the operating system or installed fonts differ. Refresh PNG browser baselines intentionally with:
 

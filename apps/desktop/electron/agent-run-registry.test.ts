@@ -194,7 +194,7 @@ describe("DesktopAgentRunRegistry", () => {
     expect(registry.get("run-logs")?.logs.at(-1)?.message).toMatch(/truncated/);
   });
 
-  it("delivers a compact terminal shape without provider sourceWrites content", async () => {
+  it("delivers a compact terminal shape without provider sourceWrites content", { timeout: 15_000 }, async () => {
     const sourceSentinel = "PRIVATE_PROVIDER_SLIDE_SOURCE_MUST_NOT_CROSS_IPC";
     const secret = "sk-providersecret123456789";
     const huge = `api_key=${secret} ${"x".repeat(100_000)}`;

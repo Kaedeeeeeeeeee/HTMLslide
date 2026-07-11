@@ -140,16 +140,19 @@ export async function verifyByokAcceptance(options) {
     }
   }
 
-  const exportManifest = await readJsonProjectFile(
+  const exportManifestPath = await resolveSafeProjectFile(
     projectRoot,
     "exports/export-manifest.json",
     "Export manifest"
   );
+  const exportManifest = await readJsonRegularFile(exportManifestPath, "Export manifest");
+  const exportManifestSha256 = await sha256File(exportManifestPath);
   const sources = await verifyExportSources(projectRoot, exportManifest);
   if (
     !isRecord(report.exportManifest) ||
     report.exportManifest.sourceDigest !== exportManifest.sourceDigest ||
-    report.exportManifest.artifactCount !== exportManifest.artifacts.length
+    report.exportManifest.artifactCount !== exportManifest.artifacts.length ||
+    report.exportManifest.sha256 !== exportManifestSha256
   ) {
     throw new Error("Agent report is not bound to the current export manifest.");
   }
@@ -346,6 +349,9 @@ async function verifyExportArtifacts(projectRoot, manifest) {
     throw new Error("Export manifest is missing valid SHA-256 artifact metadata.");
   }
   const seen = new Set();
+  if (manifest.artifacts.length > 10_000) {
+    throw new Error("Export manifest contains too many artifacts.");
+  }
   const artifacts = [];
   for (const [index, artifact] of manifest.artifacts.entries()) {
     if (!isRecord(artifact)) {
@@ -366,7 +372,8 @@ async function verifyExportArtifacts(projectRoot, manifest) {
       (kind === "html" && artifactPath.endsWith(".html")) ||
       (kind === "deckpkg" && artifactPath.endsWith(".deckpkg")) ||
       (kind === "thumbnail" && /^exports\/thumbnails\/[^/]+\.png$/u.test(artifactPath));
-    if (!validKindPath || (kind === "thumbnail") !== (typeof artifact.slideId === "string")) {
+    const hasSlideId = typeof artifact.slideId === "string" && artifact.slideId.trim().length > 0;
+    if (!validKindPath || (kind === "thumbnail") !== hasSlideId) {
       throw new Error(`Export artifact kind/path metadata is inconsistent: ${artifactPath}.`);
     }
     assertExactKeys(
@@ -412,6 +419,9 @@ async function verifyExportSources(projectRoot, manifest) {
     ["artifacts", "compilerVersion", "hashAlgorithm", "schemaVersion", "sourceDigest", "sources"],
     "export manifest"
   );
+  if (manifest.sources.length > 10_000 || manifest.artifacts.length > 10_000) {
+    throw new Error("Export manifest contains too many fingerprint entries.");
+  }
   const seen = new Set();
   const sources = [];
   for (const [index, source] of manifest.sources.entries()) {
@@ -437,6 +447,8 @@ async function verifyExportSources(projectRoot, manifest) {
   }
   assertByteSorted(sources.map((source) => source.path), "Export manifest sources");
   assertByteSorted(manifest.artifacts.map((artifact) => artifact.path), "Export manifest artifacts");
+  assertNoPathCollisions(sources.map((source) => source.path), "Export manifest sources");
+  assertNoPathCollisions(manifest.artifacts.map((artifact) => artifact.path), "Export manifest artifacts");
   const sourceDigest = createHash("sha256").update(JSON.stringify(
     [...sources]
       .sort((left, right) => Buffer.compare(Buffer.from(left.path, "utf8"), Buffer.from(right.path, "utf8")))
@@ -489,15 +501,9 @@ async function verifyCheckpoint(projectRoot, report) {
 }
 
 async function scanProjectSourcesForCommonSecrets(projectRoot, sources) {
-  const textExtensions = new Set([
-    ".css", ".csv", ".html", ".js", ".json", ".md", ".mjs", ".svg", ".toml", ".txt", ".xml", ".yaml", ".yml"
-  ]);
   for (const source of sources) {
-    if (!textExtensions.has(path.extname(source.path).toLowerCase())) {
-      continue;
-    }
     if (source.sizeBytes > 64 * 1024 * 1024) {
-      throw new Error(`Text source is too large for the acceptance secret scan: ${source.path}.`);
+      throw new Error(`Project source is too large for the acceptance secret scan: ${source.path}.`);
     }
     const sourcePath = await resolveSafeProjectFile(projectRoot, source.path, `Secret scan source ${source.path}`);
     const text = await readFile(sourcePath, "utf8");
@@ -570,8 +576,10 @@ async function ensureSafeProjectDirectory(projectRoot, relativePath) {
 function requireSafeRelativePath(value, label) {
   const filePath = requireString(value, label);
   if (
+    filePath !== filePath.normalize("NFC") ||
     path.posix.isAbsolute(filePath) ||
     filePath.includes("\\") ||
+    /^[a-z][a-z0-9+.-]*:/iu.test(filePath) ||
     filePath.split("/").some((segment) => segment.length === 0 || segment === "." || segment === "..")
   ) {
     throw new Error(`${label} must be a safe POSIX project-relative path.`);
@@ -697,6 +705,13 @@ function assertByteSorted(paths, label) {
     if (Buffer.compare(Buffer.from(paths[index - 1], "utf8"), Buffer.from(paths[index], "utf8")) >= 0) {
       throw new Error(`${label} must be unique and byte-sorted.`);
     }
+  }
+}
+
+function assertNoPathCollisions(paths, label) {
+  const collisionKeys = paths.map((filePath) => filePath.normalize("NFC").toLowerCase());
+  if (new Set(collisionKeys).size !== collisionKeys.length) {
+    throw new Error(`${label} contains case-insensitive or Unicode-normalized path collisions.`);
   }
 }
 

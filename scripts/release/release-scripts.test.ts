@@ -281,6 +281,23 @@ describe("release evidence scripts", () => {
             pdf.kind = "deckpkg";
           }
           await writeFile(fixture.exportManifestPath, JSON.stringify(manifest), "utf8");
+          await refreshFixtureReportManifestBinding(fixture);
+          return {};
+        },
+        message: /kind\/path metadata is inconsistent/
+      },
+      {
+        name: "empty thumbnail slide id",
+        mutate: async (fixture: Awaited<ReturnType<typeof createByokEvidenceFixture>>) => {
+          const manifest = JSON.parse(await readFile(fixture.exportManifestPath, "utf8")) as {
+            artifacts: Array<Record<string, unknown>>;
+          };
+          const thumbnail = manifest.artifacts.find((artifact) => artifact.kind === "thumbnail");
+          if (thumbnail) {
+            thumbnail.slideId = "";
+          }
+          await writeFile(fixture.exportManifestPath, JSON.stringify(manifest), "utf8");
+          await refreshFixtureReportManifestBinding(fixture);
           return {};
         },
         message: /kind\/path metadata is inconsistent/
@@ -442,6 +459,9 @@ async function createByokEvidenceFixture() {
     sources,
     artifacts
   }, null, 2), "utf8");
+  const exportManifestSha256 = createHash("sha256")
+    .update(await readFile(path.join(exportsPath, "export-manifest.json")))
+    .digest("hex");
 
   const validationPath = path.join(fixtureRoot, "provider-validation.json");
   await writeFile(validationPath, JSON.stringify({
@@ -513,7 +533,7 @@ async function createByokEvidenceFixture() {
     },
     applied: { source: "provider-source-writes", filesChanged: ["deck.json"], writeCount: 17 },
     checkpoint: { id: "checkpoint-run-real-provider", strategy: "file-copy", canRevert: true },
-    exportManifest: { sourceDigest, artifactCount: artifacts.length },
+    exportManifest: { sourceDigest, artifactCount: artifacts.length, sha256: exportManifestSha256 },
     cli: {
       check: { ok: true, exitCode: 0, status: "passed", summary: { errors: 0, warnings: 0 }, artifactPaths: [] },
       export: { ok: true, exitCode: 0, status: "passed", artifactPaths }
@@ -551,9 +571,23 @@ async function refreshFixtureSourceBinding(
   )).digest("hex");
   await writeFile(fixture.exportManifestPath, JSON.stringify(manifest), "utf8");
 
+  await refreshFixtureReportManifestBinding(fixture);
+}
+
+async function refreshFixtureReportManifestBinding(
+  fixture: Awaited<ReturnType<typeof createByokEvidenceFixture>>
+): Promise<void> {
+  const manifest = JSON.parse(await readFile(fixture.exportManifestPath, "utf8")) as {
+    artifacts: unknown[];
+    sourceDigest: string;
+  };
   const report = JSON.parse(await readFile(fixture.reportPath, "utf8")) as {
-    exportManifest: { sourceDigest: string };
+    exportManifest: { artifactCount: number; sourceDigest: string; sha256: string };
   };
   report.exportManifest.sourceDigest = manifest.sourceDigest;
+  report.exportManifest.artifactCount = manifest.artifacts.length;
+  report.exportManifest.sha256 = createHash("sha256")
+    .update(await readFile(fixture.exportManifestPath))
+    .digest("hex");
   await writeFile(fixture.reportPath, JSON.stringify(report), "utf8");
 }

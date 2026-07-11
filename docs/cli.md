@@ -61,7 +61,8 @@ Use `agent validate-provider` before a real BYOK alpha run:
 
 ```bash
 export OPENAI_API_KEY="..."
-htmlslide agent validate-provider --provider openai --model <openai-model-id> --api-key-env OPENAI_API_KEY --json
+umask 077
+htmlslide agent validate-provider --provider openai --model <openai-model-id> --api-key-env OPENAI_API_KEY --json > /path/to/provider-validation.json
 ```
 
 After an explicit 8-12 slide desktop BYOK run, verify the saved sanitized provider result, exact run report, deck, checkpoint, and exports without reading the key again:
@@ -75,7 +76,7 @@ This release command is read-only apart from its evidence JSON output. It is not
 For OpenAI-compatible providers, pass the API root explicitly:
 
 ```bash
-htmlslide agent validate-provider --provider compatible --model <compatible-model-id> --api-key-env COMPATIBLE_API_KEY --base-url https://provider.example.com/v1 --json
+htmlslide agent validate-provider --provider compatible --model <compatible-model-id> --api-key-env COMPATIBLE_API_KEY --base-url https://provider.example.com/v1 --json > /path/to/provider-validation.json
 ```
 
 The command reads the provider key only from the named environment variable. It prints the variable name, provider, model, and sanitized credential status; it does not print the key value.

@@ -351,6 +351,7 @@ export type DesktopAgentRunReport = {
   exportManifest?: {
     sourceDigest: string;
     artifactCount: number;
+    sha256: string;
   };
 };
 
@@ -4692,10 +4693,12 @@ async function readDesktopAgentExportManifestSummary(
     if (!manifestStat.isFile() || manifestStat.isSymbolicLink()) {
       return undefined;
     }
-    const manifest = ExportManifestSchema.parse(JSON.parse(await fs.readFile(manifestPath, "utf8")));
+    const manifestBytes = await fs.readFile(manifestPath);
+    const manifest = ExportManifestSchema.parse(JSON.parse(manifestBytes.toString("utf8")));
     return {
       sourceDigest: manifest.sourceDigest,
-      artifactCount: manifest.artifacts.length
+      artifactCount: manifest.artifacts.length,
+      sha256: createHash("sha256").update(manifestBytes).digest("hex")
     };
   } catch {
     return undefined;

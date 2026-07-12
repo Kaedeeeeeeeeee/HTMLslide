@@ -165,7 +165,7 @@ jobs:
             exit 1
           fi
 
-          manifest="$(find "$manifest_dir" -type f -name '*.json' -print | sort | tail -n 1)"
+          manifest="$(find "$manifest_dir" -maxdepth 1 -type f -name 'HTMLslide-*.json' -print | sort | tail -n 1)"
           if [[ -z "$manifest" || ! -f "$manifest" ]]; then
             echo "::error title=Missing alpha package manifest::The preceding package step did not write a JSON manifest under $manifest_dir."
             exit 1

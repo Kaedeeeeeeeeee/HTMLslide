@@ -64,6 +64,9 @@ export interface AiEngineSettingsDraft {
   customCommand?: string;
 }
 
+export const externalAgentModeDescription =
+  "Use Claude Code, Codex CLI, or a configured Generic command. Gemini CLI is detection-only.";
+
 export const aiEngineModes: Array<{ id: AiEngineMode; label: string; description: string }> = [
   {
     id: "no-ai",
@@ -78,7 +81,7 @@ export const aiEngineModes: Array<{ id: AiEngineMode; label: string; description
   {
     id: "external-agent",
     label: "Coding Agent",
-    description: "Connect Claude Code, Codex CLI, Gemini CLI, or a compatible command."
+    description: externalAgentModeDescription
   }
 ];
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  aiEngineModes,
   buildExternalAgentReadiness,
   buildAiEngineSettingsUpdate,
   createDefaultAiEngineSettings,
@@ -11,6 +12,12 @@ import {
 } from "./settings-model";
 
 describe("AI engine settings model", () => {
+  it("labels Gemini as detection-only in the shared Coding Agent description", () => {
+    expect(aiEngineModes.find((mode) => mode.id === "external-agent")?.description).toBe(
+      "Use Claude Code, Codex CLI, or a configured Generic command. Gemini CLI is detection-only."
+    );
+  });
+
   it("turns transient API key input into redacted metadata only", () => {
     const settings = buildAiEngineSettingsUpdate(
       createDefaultAiEngineSettings(),

@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from "react";
 import {
+  externalAgentModeDescription,
   formatRedactedKeyStatus,
   isExternalAgentRunnableByHtmlslide,
   selectedExternalAgentStatus,
@@ -855,7 +856,7 @@ function buildNewDeckEngineOptions({
     {
       id: "external-agent",
       label: "Coding Agent",
-      description: "Use the selected Claude Code, Codex CLI, Gemini CLI, or compatible command.",
+      description: externalAgentModeDescription,
       detail: externalAgentDeckCreationDetail(selectedExternalStatus, selectedExternalRunnable),
       icon: <Code2 />,
       status: selectedExternalRunnable

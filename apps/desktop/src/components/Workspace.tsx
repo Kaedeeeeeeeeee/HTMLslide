@@ -32,6 +32,7 @@ import {
   CircleDot,
   CircleX,
   Clock3,
+  Copy,
   Download,
   FileText,
   Maximize2,
@@ -119,6 +120,7 @@ interface WorkspaceProps {
   onCloseDiff?: () => void;
   onCommandChange: (value: string) => void;
   onCommandSubmit: () => void;
+  onCopyRepairPrompt?: () => void;
   onInspectorTabChange: (tab: InspectorTab) => void;
   onPresenterDisplaysChanged?: (handler: () => void) => () => void;
   onQaFilterChange: (filter: QaFilter) => void;
@@ -264,6 +266,7 @@ export function Workspace({
   onCloseDiff,
   onCommandChange,
   onCommandSubmit,
+  onCopyRepairPrompt,
   onInspectorTabChange,
   onPresenterDisplaysChanged,
   closeAudienceWindow,
@@ -533,6 +536,7 @@ export function Workspace({
         onCloseDiff={onCloseDiff}
         onCommandChange={onCommandChange}
         onCommandSubmit={onCommandSubmit}
+        onCopyRepairPrompt={onCopyRepairPrompt}
         onRevertDiff={onRevertDiff}
         onRunAction={onRunAction}
         onViewDiff={onViewDiff}
@@ -1959,6 +1963,7 @@ interface AgentRunConsoleProps {
   onCloseDiff?: () => void;
   onCommandChange: (value: string) => void;
   onCommandSubmit: () => void;
+  onCopyRepairPrompt?: () => void;
   onRevertDiff?: () => void;
   onRunAction: (action: "start" | "pause" | "cancel" | "retry") => void;
   onViewDiff?: () => void;
@@ -1975,6 +1980,7 @@ function AgentRunConsole({
   onCloseDiff,
   onCommandChange,
   onCommandSubmit,
+  onCopyRepairPrompt,
   onRevertDiff,
   onRunAction,
   onViewDiff,
@@ -1987,6 +1993,9 @@ function AgentRunConsole({
 }: AgentRunConsoleProps): ReactNode {
   const logDetailsRefs = useRef(new Map<string, HTMLDetailsElement>());
   const hasLogs = stages.some((stage) => Boolean(stage.runId) && stage.logs.length > 0);
+  const canCopyRepairPrompt = Boolean(
+    onCopyRepairPrompt && (runStatus === "failed" || runStatus === "cancelled" || statuses.check.kind === "failed")
+  );
   const engineLabel = agentEngineLabels[engine];
   const pauseUnavailableLabel = `${engineLabel} does not support pause.`;
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
@@ -2110,6 +2119,12 @@ function AgentRunConsole({
             icon={<TerminalSquare />}
             label="Open logs"
             onClick={handleOpenLogs}
+          />
+          <IconButton
+            disabled={!canCopyRepairPrompt}
+            icon={<Copy />}
+            label="Copy repair prompt"
+            onClick={onCopyRepairPrompt}
           />
         </div>
         <div

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_DECK_TEMPLATE_ID } from "@htmlslide/core/templates";
 import {
+  buildAgentRepairPrompt,
   buildNewDeckAgentBrief,
   buildAgentRunStages,
   buildRuntimeStages,
@@ -78,6 +79,30 @@ const stages: AgentStage[] = [
 ];
 
 describe("desktop model helpers", () => {
+  it("builds a bounded repair prompt without secrets or absolute paths", () => {
+    const prompt = buildAgentRepairPrompt({
+      checkErrors: 2,
+      checkStatus: "failed",
+      checkWarnings: 1,
+      engine: "External agent",
+      error: "request failed Bearer sk-live-secret at /Users/alice/deck/slides/001.html",
+      filesChanged: ["slides/001.html", "/Users/alice/deck/notes/001.md", "../outside.txt", "slides/001.html"],
+      runId: "run-123",
+      status: "failed"
+    });
+
+    expect(prompt).toContain("Run id: run-123");
+    expect(prompt).toContain("Changed source files: slides/001.html");
+    expect(prompt).toContain("Bearer [redacted]");
+    expect(prompt).toContain("[path omitted]");
+    expect(prompt).not.toContain("sk-live-secret");
+    expect(prompt).not.toContain("/Users/alice");
+    expect(prompt).not.toContain("outside.txt");
+    expect(prompt).toContain("htmlslide check --json");
+    expect(prompt).not.toContain("stdout");
+    expect(prompt).not.toContain("stderr");
+  });
+
   it("filters QA issues by severity and slide", () => {
     expect(filterQaIssues(issues, "all", "slide-2")).toHaveLength(2);
     expect(filterQaIssues(issues, "warning", "slide-2")).toEqual([issues[1]]);

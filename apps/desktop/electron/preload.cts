@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
   installOfficialSkills: () => ipcRenderer.invoke("htmlslide:install-official-skills"),
   uninstallCliIntegration: () => ipcRenderer.invoke("htmlslide:uninstall-cli-integration"),
   copyCliManualInstallCommand: () => ipcRenderer.invoke("htmlslide:copy-cli-manual-install-command"),
+  copyAgentRepairPrompt: (prompt: string) => ipcRenderer.invoke("htmlslide:copy-agent-repair-prompt", prompt),
   listProjects: () => ipcRenderer.invoke("htmlslide:list-projects"),
   removeRecentProject: (project: { id?: string; path?: string }) =>
     ipcRenderer.invoke("htmlslide:remove-recent-project", project),

@@ -235,6 +235,18 @@ describe("macOS alpha packaging contract", () => {
     expect(desktopApiSource).toContain("onPresenterDisplaysChanged(handler: () => void): () => void;");
   });
 
+  it("keeps the repair-prompt clipboard bridge explicit and bounded", async () => {
+    const mainSource = await readText("apps/desktop/electron/main.ts");
+    const preloadSource = await readText("apps/desktop/electron/preload.cts");
+    const desktopApiSource = await readText("apps/desktop/src/desktop-api.ts");
+
+    expect(mainSource).toContain('ipcMain.handle("htmlslide:copy-agent-repair-prompt"');
+    expect(mainSource).toContain("prompt.length > 100_000");
+    expect(mainSource).toContain("clipboard.writeText(prompt)");
+    expect(preloadSource).toContain('ipcRenderer.invoke("htmlslide:copy-agent-repair-prompt", prompt)');
+    expect(desktopApiSource).toContain("copyAgentRepairPrompt(prompt: string): Promise<{ copied: boolean }>;");
+  });
+
   it("keeps the alpha packaging workflow gated and artifact-producing", async () => {
     const workflow = await readText(".github/workflows/alpha-package.yml");
     const packageIndex = workflow.indexOf("run: pnpm package:alpha");

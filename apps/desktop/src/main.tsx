@@ -24,6 +24,7 @@ import {
   type DesktopSmokeReadyMarker
 } from "./desktop-api";
 import {
+  buildAgentRepairPrompt,
   buildNewDeckAgentBrief,
   defaultCommandActionStatuses,
   formatProjectOpenedAt,
@@ -96,6 +97,19 @@ function agentEngineLabel(engine: DesktopAgentEngine): string {
 
 function selectedAgentEngine(settings: AiEngineSettings): DesktopAgentEngine {
   return settings.mode === "no-ai" ? "mock-agent" : settings.mode;
+}
+
+function agentResultChangedFiles(result: DesktopAgentRunResult | undefined): readonly string[] {
+  if (!result) {
+    return [];
+  }
+  if (result.providerId === "external-agent") {
+    return result.summary.filesChanged;
+  }
+  if (result.providerId === "htmlslide-byok") {
+    return result.applied?.filesChanged ?? result.agent?.outputs.build?.filesChanged ?? [];
+  }
+  return result.applied?.filesChanged ?? result.agent.outputs.build?.filesChanged ?? [];
 }
 
 function formatPresenterDurationLabel(seconds: number): string {
@@ -1015,6 +1029,35 @@ function App(): React.ReactNode {
       });
   }, [applyAgentRunSnapshot, desktopApi, updateCommandActionStatus]);
 
+  const copyAgentRepairPrompt = useCallback((): void => {
+    const snapshot = agentRunSnapshotRef.current;
+    if (!desktopApi || !snapshot) {
+      return;
+    }
+    const result = snapshot.result;
+    const checkReport = result?.check?.json as DesktopCheckReport | undefined;
+    const checkSummary = checkReport?.summary;
+    const checkStatus = checkReport?.status ?? (result?.check ? (result.check.ok ? "passed" : "failed") : undefined);
+    const prompt = buildAgentRepairPrompt({
+      checkErrors: checkSummary?.errors ?? result?.summary.checkErrors,
+      checkStatus,
+      checkWarnings: checkSummary?.warnings ?? result?.summary.checkWarnings,
+      engine: agentEngineLabel(snapshot.engine),
+      error: snapshot.error ?? (result && "error" in result ? result.error : undefined),
+      filesChanged: agentResultChangedFiles(result),
+      runId: snapshot.runId,
+      status: snapshot.status
+    });
+    desktopApi.copyAgentRepairPrompt(prompt)
+      .then(() => setOperationStatus({ kind: "success", message: "Repair prompt copied" }))
+      .catch((error: unknown) => {
+        setOperationStatus({
+          kind: "failed",
+          message: error instanceof Error ? error.message : "Could not copy repair prompt"
+        });
+      });
+  }, [desktopApi]);
+
   const activeProject = useMemo(() => {
     const selectedPreview = projectPreviews[selectedProjectId];
     return selectedPreview
@@ -1760,6 +1803,7 @@ function App(): React.ReactNode {
         runAgentGeneration(command);
         setCommandValue("");
       }}
+      onCopyRepairPrompt={copyAgentRepairPrompt}
       onInspectorTabChange={setInspectorTab}
       loadPresenterDeck={loadPresenterDeck}
       listPresenterDisplays={listPresenterDisplays}

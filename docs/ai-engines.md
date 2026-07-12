@@ -37,6 +37,8 @@ HTMLslide creates a checkpoint before launch and derives the source diff after t
 
 Generic command mode keeps its write-manifest contract for user-owned integrations, with the same checkpoint diff used for review. Gemini remains detection-only because its authentication options and non-interactive permission contract have not been defined and tested.
 
+When a run fails, is cancelled, or finishes with blocking Check issues, the Agent Run Console exposes **Copy repair prompt**. The copied prompt contains only sanitized run metadata, Check counts, and project-relative changed source paths; it omits raw stdout/stderr, credentials, environment values, and absolute project paths so it can be pasted into a follow-up repair request or a private bug report.
+
 ### Evidence Boundary
 
 CI uses fake Claude, Codex, and Generic commands. Automated evidence proves the invocation, permission flags, readiness gating, bounded/redacted logs, cancellation, checkpoint diff, Check/Export gate, review, and revert contracts without provider credentials or network access.

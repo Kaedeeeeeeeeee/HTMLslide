@@ -1234,6 +1234,7 @@ test.describe("HTMLslide desktop smoke", () => {
     const pauseButton = controls.getByRole("button", { name: "External agent does not support pause.", exact: true });
     const cancelButton = controls.getByRole("button", { name: "Cancel run", exact: true });
     const retryButton = controls.getByRole("button", { name: "Retry run", exact: true });
+    const copyRepairPromptButton = controls.getByRole("button", { name: "Copy repair prompt", exact: true });
     const openLogsButton = controls.getByRole("button", { name: "Open logs", exact: true });
 
     await expect(pauseButton).toBeVisible({ timeout: 30_000 });
@@ -1277,6 +1278,9 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(agentConsole).toHaveAttribute("data-agent-run-status", "cancelled", { timeout: 30_000 });
     await expect(page.getByText("Generation cancelled", { exact: true }).first()).toBeVisible();
     await expect(retryButton).toBeEnabled();
+    await expect(copyRepairPromptButton).toBeEnabled();
+    await copyRepairPromptButton.click();
+    await expect(page.getByText("Repair prompt copied", { exact: true }).last()).toBeVisible();
     await expect(access(agentStateFile)).resolves.toBeUndefined();
     await page.waitForTimeout(500);
     await expect(page.getByText("External agent completed check and export", { exact: true })).toHaveCount(0);

@@ -130,6 +130,72 @@ export interface AgentRunLogLike {
   createdAt: string;
 }
 
+export interface AgentRepairPromptInput {
+  runId?: string;
+  engine: string;
+  status?: string;
+  error?: string;
+  checkStatus?: string;
+  checkErrors?: number;
+  checkWarnings?: number;
+  filesChanged?: readonly string[];
+}
+
+const repairPromptText = (value: string): string =>
+  value
+    .replace(/Bearer\s+[^\s]+/giu, "Bearer [redacted]")
+    .replace(/\bsk-[A-Za-z0-9_-]{6,}\b/gu, "sk-[redacted]")
+    .replace(/\bgithub_pat_[A-Za-z0-9_]{20,}\b/gu, "github_pat_[redacted]")
+    .replace(/\bgh[pousr]_[A-Za-z0-9]{20,}\b/gu, "gh_[redacted]")
+    .replace(/\bglpat-[A-Za-z0-9_-]{20,}\b/gu, "glpat-[redacted]")
+    .replace(/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/gu, "xox-[redacted]")
+    .replace(/\bnpm_[A-Za-z0-9]{20,}\b/gu, "npm_[redacted]")
+    .replace(/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/gu, "AWS_[redacted]")
+    .replace(/\bAIza[0-9A-Za-z_-]{20,}\b/gu, "AIza[redacted]")
+    .replace(/\b(api[_-]?key|access[_-]?token|token|secret)\s*[:=]\s*([^\s"'&]+)/giu, "$1=[redacted]")
+    .replace(/(?:[A-Za-z]:[\\/]|\/(?:Users|private|tmp|home|var|Volumes)\/)[^\s,;]+/gu, "[path omitted]")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 320);
+
+const repairPromptSourcePath = (value: string): string | undefined => {
+  const normalized = value.replaceAll("\\", "/").trim();
+  if (
+    normalized.length === 0 ||
+    normalized.startsWith("/") ||
+    /^[A-Za-z]:\//u.test(normalized) ||
+    normalized.split("/").some((segment) => segment === "..")
+  ) {
+    return undefined;
+  }
+  return normalized;
+};
+
+export function buildAgentRepairPrompt(input: AgentRepairPromptInput): string {
+  const changedFiles = Array.from(
+    new Set((input.filesChanged ?? []).map(repairPromptSourcePath).filter((file): file is string => Boolean(file)))
+  ).sort();
+  return [
+    "HTMLslide repair request",
+    "",
+    `Engine: ${repairPromptText(input.engine) || "unknown"}`,
+    `Run status: ${repairPromptText(input.status ?? "failed") || "failed"}`,
+    `Run id: ${repairPromptText(input.runId ?? "unavailable") || "unavailable"}`,
+    `Failure summary: ${repairPromptText(input.error ?? "The agent run did not complete successfully.") || "The agent run did not complete successfully."}`,
+    `Check status: ${repairPromptText(input.checkStatus ?? "not available") || "not available"}`,
+    `Check errors: ${Number.isFinite(input.checkErrors) ? Math.max(0, Math.round(input.checkErrors ?? 0)) : 0}`,
+    `Check warnings: ${Number.isFinite(input.checkWarnings) ? Math.max(0, Math.round(input.checkWarnings ?? 0)) : 0}`,
+    `Changed source files: ${changedFiles.length > 0 ? changedFiles.join(", ") : "none recorded"}`,
+    "",
+    "Required next steps:",
+    "1. Run htmlslide check --json for the project.",
+    "2. Fix only project source areas and preserve the deck intent.",
+    "3. Re-run check, then export after all blocking issues pass.",
+    "",
+    "Do not modify exports/, secrets, credentials, or files outside the HTMLslide project."
+  ].join("\n");
+}
+
 export const defaultCommandActionStatuses = (): CommandActionStatuses => ({
   check: { kind: "idle", message: "Not checked" },
   export: { kind: "idle", message: "Not exported" },

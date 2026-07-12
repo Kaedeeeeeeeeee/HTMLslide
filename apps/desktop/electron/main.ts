@@ -771,6 +771,14 @@ function registerIpcHandlers(): void {
     };
   });
 
+  ipcMain.handle("htmlslide:copy-agent-repair-prompt", (_event, prompt: unknown) => {
+    if (typeof prompt !== "string" || prompt.length === 0 || prompt.length > 100_000) {
+      throw new Error("A bounded repair prompt is required before copying.");
+    }
+    clipboard.writeText(prompt);
+    return { copied: true };
+  });
+
   ipcMain.handle("htmlslide:list-projects", async () => {
     const library = await readDesktopLibrary(libraryPath(), configuredWorkspacePath());
     return library.recentProjects;

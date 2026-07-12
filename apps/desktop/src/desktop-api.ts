@@ -440,6 +440,7 @@ export type HtmlslideDesktopApi = {
   installOfficialSkills(): Promise<DesktopOfficialSkillsState>;
   uninstallCliIntegration(): Promise<DesktopCliIntegrationState>;
   copyCliManualInstallCommand(): Promise<{ copied: boolean; command: string }>;
+  copyAgentRepairPrompt(prompt: string): Promise<{ copied: boolean }>;
   listProjects(): Promise<DesktopProjectRecord[]>;
   removeRecentProject(project: DesktopProjectReference): Promise<DesktopProjectRecord[]>;
   markRecentProjectMissing(project: DesktopProjectReference): Promise<DesktopProjectRecord[]>;

@@ -3530,7 +3530,8 @@ function requireArg(args, name) {
 
   it("does not fall back to a stale deckpkg when the project CLI runtime is unavailable", async () => {
     const projectPath = await tempDir();
-    await writeExportedDeckPackage(projectPath);
+    await mkdir(path.join(projectPath, "exports"), { recursive: true });
+    await writeFile(path.join(projectPath, "exports", "stale.deckpkg"), "stale package bytes", "utf8");
 
     const result = await loadDesktopPresenterDeck(projectPath, {
       cliRunner: async () => {

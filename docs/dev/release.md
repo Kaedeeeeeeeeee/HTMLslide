@@ -70,6 +70,19 @@ pnpm rc:checklist -- --channel alpha --ci-run-url <ci-url> --package-run-url <al
 
 The generated Markdown file under `dist/acceptance/` is intentionally ignored by git. Attach or paste the completed checklist into the release candidate notes. It records the mandatory manual script from Phase 19.16: clean macOS account, DMG install, first launch, mock/local deck creation, BYOK when available, fake external agent, real Claude/Codex/Gemini claim validation or an explicit no-claim N/A, PDF/deckpkg export, external-monitor presentation, reopen, agent-run revert, CLI uninstall, and post-delete file cleanup.
 
+For a real Claude Code or Codex CLI compatibility claim, create a sanitized input JSON using the fixed `htmlslide-external-agent-rc-evidence-input` shape and verify it against the exact candidate package manifest:
+
+```bash
+pnpm rc:external-agent-evidence -- \
+  --evidence /path/to/external-agent-evidence-input.json \
+  --package-manifest /path/to/HTMLslide-alpha-manifest.json \
+  --commit <candidate-commit> \
+  --artifact-url <candidate-artifact-url> \
+  --output /path/to/external-agent-acceptance-evidence.json
+```
+
+The verifier rejects raw logs, secrets, absolute paths, unsupported fields, mismatched provider auth commands, incomplete Check/Export/Revert evidence, and package manifests whose signing/channel contract is inconsistent. Its output contains only sanitized metadata and input/package SHA-256 digests; it does not prove the manual run occurred by itself, so the human tester must retain the evidence link and exact artifact notes in the RC checklist.
+
 The Alpha Package and Release macOS workflows also generate a prefilled RC checklist in their uploaded artifact bundle. Treat that file as a run-bound evidence template, not completed acceptance, until a tester fills in the manual results.
 
 Also verify:

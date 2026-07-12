@@ -63,6 +63,7 @@ These gates are expected before each alpha candidate:
 | Rehearsal mode works | Presenter tests and Electron E2E cover single-screen rehearsal. |
 | Fake built-in Claude/Codex automation | Injected runners and fake executables cover install/auth/flag detection, exact built-in arguments, adapter identity, isolated temporary cwd, source-only application, concurrent-edit and symlink rejection, bounded metadata-only output, timeout/cancel, checkpoint diff, Check/Export gating, diff review, and revert. Shared registry tests cover retry across external runs. This proves HTMLslide's adapter contract only. |
 | Fake Generic external adapter automation | Agent adapter tests, desktop service tests, and Electron E2E cover saving a Generic command, running it from New Deck and opened-workspace paths, validating the write manifest, applying reported source writes, Check/Export gating, diff review, and checkpoint revert. |
+| External-agent RC evidence verifier | `pnpm rc:external-agent-evidence` accepts only a fixed sanitized real Claude/Codex evidence shape, binds it to the caller-declared commit and the exact package manifest SHA-256, and emits metadata-only evidence. |
 | Gemini detection-only boundary | Detector and renderer tests may prove command discovery and that Gemini remains ineligible for headless runs; they must not synthesize authenticated or runnable Gemini status. |
 | Unit, CLI, compiler, Electron, and packaging tests pass | Covered by local commands and CI workflows. |
 

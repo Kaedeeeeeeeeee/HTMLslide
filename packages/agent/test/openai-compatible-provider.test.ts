@@ -75,13 +75,13 @@ describe("OpenAI-compatible provider", () => {
     expect(expectHeader(calls[0]?.init, "authorization")).toBe(`Bearer ${apiKey}`);
   });
 
-  it("returns sanitized credential validation errors", async () => {
+  it.each([401, 403, 404] as const)("returns sanitized recoverable credential validation errors for %s", async (status) => {
     const { fetch } = createRecordingFetch(() =>
       jsonResponse({
         error: {
           message: `Invalid token Bearer ${apiKey}`
         }
-      }, { status: 401, statusText: "Unauthorized" })
+      }, { status, statusText: `HTTP ${status}` })
     );
     const provider = createOpenAICompatibleProvider({ apiKey, fetch, model });
 
@@ -89,6 +89,7 @@ describe("OpenAI-compatible provider", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
+      expect(result.reason).toContain(`credential validation failed (${status})`);
       expect(result.reason).toContain("Bearer [redacted]");
       expect(result.reason).not.toContain(apiKey);
       expect(result.recoverable).toBe(true);
@@ -248,6 +249,50 @@ describe("OpenAI-compatible provider", () => {
       expect(message).toContain("sk-[redacted]");
       expect(message).not.toContain(apiKey);
     }
+  });
+
+  it("propagates abort signals and rejects when the request is aborted", async () => {
+    const controller = new AbortController();
+    const { calls, fetch } = createRecordingFetch((call) => {
+      const signal = call.init?.signal;
+      expect(signal).toBe(controller.signal);
+      if (!signal) {
+        throw new Error("Expected fetch signal");
+      }
+
+      return new Promise<Response>((_, reject) => {
+        signal.addEventListener("abort", () => {
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        }, { once: true });
+      });
+    });
+    const provider = createOpenAICompatibleProvider({ apiKey, fetch, model });
+
+    const pending = provider.complete({
+      input: {},
+      prompt: "Review",
+      runId: "run-aborted",
+      signal: controller.signal,
+      stage: "review"
+    });
+    controller.abort();
+
+    await expect(pending).rejects.toThrow("OpenAI-compatible provider request failed: The operation was aborted.");
+    expect(calls[0]?.init?.signal).toBe(controller.signal);
+  });
+
+  it("sanitizes timeout-like fetch rejections", async () => {
+    const timeoutFetch: FetchLike = async () => {
+      throw new DOMException(`The operation timed out for ${apiKey}`, "TimeoutError");
+    };
+    const provider = createOpenAICompatibleProvider({ apiKey, fetch: timeoutFetch, model });
+
+    await expect(provider.complete({
+      input: {},
+      prompt: "Review",
+      runId: "run-timeout",
+      stage: "review"
+    })).rejects.toThrow("OpenAI-compatible provider request failed: The operation timed out for sk-[redacted]");
   });
 
   it("rejects malformed structured message content", async () => {

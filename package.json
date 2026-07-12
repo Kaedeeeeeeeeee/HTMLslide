@@ -34,6 +34,7 @@
     "verify:package:alpha": "pnpm package:alpha && pnpm smoke:package:alpha",
     "rc:checklist": "node scripts/release/create-rc-acceptance.mjs",
     "rc:byok-evidence": "node scripts/release/verify-byok-acceptance.mjs",
+    "rc:external-agent-evidence": "node scripts/release/verify-external-agent-acceptance.mjs",
     "release:notes": "node scripts/release/create-release-notes.mjs",
     "cli": "pnpm --filter @htmlslide/cli htmlslide",
     "doctor": "pnpm --filter @htmlslide/cli htmlslide doctor"

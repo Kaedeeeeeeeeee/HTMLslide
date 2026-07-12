@@ -10,6 +10,7 @@ import { buildArtifactMetadata } from "./artifact-metadata.mjs";
 import { renderChecklist } from "./create-rc-acceptance.mjs";
 import { renderReleaseNotes } from "./create-release-notes.mjs";
 import { main as verifyByokEvidence } from "./verify-byok-acceptance.mjs";
+import { main as verifyExternalAgentEvidence } from "./verify-external-agent-acceptance.mjs";
 
 const execFileAsync = promisify(execFile);
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
@@ -76,6 +77,103 @@ describe("release evidence scripts", () => {
     expect(checklist).toContain("| Channel | release |");
     expect(checklist).toContain("Release macOS completed with signed, notarized, stapled manifest.");
     expect(checklist).toContain("signed/notarized release behavior");
+  });
+
+  it("writes metadata-only real external-agent evidence bound to a package manifest", async () => {
+    const fixture = await createExternalAgentEvidenceFixture();
+    try {
+      const outputPath = path.join(fixture.root, "verified.json");
+      await verifyExternalAgentEvidence([
+        "--evidence", fixture.evidencePath,
+        "--package-manifest", fixture.manifestPath,
+        "--commit", "f570b88",
+        "--artifact-url", "https://github.test/actions/artifacts/123",
+        "--output", outputPath
+      ]);
+
+      const evidenceText = await readFile(outputPath, "utf8");
+      const evidence = JSON.parse(evidenceText) as Record<string, unknown>;
+      expect(evidence).toMatchObject({
+        kind: "htmlslide-external-agent-acceptance-evidence",
+        status: "passed",
+        provider: { id: "codex-cli", version: "codex-cli 0.144.1" },
+        candidate: {
+          binding: "caller-declared",
+          commit: "f570b88",
+          artifactUrl: "https://github.test/actions/artifacts/123",
+          channel: "alpha",
+          signing: "ad-hoc",
+          notarized: false
+        },
+        runs: {
+          successful: {
+            status: "succeeded",
+            changedFiles: ["slides/001-title.html"],
+            check: "passed",
+            export: "passed",
+            diffReview: "passed",
+            revert: "passed"
+          },
+          cancellation: { status: "cancelled", postCancelCheckExport: "not-started" }
+        }
+      });
+      expect(evidenceText).not.toContain("/tmp/");
+      expect(evidenceText).not.toContain("codex-secret");
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed for raw secrets, unsafe changed paths, and inconsistent package signing", async () => {
+    const cases = [
+      {
+        name: "raw secret",
+        mutate: async (fixture: Awaited<ReturnType<typeof createExternalAgentEvidenceFixture>>) => {
+          const input = JSON.parse(await readFile(fixture.evidencePath, "utf8")) as {
+            provider: Record<string, unknown>;
+          };
+          input.provider.apiKey = "codex-secret-value";
+          await writeFile(fixture.evidencePath, JSON.stringify(input), "utf8");
+          return /forbidden secret field/;
+        }
+      },
+      {
+        name: "unsafe source path",
+        mutate: async (fixture: Awaited<ReturnType<typeof createExternalAgentEvidenceFixture>>) => {
+          const input = JSON.parse(await readFile(fixture.evidencePath, "utf8")) as {
+            successfulRun: Record<string, unknown>;
+          };
+          input.successfulRun.changedFiles = ["/tmp/outside.html"];
+          await writeFile(fixture.evidencePath, JSON.stringify(input), "utf8");
+          return /project-relative POSIX path/;
+        }
+      },
+      {
+        name: "inconsistent signing",
+        mutate: async (fixture: Awaited<ReturnType<typeof createExternalAgentEvidenceFixture>>) => {
+          const manifest = JSON.parse(await readFile(fixture.manifestPath, "utf8")) as Record<string, unknown>;
+          manifest.signing = "developer-id";
+          await writeFile(fixture.manifestPath, JSON.stringify(manifest), "utf8");
+          return /ad-hoc, non-notarized/;
+        }
+      }
+    ];
+
+    for (const testCase of cases) {
+      const fixture = await createExternalAgentEvidenceFixture();
+      try {
+        const expected = await testCase.mutate(fixture);
+        await expect(verifyExternalAgentEvidence([
+          "--evidence", fixture.evidencePath,
+          "--package-manifest", fixture.manifestPath,
+          "--commit", "f570b88",
+          "--artifact-url", "https://github.test/actions/artifacts/123",
+          "--output", path.join(fixture.root, `${testCase.name}.json`)
+        ])).rejects.toThrow(expected);
+      } finally {
+        await rm(fixture.root, { recursive: true, force: true });
+      }
+    }
   });
 
   it("keeps rc:checklist stdout behavior wired to the script entrypoint", async () => {
@@ -551,6 +649,67 @@ async function createByokEvidenceFixture() {
     reportPath: path.join(reportsPath, "agent-run-run-real-provider.json"),
     exportManifestPath: path.join(exportsPath, "export-manifest.json")
   };
+}
+
+async function createExternalAgentEvidenceFixture() {
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-external-agent-evidence-"));
+  const evidencePath = path.join(fixtureRoot, "evidence-input.json");
+  const manifestPath = path.join(fixtureRoot, "alpha-manifest.json");
+  await writeFile(evidencePath, JSON.stringify({
+    schemaVersion: 1,
+    kind: "htmlslide-external-agent-rc-evidence-input",
+    status: "passed",
+    provider: { id: "codex-cli", version: "codex-cli 0.144.1" },
+    authentication: { status: "passed", command: "codex login status" },
+    permissionSummary: {
+      sandbox: "workspace-write",
+      permissionFlags: ["--ignore-user-config", "--skip-git-repo-check"]
+    },
+    successfulRun: {
+      runId: "run-success-123",
+      status: "succeeded",
+      edit: "passed",
+      changedFiles: ["slides/001-title.html"],
+      check: "passed",
+      export: "passed",
+      diffReview: "passed",
+      revert: "passed"
+    },
+    cancellationRun: {
+      runId: "run-cancel-456",
+      status: "cancelled",
+      postCancelCheckExport: "not-started"
+    },
+    secretSafety: "passed"
+  }, null, 2), "utf8");
+  await writeFile(manifestPath, JSON.stringify({
+    appName: "HTMLslide",
+    channel: "alpha",
+    version: "0.1.0",
+    arch: "arm64",
+    signing: "ad-hoc",
+    notarized: false,
+    stapled: false,
+    artifacts: [
+      "/tmp/HTMLslide-0.1.0-unsigned-alpha-arm64.dmg",
+      "/tmp/HTMLslide-0.1.0-unsigned-alpha-arm64.zip"
+    ],
+    artifactMetadata: [
+      {
+        path: "/tmp/HTMLslide-0.1.0-unsigned-alpha-arm64.dmg",
+        fileName: "HTMLslide-0.1.0-unsigned-alpha-arm64.dmg",
+        sizeBytes: 123,
+        sha256: "a".repeat(64)
+      },
+      {
+        path: "/tmp/HTMLslide-0.1.0-unsigned-alpha-arm64.zip",
+        fileName: "HTMLslide-0.1.0-unsigned-alpha-arm64.zip",
+        sizeBytes: 456,
+        sha256: "b".repeat(64)
+      }
+    ]
+  }, null, 2), "utf8");
+  return { root: fixtureRoot, evidencePath, manifestPath };
 }
 
 async function refreshFixtureSourceBinding(

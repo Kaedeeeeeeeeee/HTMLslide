@@ -11,6 +11,8 @@ export type OperationStatusKind = "idle" | "running" | "success" | "failed";
 export type CommandAction = "generate" | "check" | "repair" | "export" | "review";
 export type NewDeckGenerationMode = "no-ai" | "htmlslide-agent" | "external-agent" | "mock-agent";
 export type NewDeckOutputFormat = "pdf" | "html" | "deckpkg" | "thumbnails" | "speakerNotes";
+export type NewDeckExportFormat = Exclude<NewDeckOutputFormat, "speakerNotes">;
+export type NewDeckExportSelection = Record<NewDeckExportFormat, boolean>;
 
 export type NewDeckSource =
   | {
@@ -223,6 +225,25 @@ export const defaultCommandActionStatuses = (): CommandActionStatuses => ({
 
 export const defaultNewDeckOutputs: NewDeckOutputFormat[] = ["pdf", "html", "deckpkg", "thumbnails", "speakerNotes"];
 
+export const defaultNewDeckExportSelection = (): NewDeckExportSelection => ({
+  deckpkg: true,
+  html: true,
+  pdf: true,
+  thumbnails: true
+});
+
+export function newDeckExportSelectionFromOutputs(
+  outputs: readonly NewDeckOutputFormat[]
+): NewDeckExportSelection {
+  const selected = new Set(outputs);
+  return {
+    deckpkg: selected.has("deckpkg"),
+    html: selected.has("html"),
+    pdf: selected.has("pdf"),
+    thumbnails: selected.has("thumbnails")
+  };
+}
+
 export function createDefaultNewDeckDraft(): NewDeckDraft {
   return {
     audience: "general",
@@ -378,7 +399,7 @@ export function filterQaIssues(
 export function countIssuesBySeverity(issues: readonly QaIssue[]): Record<QaSeverity, number> {
   return issues.reduce<Record<QaSeverity, number>>(
     (counts, issue) => {
-      counts[issue.severity] += 1;
+      counts[issue.severity] = (counts[issue.severity] ?? 0) + 1;
       return counts;
     },
     { error: 0, suggestion: 0, warning: 0 }

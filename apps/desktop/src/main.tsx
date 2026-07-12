@@ -17,6 +17,7 @@ import {
   type DesktopAudienceWindowRequest,
   type DesktopAudienceWindowState,
   type DesktopCliIntegrationState,
+  type DesktopExportOptions,
   type DesktopOfficialSkillsState,
   type DesktopPresenterDeckResult,
   type DesktopProjectPreview,
@@ -27,9 +28,11 @@ import {
 import {
   buildAgentRepairPrompt,
   buildNewDeckAgentBrief,
+  defaultNewDeckExportSelection,
   defaultCommandActionStatuses,
   formatProjectOpenedAt,
   getNextStageIndex,
+  newDeckExportSelectionFromOutputs,
   newDeckTargetSlideCount,
   type AgentRunEventLike,
   type AgentRunLogLike,
@@ -39,6 +42,7 @@ import {
   type InspectorTab,
   type LibrarySection,
   type NewDeckDraft,
+  type NewDeckExportSelection,
   type OperationStatus,
   type ProjectSummary,
   type QaFilter,
@@ -884,6 +888,7 @@ function App(): React.ReactNode {
   const startAgentGeneration = useCallback(
     (brief: string, options: {
       engine?: DesktopAgentEngine;
+      exportSelection?: NewDeckExportSelection;
       forceMock?: boolean;
       projectPath?: string;
       targetSlideCount?: number;
@@ -898,6 +903,13 @@ function App(): React.ReactNode {
         ? "mock-agent"
         : options.engine ?? selectedAgentEngine(aiEngineSettings);
       const agentLabel = agentEngineLabel(selectedEngine);
+
+      if (selectedEngine === "mock-agent" && !options.forceMock && aiEngineSettings.mode === "no-ai") {
+        const message = "AI generation is disabled in No AI mode. Choose an AI engine in Settings or start a Local Mock deck from New Deck.";
+        setOperationStatus({ kind: "failed", message });
+        updateCommandActionStatus("generate", { kind: "failed", message: "No AI mode" });
+        return;
+      }
 
       agentStartPendingRef.current = true;
       setRunning(true);
@@ -937,6 +949,7 @@ function App(): React.ReactNode {
       desktopApi.startAgentRun({
         brief: prompt,
         engine: selectedEngine,
+        exportOptions: options.exportSelection,
         projectPath: options.projectPath,
         targetSlideCount: options.targetSlideCount,
         runExport: true
@@ -1306,6 +1319,7 @@ function App(): React.ReactNode {
         if (draft.generationMode !== "no-ai") {
           startAgentGeneration(buildNewDeckAgentBrief(draft), {
             engine: draft.generationMode,
+            exportSelection: newDeckExportSelectionFromOutputs(draft.outputs),
             forceMock: draft.generationMode === "mock-agent",
             projectPath: result.project.project.path,
             targetSlideCount: newDeckTargetSlideCount(draft)
@@ -1608,7 +1622,7 @@ function App(): React.ReactNode {
     [activeProject, activeProjectIsDeckPackage, desktopApi, runCheck]
   );
 
-  const runExport = useCallback((): void => {
+  const runExport = useCallback((exportOptions: DesktopExportOptions = defaultNewDeckExportSelection()): void => {
     if (!desktopApi || !activeProject || activeProject.path.startsWith("~") || activeProjectIsDeckPackage) {
       setInspectorTab("export");
       setOperationStatus({ kind: "failed", message: "Open a local deck project before export" });
@@ -1619,7 +1633,7 @@ function App(): React.ReactNode {
     setInspectorTab("export");
     setOperationStatus({ kind: "running", message: "Exporting artifacts" });
     updateCommandActionStatus("export", { kind: "running", message: "Exporting artifacts" });
-    desktopApi.exportProject(activeProject.path)
+    desktopApi.exportProject(activeProject.path, exportOptions)
       .then((result) => {
         const nextStatus: OperationStatus = {
           kind: result.ok ? "success" : "failed",
@@ -1915,6 +1929,7 @@ function App(): React.ReactNode {
       agentCanRetry={Boolean(agentRunSnapshot?.canRetry && !running)}
       agentCancelPending={agentCancelPendingRunId === agentRunSnapshot?.runId || agentRunSnapshot?.status === "cancelling"}
       agentEngine={agentRunSnapshot?.engine ?? selectedAgentEngine(aiEngineSettings)}
+      generationEnabled={aiEngineSettings.mode !== "no-ai"}
       agentRunId={agentRunSnapshot?.runId}
       agentRunStatus={agentRunSnapshot?.status}
       commandValue={commandValue}
@@ -1960,12 +1975,12 @@ function App(): React.ReactNode {
         setLibrarySection("settings");
         setView("library");
       }}
-      onToolbarAction={(action) => {
+      onToolbarAction={(action, exportOptions) => {
         if (action === "check") {
           runCheck();
         }
         if (action === "export") {
-          runExport();
+          runExport(exportOptions);
         }
         if (action === "present") {
           setOperationStatus({ kind: "success", message: "Presenter open" });

@@ -907,6 +907,9 @@ test.describe("HTMLslide desktop smoke", () => {
     await newDeckPanel.getByLabel("Tone").selectOption("executive");
     await newDeckPanel.getByLabel("Design").selectOption("consulting-clean");
     await newDeckPanel.getByLabel("Speaker notes").selectOption("full-script");
+    await newDeckPanel.getByLabel("HTML", { exact: true }).uncheck({ force: true });
+    await newDeckPanel.getByLabel("Thumbnails", { exact: true }).uncheck({ force: true });
+    await newDeckPanel.getByLabel("deckpkg", { exact: true }).uncheck({ force: true });
     await newDeckPanel.getByRole("button", { name: "Create & Generate", exact: true }).click();
     await chooseVisualDirection(page, 1);
 
@@ -924,6 +927,11 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(page.getByRole("heading", { name: "Review changes" })).toBeVisible();
 
     const projectDir = path.join(workspaceDir, "investor-demo");
+    const exportEntries = await readdir(path.join(projectDir, "exports"));
+    expect(exportEntries).toEqual(expect.arrayContaining(["export-manifest.json", "mock-htmlslide-deck.pdf", "notes.json"]));
+    expect(exportEntries).not.toContain("mock-htmlslide-deck.html");
+    expect(exportEntries).not.toContain("mock-htmlslide-deck.deckpkg");
+    expect(exportEntries).not.toContain("thumbnails");
     const manifest = JSON.parse(await readFile(path.join(projectDir, "deck.json"), "utf8")) as {
       agent?: { lastRunId?: string };
       slides?: unknown[];
@@ -1274,6 +1282,9 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible({
       timeout: 30_000
     });
+    await expect(page.locator(".workspace-toolbar").getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
 
     const agentConsole = page.locator(".agent-console");
     const controls = page.locator(".command-bar__controls");
@@ -1583,47 +1594,10 @@ test.describe("HTMLslide desktop smoke", () => {
     )).toBeVisible();
     await expectNoFrameworkOverlay(page);
 
-    await page.getByRole("button", { name: "Generate", exact: true }).click();
-    await chooseVisualDirection(page);
-
-    await expect(page.getByText("Mock agent completed check and export")).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Mock HTMLslide Deck" })).toBeVisible();
-    await expect(page.locator('iframe[title="HTMLslide mock deck slide preview"]')).toBeVisible({ timeout: 30_000 });
-    await expect(page.frameLocator('iframe[title="HTMLslide mock deck slide preview"]').getByRole(
-      "heading",
-      { name: "Mock HTMLslide Deck" }
-    )).toBeVisible();
-    await expect(page.getByRole("button", { name: /Reviewable outputs/ })).toBeVisible();
-    await expect(page.getByText("generate: Mock generation complete")).toBeVisible();
-    await expect(page.getByText(/check: Check passed/)).toBeVisible();
-    await expect(page.getByText(/export: [1-9][0-9]* artifacts/)).toBeVisible();
-    await expect(page.getByText("review: Ready for review")).toBeVisible();
-
-    await expect(page.getByRole("heading", { name: "Review changes" })).toBeVisible();
-    const diffReview = page.locator(".agent-diff-review");
-    await expect(diffReview.getByText("Files changed")).toBeVisible();
-    await expect(diffReview.getByText("Slides changed")).toBeVisible();
-    await expect(diffReview.getByText("Text/CSS diff")).toBeVisible();
-    await expect(
-      diffReview.locator(".agent-diff-file-list").filter({ hasText: "Files changed" }).getByText("slides/003-review.html")
-    ).toBeVisible();
-    await expect(diffReview.locator(".agent-text-diff__title").getByText("slides/003-review.html")).toBeVisible();
-
-    await diffReview.getByRole("button", { name: "Close diff review", exact: true }).click();
-    await expect(diffReview).toBeHidden();
-    const viewDiffButton = page.locator(".command-bar__controls").getByRole("button", { name: "View diff", exact: true });
-    await expect(viewDiffButton).toHaveAttribute("aria-pressed", "false");
-    await viewDiffButton.click();
-    await expect(viewDiffButton).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByRole("heading", { name: "Review changes" })).toBeVisible();
-
-    page.once("dialog", async (dialog) => {
-      await dialog.accept();
-    });
-    await page.getByRole("button", { name: "Revert changes", exact: true }).click();
-    await expect(page.getByText("Checkpoint reverted")).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible();
-    await expect(page.locator('iframe[title="HTML as source slide preview"]')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
+    await expect(page.getByText("AI generation is disabled in No AI mode.")).toBeVisible();
 
     await expectNoFrameworkOverlay(page);
     expect(browserErrors).toEqual([]);
@@ -1841,6 +1815,19 @@ fetch("${previewNetworkOrigin}/fetch");
       await expect(access(thumbnailPath)).resolves.toBeUndefined();
       expect(readPngSize(await readFile(thumbnailPath))).toEqual({ width: 960, height: 540 });
     }
+
+    await page.getByLabel("HTML", { exact: true }).uncheck();
+    await page.getByLabel("PNG thumbnails", { exact: true }).uncheck();
+    await page.getByLabel("deckpkg", { exact: true }).uncheck();
+    await page.getByRole("button", { name: "Export selected", exact: true }).click();
+    await expect(page.getByRole("status", { name: "Export operation status" })).toContainText("Export complete", {
+      timeout: 30_000
+    });
+    await expect(access(pdfPath)).resolves.toBeUndefined();
+    await expect(access(notesPath)).resolves.toBeUndefined();
+    await expect(access(htmlPath)).rejects.toThrow();
+    await expect(access(deckpkgPath)).rejects.toThrow();
+    await expect(access(path.join(projectPath, "exports", "thumbnails", `${deck.slides[0]?.id ?? "001-title"}.png`))).rejects.toThrow();
     await rm(deckpkgPath, { force: true });
 
     await page.locator(".workspace-toolbar").getByRole("button", { name: "Present", exact: true }).click();
@@ -2296,9 +2283,11 @@ fetch("${previewNetworkOrigin}/fetch");
     const restoredOverflowIssue = qaPanel.getByRole("list", { name: "QA issues" }).getByRole("listitem", { name: "text-overflow" });
     await expect(restoredOverflowIssue).toBeVisible();
     await restoredOverflowIssue.getByRole("button", { name: "Ignore text-overflow rule" }).click();
-    await expect(readFile(path.join(projectPath, ".htmlslide", "qa-ignores.json"), "utf8")).resolves.toContain(
-      '"text-overflow"'
-    );
+    const qaIgnorePath = path.join(projectPath, ".htmlslide", "qa-ignores.json");
+    await expect.poll(
+      async () => readFile(qaIgnorePath, "utf8").then((value) => value.includes('"text-overflow"')).catch(() => false),
+      { timeout: 30_000 }
+    ).toBe(true);
     await expect(page.getByText(/check: Check passed/)).toBeVisible({ timeout: 30_000 });
     await expect(qaPanel.getByRole("list", { name: "QA issues" })).toHaveCount(0);
 

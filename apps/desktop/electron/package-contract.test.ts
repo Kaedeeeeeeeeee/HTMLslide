@@ -33,6 +33,11 @@ describe("macOS alpha packaging contract", () => {
     });
   });
 
+  it("runs Alpha packaging when any workspace package changes", async () => {
+    const workflow = await readText(".github/workflows/alpha-package.yml");
+    expect(workflow).toContain('      - "packages/**"');
+  });
+
   it("keeps unsigned alpha artifact metadata explicit", async () => {
     const config = await readJson<{
       adHocSign?: boolean;

@@ -21,6 +21,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   addDesktopQaIgnoreRule,
   diffDesktopCheckpoint,
+  exportOptionsToCliArgs,
   findCliRuntime,
   getDesktopCliIntegration,
   getDesktopOfficialSkills,
@@ -1062,6 +1063,12 @@ describe("desktop services", () => {
     const result = await runDesktopMockAgent(
       {
         brief: "Make a deterministic product-alpha deck",
+        exportOptions: {
+          deckpkg: false,
+          html: true,
+          pdf: false,
+          thumbnails: true
+        },
         projectPath,
         runId: "run-desktop-test"
       },
@@ -1188,7 +1195,7 @@ describe("desktop services", () => {
     ]);
     expect(calls).toEqual([
       ["check", projectPath, "--json"],
-      ["export", projectPath, "--json"]
+      ["export", projectPath, "--no-pdf", "--html", "--no-deckpkg", "--thumbnails", "--json"]
     ]);
 
     const deck = JSON.parse(await readFile(path.join(projectPath, "deck.json"), "utf8"));
@@ -1224,6 +1231,20 @@ describe("desktop services", () => {
     const restoredDeck = JSON.parse(await readFile(path.join(projectPath, "deck.json"), "utf8"));
     expect(restoredDeck.title).toBe("Desktop Test Deck");
     expect(restoredDeck.slides).toHaveLength(1);
+  });
+
+  it("maps desktop export choices to explicit CLI flags", () => {
+    expect(exportOptionsToCliArgs(undefined)).toEqual([]);
+    expect(exportOptionsToCliArgs({ deckpkg: true, html: true, pdf: true, thumbnails: true })).toEqual([]);
+    expect(exportOptionsToCliArgs({ deckpkg: false, html: true, pdf: false, thumbnails: true })).toEqual([
+      "--no-pdf",
+      "--html",
+      "--no-deckpkg",
+      "--thumbnails"
+    ]);
+    expect(() => exportOptionsToCliArgs({ deckpkg: false, html: true, pdf: "yes", thumbnails: true })).toThrow(
+      "Export options must use boolean values: pdf."
+    );
   });
 
   it("refuses a symlinked agent report directory without writing outside the project", async () => {

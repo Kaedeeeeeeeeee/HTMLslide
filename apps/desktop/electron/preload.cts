@@ -37,7 +37,7 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
   createProject: (request: { title: string; folderName: string; templateId?: string; workspacePath?: string }) =>
     ipcRenderer.invoke("htmlslide:create-project", request),
   checkProject: (projectPath: string) => ipcRenderer.invoke("htmlslide:check-project", projectPath),
-  exportProject: (projectPath: string) => ipcRenderer.invoke("htmlslide:export-project", projectPath),
+  exportProject: (projectPath: string, options?: unknown) => ipcRenderer.invoke("htmlslide:export-project", projectPath, options),
   loadPresenterDeck: (projectPath: string) => ipcRenderer.invoke("htmlslide:load-presenter-deck", projectPath),
   loadPresenterDeckPackage: (deckpkgPath: string) => ipcRenderer.invoke("htmlslide:load-presenter-deckpkg", deckpkgPath),
   onOpenRequest: (handler: (request: { kind: "deckpkg" | "project"; path: string; requestId: number }) => void) => {
@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
   closeAudienceWindow: () => ipcRenderer.invoke("htmlslide:close-audience-window"),
   startAgentRun: (request: {
     engine: "mock-agent" | "htmlslide-agent" | "external-agent";
+    exportOptions?: unknown;
     projectPath: string;
     brief: string;
     targetSlideCount?: number;

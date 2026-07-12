@@ -14,7 +14,7 @@ For a more detailed example with a concrete brief, Check commands, export artifa
 6. Click Create and Generate.
 7. Inspect the generated outline, visual direction, and source changes.
 8. Run Check.
-9. Export PDF and deckpkg.
+9. Select the export formats you need, then click Export. Notes JSON remains available with the project export.
 10. Open Presenter Mode.
 
 ## Source Files

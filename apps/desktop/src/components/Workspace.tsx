@@ -70,6 +70,7 @@ import {
   buildAgentRunStages,
   buildRuntimeStages,
   countIssuesBySeverity,
+  defaultNewDeckExportSelection,
   filterQaIssues
 } from "../model";
 import type {
@@ -78,6 +79,7 @@ import type {
   AgentStage,
   CommandActionStatuses,
   InspectorTab,
+  NewDeckExportSelection,
   OperationStatus,
   ProjectSummary,
   QaFilter,
@@ -102,6 +104,7 @@ interface WorkspaceProps {
   agentCanRetry: boolean;
   agentCancelPending: boolean;
   agentEngine: DesktopAgentEngine;
+  generationEnabled: boolean;
   agentRunId?: string;
   agentRunStatus?: DesktopAgentRunStatus;
   commandValue: string;
@@ -139,7 +142,7 @@ interface WorkspaceProps {
   onSelectVisualDirection: (directionId: string) => void;
   onSelectSlide: (slideId: string) => void;
   onSettingsOpen: () => void;
-  onToolbarAction: (action: "generate" | "check" | "export" | "present") => void;
+  onToolbarAction: (action: "generate" | "check" | "export" | "present", exportOptions?: NewDeckExportSelection) => void;
   onViewDiff?: () => void;
   loadSlidePreview?: (projectPath: string, slideId: string) => Promise<DesktopSlidePreviewDocument>;
   loadPresenterDeck?: () => Promise<PresenterDeck | null>;
@@ -264,6 +267,7 @@ export function Workspace({
   agentCanRetry,
   agentCancelPending,
   agentEngine,
+  generationEnabled,
   agentRunId,
   agentRunStatus,
   agentRunEvents,
@@ -430,12 +434,17 @@ export function Workspace({
     [project.title, slides]
   );
   const [presenterState, setPresenterState] = useState<ActivePresenterState | null>(null);
+  const [exportOptions, setExportOptions] = useState<NewDeckExportSelection>(defaultNewDeckExportSelection);
   const presenterTriggerRef = useRef<HTMLElement | null>(null);
   const openedInitialPresenterIdRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     setPresenterState(null);
   }, [project.id, slides]);
+
+  useEffect(() => {
+    setExportOptions(defaultNewDeckExportSelection());
+  }, [project.id]);
 
   useEffect(() => {
     if (!initialPresenterOpen || openedInitialPresenterIdRef.current === initialPresenterOpen.id) {
@@ -496,20 +505,21 @@ export function Workspace({
   }, []);
 
   const handleWorkspaceToolbarAction = useCallback(
-    (action: "generate" | "check" | "export" | "present"): void => {
+    (action: "generate" | "check" | "export" | "present", nextExportOptions?: NewDeckExportSelection): void => {
       if (action === "present") {
         handleOpenPresenter();
         return;
       }
-      onToolbarAction(action);
+      onToolbarAction(action, action === "export" ? nextExportOptions ?? exportOptions : undefined);
     },
-    [handleOpenPresenter, onToolbarAction]
+    [exportOptions, handleOpenPresenter, onToolbarAction]
   );
 
   return (
     <main className={diffReview?.open ? "workspace-shell workspace-shell--with-diff" : "workspace-shell"}>
       <Toolbar
         canRetry={agentCanRetry}
+        generationEnabled={generationEnabled}
         issueCounts={issueCounts}
         onInspectorTabChange={onInspectorTabChange}
         onRunAction={onRunAction}
@@ -540,12 +550,16 @@ export function Workspace({
         <Inspector
           activeTab={inspectorTab}
           currentSlide={currentSlide}
+          generationEnabled={generationEnabled}
           issueCounts={selectedIssueCounts}
+          exportIssueCounts={issueCounts}
           issues={selectedIssues}
           onQaFilterChange={onQaFilterChange}
           onFixQaIssue={onFixQaIssue}
           onIgnoreQaIssue={onIgnoreQaIssue}
           onToolbarAction={handleWorkspaceToolbarAction}
+          exportOptions={exportOptions}
+          onExportOptionsChange={setExportOptions}
           onSaveSlideNotes={onSaveSlideNotes}
           notesReadOnly={notesReadOnly}
           notesSaveStatus={notesSaveStatus}
@@ -572,6 +586,7 @@ export function Workspace({
         onSelectVisualDirection={onSelectVisualDirection}
         onViewDiff={onViewDiff}
         engine={agentEngine}
+        generationEnabled={generationEnabled}
         runId={agentRunId}
         runStatus={agentRunStatus}
         pendingVisualDirections={pendingVisualDirections}
@@ -1343,6 +1358,7 @@ function togglePresenterFullscreen(element: HTMLElement | null): void {
 
 interface ToolbarProps {
   canRetry: boolean;
+  generationEnabled: boolean;
   issueCounts: Record<"error" | "warning" | "suggestion", number>;
   operationStatus: OperationStatus;
   project: ProjectSummary;
@@ -1351,11 +1367,12 @@ interface ToolbarProps {
   onInspectorTabChange: (tab: InspectorTab) => void;
   onRunAction: (action: "start" | "pause" | "cancel" | "retry") => void;
   onSettingsOpen: () => void;
-  onToolbarAction: (action: "generate" | "check" | "export" | "present") => void;
+  onToolbarAction: (action: "generate" | "check" | "export" | "present", exportOptions?: NewDeckExportSelection) => void;
 }
 
 function Toolbar({
   canRetry,
+  generationEnabled,
   issueCounts,
   onInspectorTabChange,
   onRunAction,
@@ -1380,7 +1397,7 @@ function Toolbar({
       <div className="toolbar-actions">
         {(["generate", "check", "export", "present"] as const).map((action) => (
           <Button
-            disabled={action === "generate" && running}
+            disabled={action === "generate" && (!generationEnabled || running)}
             icon={toolbarIcon(action)}
             key={action}
             onClick={() => {
@@ -1706,25 +1723,33 @@ function SyntheticSamplePreview({ issueCount, slide }: { issueCount: number; sli
 interface InspectorProps {
   activeTab: InspectorTab;
   currentSlide: SlideSummary;
+  exportIssueCounts: Record<"error" | "warning" | "suggestion", number>;
+  exportOptions: NewDeckExportSelection;
+  generationEnabled: boolean;
   issueCounts: Record<"error" | "warning" | "suggestion", number>;
   issues: QaIssue[];
   operationStatus: OperationStatus;
   qaFilter: QaFilter;
   onFixQaIssue: (issue: QaIssue) => void;
+  onExportOptionsChange: (options: NewDeckExportSelection) => void;
   onIgnoreQaIssue: (issue: QaIssue, scope: QaIgnoreScope) => Promise<boolean>;
   onQaFilterChange: (filter: QaFilter) => void;
   onSaveSlideNotes: (slideId: string, content: string) => Promise<boolean>;
   notesReadOnly: boolean;
   onTabChange: (tab: InspectorTab) => void;
-  onToolbarAction: (action: "generate" | "check" | "export" | "present") => void;
+  onToolbarAction: (action: "generate" | "check" | "export" | "present", exportOptions?: NewDeckExportSelection) => void;
   notesSaveStatus: OperationStatus;
 }
 
 function Inspector({
   activeTab,
   currentSlide,
+  exportIssueCounts,
+  exportOptions,
+  generationEnabled,
   issueCounts,
   issues,
+  onExportOptionsChange,
   onFixQaIssue,
   onIgnoreQaIssue,
   onQaFilterChange,
@@ -1757,6 +1782,7 @@ function Inspector({
         ) : null}
         {activeTab === "qa" ? (
           <QaPanel
+            generationEnabled={generationEnabled}
             issueCounts={issueCounts}
             issues={issues}
             onFixQaIssue={onFixQaIssue}
@@ -1767,8 +1793,10 @@ function Inspector({
         ) : null}
         {activeTab === "export" ? (
           <ExportPanel
-            issueCounts={issueCounts}
-            onExport={() => onToolbarAction("export")}
+            exportOptions={exportOptions}
+            issueCounts={exportIssueCounts}
+            onExportOptionsChange={onExportOptionsChange}
+            onExport={() => onToolbarAction("export", exportOptions)}
             operationStatus={operationStatus}
           />
         ) : null}
@@ -1908,6 +1936,7 @@ function NotesPanel({
 }
 
 interface QaPanelProps {
+  generationEnabled: boolean;
   issueCounts: Record<"error" | "warning" | "suggestion", number>;
   issues: QaIssue[];
   qaFilter: QaFilter;
@@ -1917,6 +1946,7 @@ interface QaPanelProps {
 }
 
 function QaPanel({
+  generationEnabled,
   issueCounts,
   issues,
   onFixQaIssue,
@@ -2014,6 +2044,7 @@ function QaPanel({
                   <div className="qa-issue__actions">
                     <Button
                       aria-label={`Fix ${issue.type} with AI`}
+                      disabled={!generationEnabled}
                       onClick={() => onFixQaIssue(issue)}
                       size="sm"
                       variant="primary"
@@ -2048,15 +2079,26 @@ function QaPanel({
 }
 
 function ExportPanel({
+  exportOptions,
   issueCounts,
+  onExportOptionsChange,
   onExport,
   operationStatus
 }: {
+  exportOptions: NewDeckExportSelection;
   issueCounts: Record<"error" | "warning" | "suggestion", number>;
+  onExportOptionsChange: (options: NewDeckExportSelection) => void;
   operationStatus: OperationStatus;
   onExport: () => void;
 }): ReactNode {
   const blocked = issueCounts.error > 0;
+  const selectedCount = Object.values(exportOptions).filter(Boolean).length;
+  const toggle = (key: keyof NewDeckExportSelection): void => {
+    onExportOptionsChange({
+      ...exportOptions,
+      [key]: !exportOptions[key]
+    });
+  };
 
   return (
     <section className="inspector-section">
@@ -2064,34 +2106,46 @@ function ExportPanel({
       <div className="export-stack">
         <label className="check-row">
           <input
-            defaultChecked
+            checked={exportOptions.pdf}
+            onChange={() => toggle("pdf")}
             type="checkbox"
           />
           <span>PDF</span>
         </label>
         <label className="check-row">
           <input
-            defaultChecked
+            checked={exportOptions.html}
+            onChange={() => toggle("html")}
+            type="checkbox"
+          />
+          <span>HTML</span>
+        </label>
+        <label className="check-row">
+          <input
+            checked={exportOptions.thumbnails}
+            onChange={() => toggle("thumbnails")}
             type="checkbox"
           />
           <span>PNG thumbnails</span>
         </label>
         <label className="check-row">
           <input
+            checked={exportOptions.deckpkg}
+            onChange={() => toggle("deckpkg")}
             type="checkbox"
           />
           <span>deckpkg</span>
         </label>
         <Button
-          disabled={blocked}
+          disabled={blocked || selectedCount === 0}
           icon={<Download />}
           onClick={onExport}
           variant="primary"
         >
-          Export PDF
+          Export selected
         </Button>
-        <StatusPill tone={blocked ? "danger" : "success"}>
-          {blocked ? "Blocked by QA" : "Ready to export"}
+        <StatusPill tone={blocked ? "danger" : selectedCount === 0 ? "warning" : "success"}>
+          {blocked ? "Blocked by QA" : selectedCount === 0 ? "Choose an output" : "Ready to export"}
         </StatusPill>
         <p
           aria-atomic="true"
@@ -2116,6 +2170,7 @@ interface AgentRunConsoleProps {
   diffReview?: AgentDiffReview;
   running: boolean;
   engine: DesktopAgentEngine;
+  generationEnabled: boolean;
   runId?: string;
   runStatus?: DesktopAgentRunStatus;
   stages: ReturnType<typeof buildRuntimeStages>;
@@ -2149,6 +2204,7 @@ function AgentRunConsole({
   onSelectVisualDirection,
   onViewDiff,
   engine,
+  generationEnabled,
   runId,
   runStatus,
   running,
@@ -2266,9 +2322,14 @@ function AgentRunConsole({
       ) : null}
 
       <section className="command-bar">
+        {!generationEnabled ? (
+          <p aria-live="polite" className="settings-note">
+            AI generation is disabled in No AI mode. Use Check, Export, Notes, and Present, or choose an AI engine in Settings.
+          </p>
+        ) : null}
         <div className="command-bar__controls">
           <Button
-            disabled={running}
+            disabled={!generationEnabled || running}
             icon={<Play />}
             onClick={() => onRunAction("start")}
             variant="primary"
@@ -2338,12 +2399,13 @@ function AgentRunConsole({
           <MessageSquareText />
           <input
             aria-label="Command bar"
+            disabled={!generationEnabled || running}
             onChange={(event) => onCommandChange(event.currentTarget.value)}
             placeholder="Ask the agent to revise, check, repair, or export this deck"
             value={commandValue}
           />
           <Button
-            disabled={running}
+            disabled={!generationEnabled || running}
             icon={<Send />}
             size="sm"
             type="submit"

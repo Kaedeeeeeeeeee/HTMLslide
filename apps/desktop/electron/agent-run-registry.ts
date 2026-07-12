@@ -11,9 +11,11 @@ import {
   type VisualDirection
 } from "@htmlslide/agent";
 import type { AgentAdapterRunResult } from "@htmlslide/agent-adapters";
+import { normalizeDesktopExportOptions } from "./desktop-services.js";
 import type {
   CliRunResult,
   DesktopByokAgentRunResult,
+  DesktopExportOptions,
   DesktopExternalAgentRunResult,
   DesktopMockAgentRunResult
 } from "./desktop-services.js";
@@ -22,6 +24,7 @@ export type DesktopAgentEngine = "mock-agent" | "htmlslide-agent" | "external-ag
 
 export type DesktopAgentRunRequest = {
   engine: DesktopAgentEngine;
+  exportOptions?: DesktopExportOptions;
   projectPath: string;
   brief: string;
   targetSlideCount?: number;
@@ -462,7 +465,12 @@ export class DesktopAgentRunRegistry {
     }
     const projectPath = this.#canonicalProjectPath(request.projectPath);
     const brief = request.brief.trim() || "Create or revise this HTMLslide deck.";
-    return { ...request, projectPath, brief };
+    return {
+      ...request,
+      exportOptions: normalizeDesktopExportOptions(request.exportOptions),
+      projectPath,
+      brief
+    };
   }
 
   #canonicalProjectPath(projectPath: string): string {

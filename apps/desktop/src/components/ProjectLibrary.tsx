@@ -130,12 +130,12 @@ const speakerNotesOptions = [
   { id: "none", label: "None" }
 ] as const;
 
-const outputOptions: Array<{ id: NewDeckOutputFormat; label: string }> = [
+const outputOptions: Array<{ id: NewDeckOutputFormat; label: string; locked?: boolean }> = [
   { id: "pdf", label: "PDF" },
   { id: "html", label: "HTML" },
   { id: "deckpkg", label: "deckpkg" },
   { id: "thumbnails", label: "Thumbnails" },
-  { id: "speakerNotes", label: "Notes JSON" }
+  { id: "speakerNotes", label: "Notes JSON", locked: true }
 ];
 
 function projectTone(status: ProjectSummary["status"]): "success" | "warning" | "danger" | "info" {
@@ -355,6 +355,10 @@ function RecentProjects({
   };
 
   const toggleOutput = (output: NewDeckOutputFormat): void => {
+    if (output === "speakerNotes") {
+      return;
+    }
+
     setDraft((current) => ({
       ...current,
       outputs: current.outputs.includes(output)
@@ -794,6 +798,7 @@ function RecentProjects({
               >
                 <input
                   checked={draft.outputs.includes(option.id)}
+                  disabled={option.locked}
                   onChange={() => toggleOutput(option.id)}
                   type="checkbox"
                 />
@@ -1013,7 +1018,7 @@ function validateNewDeckDraft(
       : "Connect an authenticated Claude Code or Codex CLI, or configure a ready Generic command, before using Coding Agent generation.";
   }
 
-  if (draft.outputs.length === 0) {
+  if (!draft.outputs.some((output) => output !== "speakerNotes")) {
     return "Choose at least one output.";
   }
 

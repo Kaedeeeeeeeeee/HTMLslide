@@ -7,6 +7,7 @@ on:
       - ".github/workflows/alpha-package.yml"
       - "apps/desktop/**"
       - "build/package/**"
+      - "packages/**"
       - "packages/cli/**"
       - "packages/compiler/**"
       - "packages/core/**"

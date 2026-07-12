@@ -9,6 +9,7 @@ import {
   addDesktopQaIgnoreRule,
   detectExternalAgentStatuses,
   diffDesktopCheckpoint,
+  exportOptionsToCliArgs,
   findCliRuntime,
   getDesktopCliIntegration,
   getDesktopOfficialSkills,
@@ -21,6 +22,7 @@ import {
   loadDesktopPresenterDeck,
   loadDesktopPresenterDeckPackage,
   markRecentProjectMissing,
+  normalizeDesktopExportOptions,
   readAiEngineSettings,
   readDesktopLibrary,
   removeRecentProject,
@@ -41,6 +43,7 @@ import {
   type DesktopAiEngineSettingsSaveRequest,
   type DesktopCreateProjectRequest,
   type DesktopCredentialStore,
+  type DesktopExportOptions,
   type DesktopProjectRecord
 } from "./desktop-services.js";
 import {
@@ -163,6 +166,7 @@ const agentRunRegistry = new DesktopAgentRunRegistry({
       return runDesktopMockAgent(
         {
           brief: request.brief,
+          exportOptions: request.exportOptions,
           maxRepairRounds: request.maxRepairRounds,
           projectPath: request.projectPath,
           runExport: request.runExport,
@@ -177,6 +181,7 @@ const agentRunRegistry = new DesktopAgentRunRegistry({
       return runDesktopByokAgent(
         {
           brief: request.brief,
+          exportOptions: request.exportOptions,
           maxRepairRounds: request.maxRepairRounds,
           projectPath: request.projectPath,
           runExport: request.runExport,
@@ -198,6 +203,7 @@ const agentRunRegistry = new DesktopAgentRunRegistry({
     return runDesktopExternalAgent(
       {
         brief: request.brief,
+        exportOptions: request.exportOptions,
         projectPath: request.projectPath,
         runExport: request.runExport,
         runId: request.runId
@@ -988,8 +994,13 @@ function registerIpcHandlers(): void {
     return result;
   });
 
-  ipcMain.handle("htmlslide:export-project", async (_event, projectPath: string) => {
-    const result = await invokeCli(["export", projectPath, "--json"]);
+  ipcMain.handle("htmlslide:export-project", async (_event, projectPath: string, options?: DesktopExportOptions) => {
+    const result = await invokeCli([
+      "export",
+      projectPath,
+      ...exportOptionsToCliArgs(normalizeDesktopExportOptions(options)),
+      "--json"
+    ]);
     const project = await summarizeDeckProject(projectPath).catch((): DesktopProjectRecord | undefined => undefined);
     if (project) {
       await upsertRecentProject(

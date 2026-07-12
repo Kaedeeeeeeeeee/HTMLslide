@@ -1,4 +1,10 @@
-import type { NewDeckDraft, NewDeckSource, ProjectSummary, SlideSummary } from "./model";
+import type {
+  NewDeckDraft,
+  NewDeckExportSelection,
+  NewDeckSource,
+  ProjectSummary,
+  SlideSummary
+} from "./model";
 import type { AiEngineSettings, ExternalAgentStatus } from "./settings-model";
 import type { PresenterDeck } from "@htmlslide/presenter/session";
 import type { AgentAdapterRunResult } from "@htmlslide/agent-adapters";
@@ -126,6 +132,8 @@ export type DesktopProjectReference = {
   id?: string;
   path?: string;
 };
+
+export type DesktopExportOptions = NewDeckExportSelection;
 
 export type DesktopSourceFileSelection = {
   kind: "file";
@@ -320,6 +328,7 @@ export type DesktopAgentEngine = "mock-agent" | "htmlslide-agent" | "external-ag
 
 export type DesktopAgentRunRequest = {
   engine: DesktopAgentEngine;
+  exportOptions?: DesktopExportOptions;
   projectPath: string;
   brief: string;
   targetSlideCount?: number;
@@ -473,7 +482,7 @@ export type HtmlslideDesktopApi = {
   addQaIgnoreRule(projectPath: string, issueType: string): Promise<{ issueTypes: string[] }>;
   createProject(request: NewDeckDraft & { workspacePath?: string; sources?: NewDeckSource[] }): Promise<DesktopCliResult>;
   checkProject(projectPath: string): Promise<DesktopCliResult>;
-  exportProject(projectPath: string): Promise<DesktopCliResult>;
+  exportProject(projectPath: string, options?: DesktopExportOptions): Promise<DesktopCliResult>;
   loadPresenterDeck(projectPath: string): Promise<DesktopPresenterDeckResult>;
   loadPresenterDeckPackage(deckpkgPath: string): Promise<DesktopPresenterDeckResult>;
   onOpenRequest(handler: (request: DesktopInitialOpenRequest) => void): () => void;

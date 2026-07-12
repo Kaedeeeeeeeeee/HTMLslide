@@ -83,6 +83,13 @@ export type DesktopProjectStatus =
   | "Missing files"
   | "External changes detected";
 
+export type DesktopExportOptions = {
+  deckpkg: boolean;
+  html: boolean;
+  pdf: boolean;
+  thumbnails: boolean;
+};
+
 export type DesktopProjectRecord = {
   id: string;
   title: string;
@@ -272,6 +279,7 @@ export type DesktopOfficialSkillsOptions = {
 };
 
 export type DesktopMockAgentRunRequest = {
+  exportOptions?: DesktopExportOptions;
   projectPath: string;
   brief: string;
   targetSlideCount?: number;
@@ -441,6 +449,7 @@ export type DesktopByokAgentRunResult = {
 };
 
 export type DesktopExternalAgentRunRequest = {
+  exportOptions?: DesktopExportOptions;
   projectPath: string;
   brief: string;
   runExport?: boolean;
@@ -1489,6 +1498,43 @@ function deckpkgPathFromExportResult(result: CliRunResult | undefined): string |
   return typeof deckpkg === "string" && deckpkg.length > 0 ? deckpkg : undefined;
 }
 
+export function normalizeDesktopExportOptions(value: unknown): DesktopExportOptions | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Export options must be an object.");
+  }
+
+  const record = value as Record<string, unknown>;
+  const options: DesktopExportOptions = {
+    deckpkg: record.deckpkg === true,
+    html: record.html === true,
+    pdf: record.pdf === true,
+    thumbnails: record.thumbnails === true
+  };
+  const invalidKeys = ["deckpkg", "html", "pdf", "thumbnails"].filter((key) => typeof record[key] !== "boolean");
+  if (invalidKeys.length > 0) {
+    throw new Error(`Export options must use boolean values: ${invalidKeys.join(", ")}.`);
+  }
+  return options;
+}
+
+export function exportOptionsToCliArgs(value?: unknown): string[] {
+  const options = normalizeDesktopExportOptions(value);
+  if (!options || Object.values(options).every(Boolean)) {
+    return [];
+  }
+
+  return [
+    options.pdf ? "--pdf" : "--no-pdf",
+    options.html ? "--html" : "--no-html",
+    options.deckpkg ? "--deckpkg" : "--no-deckpkg",
+    options.thumbnails ? "--thumbnails" : "--no-thumbnails"
+  ];
+}
+
 export async function runHtmlslideCli(args: string[], options: CliRunnerOptions): Promise<CliRunResult> {
   const timeoutMs = options.timeoutMs ?? 120_000;
   const command = process.execPath;
@@ -1957,7 +2003,12 @@ export async function runDesktopMockAgent(
       notifyDesktopAgentEvent(observers, agent.runId, "export", "running", "Exporting checked mock agent project.", "stage-started", {
         nextAction: "Write project artifacts"
       });
-      exportResult = await runDesktopAgentCliStep(["export", projectPath, "--json"], options.cliRuntime, cliRunner, options.signal);
+      exportResult = await runDesktopAgentCliStep(
+        ["export", projectPath, ...exportOptionsToCliArgs(request.exportOptions), "--json"],
+        options.cliRuntime,
+        cliRunner,
+        options.signal
+      );
       const cliLog = desktopAgentCliLog(agent.runId, "export", exportResult);
       addLog(cliLog.level, cliLog.message, cliLog.stage, cliLog.metadata);
       if (options.signal?.aborted) {
@@ -2374,7 +2425,12 @@ export async function runDesktopByokAgent(
       notifyDesktopAgentEvent(observers, agent.runId, "export", "running", "Exporting checked HTMLslide Agent project.", "stage-started", {
         nextAction: "Write project artifacts"
       });
-      exportResult = await runDesktopAgentCliStep(["export", projectPath, "--json"], options.cliRuntime, cliRunner, options.signal);
+      exportResult = await runDesktopAgentCliStep(
+        ["export", projectPath, ...exportOptionsToCliArgs(request.exportOptions), "--json"],
+        options.cliRuntime,
+        cliRunner,
+        options.signal
+      );
       const cliLog = desktopAgentCliLog(agent.runId, "export", exportResult);
       addLog(cliLog.level, cliLog.message, cliLog.stage, cliLog.metadata);
       if (options.signal?.aborted) {
@@ -2908,7 +2964,12 @@ export async function runDesktopExternalAgent(
     addEvent("export", "running", "Exporting artifacts after external agent run.", "stage-started", {
       nextAction: "Write PDF, HTML, deckpkg, notes, and thumbnails"
     });
-    exportResult = await runDesktopAgentCliStep(["export", projectPath, "--json"], options.cliRuntime, cliRunner, options.signal);
+    exportResult = await runDesktopAgentCliStep(
+      ["export", projectPath, ...exportOptionsToCliArgs(request.exportOptions), "--json"],
+      options.cliRuntime,
+      cliRunner,
+      options.signal
+    );
     const exportLog = desktopAgentCliLog(runId, "export", exportResult);
     addLog(exportLog.level, exportLog.message, exportLog.stage, exportLog.metadata);
     if (options.signal?.aborted) {

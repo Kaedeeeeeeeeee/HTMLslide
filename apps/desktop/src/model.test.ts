@@ -7,6 +7,7 @@ import {
   buildRuntimeStages,
   countIssuesBySeverity,
   createDefaultNewDeckDraft,
+  newDeckExportSelectionFromOutputs,
   defaultCommandActionStatuses,
   filterQaIssues,
   formatProjectOpenedAt,
@@ -237,6 +238,15 @@ describe("desktop model helpers", () => {
       title: "Untitled Deck"
     });
     expect(draft.outputs).toEqual(["pdf", "html", "deckpkg", "thumbnails", "speakerNotes"]);
+  });
+
+  it("maps New Deck output choices to the export contract", () => {
+    expect(newDeckExportSelectionFromOutputs(["html", "thumbnails", "speakerNotes"])).toEqual({
+      deckpkg: false,
+      html: true,
+      pdf: false,
+      thumbnails: true
+    });
   });
 
   it("builds a structured agent brief from a new deck draft", () => {

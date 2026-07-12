@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "kind": "htmlslide-external-agent-rc-evidence-input",
+  "status": "passed",
+  "provider": {
+    "id": "codex-cli",
+    "version": "codex-cli example-version-0.0.0"
+  },
+  "authentication": {
+    "status": "passed",
+    "command": "codex login status"
+  },
+  "permissionSummary": {
+    "sandbox": "workspace-write",
+    "permissionFlags": [
+      "--ignore-user-config",
+      "--skip-git-repo-check"
+    ]
+  },
+  "successfulRun": {
+    "runId": "example-success-run-001",
+    "status": "succeeded",
+    "edit": "passed",
+    "changedFiles": [
+      "slides/001-title.html"
+    ],
+    "check": "passed",
+    "export": "passed",
+    "diffReview": "passed",
+    "revert": "passed"
+  },
+  "cancellationRun": {
+    "runId": "example-cancel-run-002",
+    "status": "cancelled",
+    "postCancelCheckExport": "not-started"
+  },
+  "secretSafety": "passed"
+}

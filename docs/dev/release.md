@@ -70,7 +70,7 @@ pnpm rc:checklist -- --channel alpha --ci-run-url <ci-url> --package-run-url <al
 
 The generated Markdown file under `dist/acceptance/` is intentionally ignored by git. Attach or paste the completed checklist into the release candidate notes. It records the mandatory manual script from Phase 19.16: clean macOS account, DMG install, first launch, mock/local deck creation, BYOK when available, fake external agent, real Claude/Codex/Gemini claim validation or an explicit no-claim N/A, PDF/deckpkg export, external-monitor presentation, reopen, agent-run revert, CLI uninstall, and post-delete file cleanup.
 
-For a real Claude Code or Codex CLI compatibility claim, create a sanitized input JSON using the fixed `htmlslide-external-agent-rc-evidence-input` shape and verify it against the exact candidate package manifest:
+For a real Claude Code or Codex CLI compatibility claim, start from the fixed sanitized example at [`docs/examples/external-agent-rc-evidence-input.json`](../examples/external-agent-rc-evidence-input.json), replace only its fake provider/run metadata with the tester's sanitized results, and verify it against the exact candidate package manifest:
 
 ```bash
 pnpm rc:external-agent-evidence -- \

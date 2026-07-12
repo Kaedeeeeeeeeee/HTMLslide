@@ -2910,10 +2910,14 @@ svg {
 
   .workspace-body {
     grid-template-columns: 190px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(196px, min(34vh, 320px));
   }
 
   .inspector {
-    display: none;
+    grid-column: 1 / -1;
+    grid-row: 2;
+    max-height: min(34vh, 320px);
+    min-height: 196px;
   }
 
   .toolbar-status {
@@ -3137,6 +3141,14 @@ svg {
 
   .workspace-body {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(360px, 1fr) minmax(220px, 42vh);
+  }
+
+  .inspector {
+    grid-column: 1;
+    grid-row: 3;
+    max-height: none;
+    min-height: 220px;
   }
 
   .filmstrip {

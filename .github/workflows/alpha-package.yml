@@ -43,7 +43,7 @@ jobs:
           set -euo pipefail
 
           if [[ ! -f package.json ]]; then
-            echo "::error title=Missing package.json::Alpha packaging expects a root package.json with pnpm scripts: docs:check, docs:build, version:check, lint, typecheck, test, perf:smoke, security:check, build, package:alpha, smoke:package:alpha, rc:checklist."
+            echo "::error title=Missing package.json::Alpha packaging expects a root package.json with pnpm scripts: docs:check, docs:build, version:check, lint, typecheck, test, perf:smoke, security:check, build, package:alpha, smoke:package:alpha, rc:checklist, rc:external-agent-evidence."
             exit 1
           fi
 
@@ -55,7 +55,7 @@ jobs:
           node <<'NODE'
           const fs = require('fs');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          const requiredScripts = ['docs:check', 'docs:build', 'version:check', 'lint', 'typecheck', 'test', 'test:visual:browser', 'perf:smoke', 'security:check', 'build', 'e2e:desktop', 'e2e:desktop:a11y', 'package:alpha', 'smoke:package:alpha', 'rc:checklist'];
+          const requiredScripts = ['docs:check', 'docs:build', 'version:check', 'lint', 'typecheck', 'test', 'test:visual:browser', 'perf:smoke', 'security:check', 'build', 'e2e:desktop', 'e2e:desktop:a11y', 'package:alpha', 'smoke:package:alpha', 'rc:checklist', 'rc:external-agent-evidence'];
           const missing = requiredScripts.filter((name) => !pkg.scripts || !pkg.scripts[name]);
 
           if (missing.length > 0) {

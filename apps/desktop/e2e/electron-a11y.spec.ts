@@ -227,6 +227,37 @@ test.describe("HTMLslide desktop accessibility smoke", () => {
     expect(browserErrors).toEqual([]);
   });
 
+  test("keeps the workspace inspector reachable at narrow width", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-a11y-"));
+    const projectPath = path.join(tempRoot, "valid-full");
+    await mkdir(path.dirname(projectPath), { recursive: true });
+    await cp(sampleProjectPath, projectPath, { recursive: true });
+    electronApp = await launchDesktopApp(tempRoot, { openProjectPath: projectPath });
+
+    const page = await electronApp.firstWindow();
+    const browserErrors = collectBrowserErrors(page);
+    await page.waitForLoadState("domcontentloaded");
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await page.locator(".library-main").getByRole("button", { name: "Open Folder", exact: true }).first().click();
+    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible({
+      timeout: 30_000
+    });
+
+    await page.setViewportSize({ width: 1024, height: 800 });
+    const inspector = page.locator(".inspector");
+    await expect(inspector).toBeVisible();
+    await expect(inspector.getByRole("tablist", { name: "Inspector tabs" })).toBeVisible();
+
+    await page.locator(".workspace-toolbar").getByRole("button", { name: "Check", exact: true }).click();
+    await expect(page.getByRole("region", { name: "QA Panel" })).toBeVisible({ timeout: 30_000 });
+    await inspector.getByRole("tab", { name: "Notes", exact: true }).click();
+    await expect(inspector.getByRole("textbox", { name: "Presenter notes" })).toBeVisible();
+    await expectNoAccessibilityViolations(page, "narrow workspace inspector");
+
+    await expectNoFrameworkOverlay(page);
+    expect(browserErrors).toEqual([]);
+  });
+
   test("covers presenter rehearsal controls", async () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-a11y-"));
     const projectPath = path.join(tempRoot, "valid-full");

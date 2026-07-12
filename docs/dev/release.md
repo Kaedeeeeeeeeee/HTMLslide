@@ -112,6 +112,12 @@ Signed and notarized macOS releases are intentionally out of the unsigned alpha 
 pnpm package:release:macos
 ```
 
+Run the release-only configuration contract locally without signing credentials:
+
+```bash
+pnpm release:contract:check
+```
+
 The release script uses `build/package/release-macos.json` and writes:
 
 - `dist/release/HTMLslide-<version>-signed-notarized-<arch>.dmg`
@@ -137,9 +143,17 @@ The workflow requires these repository or organization secrets:
 - `APPLE_APP_SPECIFIC_PASSWORD`
 - `KEYCHAIN_PASSWORD`
 
-The certificate secret must be a base64-encoded Developer ID Application `.p12`. The workflow imports it into a temporary keychain, signs the app with hardened runtime, signs the DMG, submits the DMG with `xcrun notarytool --wait`, staples and validates the DMG with `xcrun stapler`, checks the manifest for `channel: release`, `signing: developer-id`, `notarized: true`, and `stapled: true`, then mounts the signed DMG and runs the packaged Chromium export smoke before publishing.
+The first workflow gate runs `scripts/release/validate-release-contract.mjs` before dependency installation. It checks the release-only package config, required script names, secret presence, and the certificate secret's base64/DER shape without printing secret values. The certificate secret must be a base64-encoded Developer ID Application `.p12`; only keychain import and identity matching can prove that it is the requested identity. The workflow imports it into a temporary keychain, signs the app with hardened runtime, signs the DMG, submits the DMG with `xcrun notarytool --wait`, staples and validates the DMG with `xcrun stapler`, checks the manifest for `channel: release`, `arch: arm64`, `signing: developer-id`, `notarized: true`, and `stapled: true`, then mounts the signed DMG and runs the packaged Chromium export smoke before publishing.
+
+The config-only portion can be run locally without Developer ID credentials:
+
+```bash
+pnpm release:contract:check
+```
 
 Signing and notarization secrets must be company-owned repository or organization secrets, never committed files or personal local credentials.
+
+The workflow-generated `HTMLslide-release-rc-acceptance.md` is a run-bound checklist template, not completed acceptance evidence. A tag-triggered run can create or update a GitHub Release after its automated gates, but it does not infer or verify the human checklist result. Do not treat that release as public acceptance until a tester completes the checklist and runs `pnpm rc:checklist:verify`, or links equivalent recorded evidence in the release notes.
 
 ## Release Notes
 

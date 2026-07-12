@@ -9,6 +9,12 @@ import { describe, expect, it } from "vitest";
 import { buildArtifactMetadata } from "./artifact-metadata.mjs";
 import { renderChecklist } from "./create-rc-acceptance.mjs";
 import { renderReleaseNotes } from "./create-release-notes.mjs";
+import {
+  REQUIRED_RELEASE_SECRETS,
+  validateReleaseEnvironment,
+  validateReleaseManifest,
+  validateReleasePackageConfig
+} from "./validate-release-contract.mjs";
 import { main as verifyByokEvidence } from "./verify-byok-acceptance.mjs";
 import { main as verifyChecklist } from "./verify-rc-checklist.mjs";
 import { main as verifyExternalAgentEvidence } from "./verify-external-agent-acceptance.mjs";
@@ -34,6 +40,81 @@ describe("release evidence scripts", () => {
           sha256: "4b920746baa5375f6d5124c6efe25b116502b39c9b6295706faaa3761890e266"
         }
       ]);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("validates the release config and secret shape before signing work starts", async () => {
+    const [packageJson, config] = await Promise.all([
+      readFile(path.join(root, "package.json"), "utf8").then(JSON.parse),
+      readFile(path.join(root, "build", "package", "release-macos.json"), "utf8").then(JSON.parse)
+    ]);
+    const fakeDerPayload = Buffer.from([0x30, 0x03, 0x02, 0x01, 0x00]).toString("base64");
+    const env = Object.fromEntries(REQUIRED_RELEASE_SECRETS.map((name) => [name, `${name}-fixture`])) as Record<string, string>;
+    env.APPLE_DEVELOPER_ID_APPLICATION = "Developer ID Application: HTMLslide (TEAM123456)";
+    env.APPLE_DEVELOPER_ID_CERTIFICATE_BASE64 = fakeDerPayload;
+
+    expect(validateReleasePackageConfig(config)).toMatchObject({
+      channel: "release",
+      signing: "developer-id",
+      notarize: true,
+      stapled: true
+    });
+    expect(validateReleaseEnvironment({ packageJson, config, env })).toMatchObject({
+      channel: "release",
+      requiredSecretCount: REQUIRED_RELEASE_SECRETS.length
+    });
+    expect(() => validateReleasePackageConfig({ ...config, notarize: false })).toThrow(/notarize must be true/iu);
+    expect(() => validateReleaseEnvironment({
+      packageJson,
+      config,
+      env: { ...env, APPLE_DEVELOPER_ID_CERTIFICATE_BASE64: "not-base64" }
+    })).toThrow(/base64-encoded DER/iu);
+  });
+
+  it("keeps the signed release workflow wired to the shared release contract", async () => {
+    const workflow = await readFile(path.join(root, ".github", "workflows", "release-macos.yml"), "utf8");
+
+    expect(workflow).toContain("node scripts/release/validate-release-contract.mjs");
+    expect(workflow).toContain('--manifest "$manifest"');
+    expect(workflow).toContain("--expected-arch arm64");
+  });
+
+  it("validates the signed release manifest, architecture, and artifact hash", async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-release-contract-"));
+    try {
+      const artifactPath = path.join(tempRoot, "HTMLslide-0.1.0-signed-notarized-arm64.dmg");
+      const manifestPath = path.join(tempRoot, "HTMLslide-0.1.0-signed-notarized-arm64.json");
+      await writeFile(artifactPath, "deterministic signed artifact fixture\n", "utf8");
+      const manifest = {
+        appName: "HTMLslide",
+        version: "0.1.0",
+        arch: "arm64",
+        channel: "release",
+        bundleIdentifier: "app.htmlslide",
+        browserRuntime: {
+          kind: "chromium-headless-shell",
+          revision: "1234567",
+          version: "128.0.0.0"
+        },
+        documentTypes: ["deckpkg"],
+        signing: "developer-id",
+        notarized: true,
+        stapled: true,
+        artifacts: [artifactPath],
+        artifactMetadata: await buildArtifactMetadata([artifactPath])
+      };
+      await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+
+      await expect(validateReleaseManifest(manifestPath)).resolves.toMatchObject({
+        arch: "arm64",
+        channel: "release",
+        artifactPath
+      });
+
+      await writeFile(manifestPath, `${JSON.stringify({ ...manifest, arch: "x64" }, null, 2)}\n`, "utf8");
+      await expect(validateReleaseManifest(manifestPath)).rejects.toThrow(/arch must be arm64/iu);
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }

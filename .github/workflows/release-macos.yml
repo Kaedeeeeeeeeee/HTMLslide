@@ -43,41 +43,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          required_scripts=(docs:check docs:build version:check lint typecheck test perf:smoke security:check build e2e:desktop e2e:desktop:a11y package:release:macos rc:checklist rc:external-agent-evidence release:notes)
-          missing_scripts="$(node <<'NODE'
-          const fs = require('fs');
-          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          const required = ['docs:check', 'docs:build', 'version:check', 'lint', 'typecheck', 'test', 'perf:smoke', 'security:check', 'build', 'e2e:desktop', 'e2e:desktop:a11y', 'package:release:macos', 'rc:checklist', 'rc:external-agent-evidence', 'release:notes'];
-          process.stdout.write(required.filter((name) => !pkg.scripts || !pkg.scripts[name]).join('\n'));
-          NODE
-          )"
-
-          if [[ -n "$missing_scripts" ]]; then
-            echo "::error title=Missing release scripts::package.json is missing: $missing_scripts"
-            exit 1
-          fi
-
-          for name in \
-            APPLE_DEVELOPER_ID_APPLICATION \
-            APPLE_DEVELOPER_ID_CERTIFICATE_BASE64 \
-            APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD \
-            APPLE_ID \
-            APPLE_TEAM_ID \
-            APPLE_APP_SPECIFIC_PASSWORD \
-            KEYCHAIN_PASSWORD
-          do
-            if [[ -z "${!name:-}" ]]; then
-              echo "::error title=Missing signing secret::$name must be configured as a repository or organization secret."
-              exit 1
-            fi
-          done
-
-          if [[ ! -f build/package/release-macos.json ]]; then
-            echo "::error title=Missing release package config::build/package/release-macos.json must exist."
-            exit 1
-          fi
-
-          echo "Signed release contract is present."
+          node scripts/release/validate-release-contract.mjs \
+            --config build/package/release-macos.json \
+            --expected-channel release \
+            --check-env
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -153,6 +122,7 @@ jobs:
       - name: Import Developer ID certificate
         shell: bash
         env:
+          APPLE_DEVELOPER_ID_APPLICATION: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION }}
           APPLE_DEVELOPER_ID_CERTIFICATE_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_BASE64 }}
           APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
@@ -179,7 +149,11 @@ jobs:
           security list-keychains -d user -s "$keychain_path"
           security default-keychain -s "$keychain_path"
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$keychain_path"
-          security find-identity -v -p codesigning "$keychain_path"
+          identity_output="$(security find-identity -v -p codesigning "$keychain_path")"
+          if ! grep -Fq "\"$APPLE_DEVELOPER_ID_APPLICATION\"" <<<"$identity_output"; then
+            echo "::error title=Developer ID identity mismatch::The imported keychain does not contain APPLE_DEVELOPER_ID_APPLICATION."
+            exit 1
+          fi
 
       - name: Package signed notarized release
         env:
@@ -201,38 +175,9 @@ jobs:
             exit 1
           fi
 
-          node - "$manifest" <<'NODE'
-          const crypto = require('crypto');
-          const fs = require('fs');
-          const path = require('path');
-          const manifest = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-          const artifacts = Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
-          const artifactMetadata = Array.isArray(manifest.artifactMetadata) ? manifest.artifactMetadata : [];
-          const dmg = artifacts.find((artifact) => artifact.endsWith('.dmg'));
-
-          function fail(message) {
-            console.error(`::error title=Invalid release manifest::${message}`);
-            process.exit(1);
-          }
-
-          function sha256(filePath) {
-            return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
-          }
-
-          if (manifest.channel !== 'release') fail(`channel must be release, got ${manifest.channel}`);
-          if (manifest.signing !== 'developer-id') fail(`signing must be developer-id, got ${manifest.signing}`);
-          if (manifest.notarized !== true) fail('notarized must be true');
-          if (manifest.stapled !== true) fail('stapled must be true');
-          if (manifest.bundleIdentifier !== 'app.htmlslide') fail(`bundleIdentifier must be app.htmlslide, got ${manifest.bundleIdentifier}`);
-          if (!dmg || !fs.existsSync(dmg)) fail(`release DMG is missing from artifacts: ${JSON.stringify(artifacts)}`);
-          if (!path.basename(dmg).includes('signed-notarized')) fail(`release DMG name must include signed-notarized: ${dmg}`);
-          const dmgMetadata = artifactMetadata.find((entry) => entry && entry.path === dmg);
-          if (!dmgMetadata) fail(`release manifest is missing artifact metadata for ${dmg}`);
-          if (dmgMetadata.fileName !== path.basename(dmg)) fail(`release DMG metadata filename mismatch: ${JSON.stringify(dmgMetadata)}`);
-          if (dmgMetadata.sizeBytes !== fs.statSync(dmg).size) fail(`release DMG metadata size mismatch: ${JSON.stringify(dmgMetadata)}`);
-          if (dmgMetadata.sha256 !== sha256(dmg)) fail(`release DMG metadata sha256 mismatch: ${JSON.stringify(dmgMetadata)}`);
-          if (!/^[a-f0-9]{64}$/.test(String(dmgMetadata.sha256 || ''))) fail(`release DMG metadata sha256 is invalid: ${JSON.stringify(dmgMetadata)}`);
-          NODE
+          node scripts/release/validate-release-contract.mjs \
+            --manifest "$manifest" \
+            --expected-arch arm64
 
       - name: Contract-only external-agent verifier smoke (fixture only; no real compatibility evidence)
         shell: bash

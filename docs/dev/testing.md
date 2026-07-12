@@ -25,7 +25,7 @@ Required root package contract:
 - `pnpm-lock.yaml` committed.
 - `docs:check`, `docs:build`, `version:check`, `lint`, `typecheck`, `test`, `perf:smoke`, `security:check`, `build`, `e2e:desktop`, and `e2e:desktop:a11y` scripts in `package.json`.
 - `test:visual:browser` for focused browser-rendered full-slide screenshot regression.
-- `package:alpha`, `smoke:package:alpha`, `package:release:macos`, `rc:checklist`, `rc:checklist:verify`, and `release:notes` scripts before macOS packaging is enabled.
+- `package:alpha`, `smoke:package:alpha`, `package:release:macos`, `release:contract:check`, `rc:checklist`, `rc:checklist:verify`, and `release:notes` scripts before macOS packaging is enabled.
 
 ## Test Layers
 

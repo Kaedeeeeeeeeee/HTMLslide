@@ -30,6 +30,7 @@
     "e2e:desktop:headed": "pnpm --filter @htmlslide/desktop e2e:headed",
     "package:alpha": "node scripts/release/package-alpha.mjs",
     "package:release:macos": "node scripts/release/package-release-macos.mjs",
+    "release:contract:check": "node scripts/release/validate-release-contract.mjs --config build/package/release-macos.json --expected-channel release",
     "smoke:package:alpha": "node scripts/release/smoke-alpha-package.mjs",
     "verify:package:alpha": "pnpm package:alpha && pnpm smoke:package:alpha",
     "rc:checklist": "node scripts/release/create-rc-acceptance.mjs",

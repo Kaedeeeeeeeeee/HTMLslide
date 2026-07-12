@@ -294,6 +294,7 @@ describe("macOS alpha packaging contract", () => {
 
   it("keeps the signed release workflow gated, notarized, and release-publishing", async () => {
     const workflow = await readText(".github/workflows/release-macos.yml");
+    const releaseContract = await readText("scripts/release/validate-release-contract.mjs");
     const installDependenciesIndex = workflow.indexOf("run: pnpm install --frozen-lockfile");
     const installChromiumIndex = workflow.indexOf("run: pnpm exec playwright install chromium");
     const testIndex = workflow.indexOf("run: pnpm test");
@@ -316,17 +317,22 @@ describe("macOS alpha packaging contract", () => {
     expect(workflow).toContain("APPLE_DEVELOPER_ID_CERTIFICATE_BASE64");
     expect(workflow).toContain("APPLE_APP_SPECIFIC_PASSWORD");
     expect(workflow).toContain("security import");
+    expect(workflow).toContain("identity_output=\"$(security find-identity -v -p codesigning \"$keychain_path\")\"");
+    expect(workflow).toContain("grep -Fq \"\\\"$APPLE_DEVELOPER_ID_APPLICATION\\\"\"");
     expect(workflow).toContain("pnpm package:release:macos");
     expect(workflow).toContain("HTMLSLIDE_PACKAGE_SMOKE_CHANNEL: release");
     expect(workflow).toContain("HTMLSLIDE_PACKAGE_SMOKE_DIR: dist/release");
     expect(workflow).toContain("run: pnpm smoke:package:alpha");
-    expect(workflow).toContain("manifest.notarized !== true");
-    expect(workflow).toContain("manifest.stapled !== true");
-    expect(workflow).toContain("manifest.artifactMetadata");
+    expect(workflow).toContain("node scripts/release/validate-release-contract.mjs");
+    expect(workflow).toContain('--manifest "$manifest"');
+    expect(workflow).toContain("--expected-arch arm64");
+    expect(releaseContract).toContain("manifest.notarized !== true");
+    expect(releaseContract).toContain("manifest.stapled !== true");
+    expect(releaseContract).toContain("manifest.artifactMetadata");
     expect(workflow).toContain("find dist/release -maxdepth 1 -type f -name 'HTMLslide-*.json'");
     expect(workflow).not.toContain("find dist/release -name '*.json' -type f");
-    expect(workflow).toContain("crypto.createHash('sha256')");
-    expect(workflow).toContain("release DMG metadata sha256 mismatch");
+    expect(releaseContract).toContain("createHash(\"sha256\")");
+    expect(releaseContract).toContain("artifact metadata SHA-256 mismatch");
     expect(workflow).toContain("pnpm rc:checklist --");
     expect(workflow).toContain("--channel release");
     expect(workflow).toContain("HTMLslide-release-rc-acceptance.md");

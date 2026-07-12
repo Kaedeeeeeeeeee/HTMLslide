@@ -89,7 +89,7 @@ Pause is capability-gated. The built-in HTTP providers and Generic external comm
 
 ## Checkpoints
 
-Each shared agent run creates a reversible file-copy checkpoint before the `brief` stage when the caller does not provide a `createCheckpoint` callback. Desktop Local Mock and BYOK callers currently pass the same file-copy implementation explicitly; custom callbacks remain supported:
+Each shared agent run creates a reversible file-copy checkpoint before the `brief` stage when the caller does not provide a `createCheckpoint` callback. Desktop Local Mock and BYOK callers currently pass the same file-copy implementation explicitly. Custom callbacks remain supported for integrations that own checkpoint storage; callers that use the shared diff/revert helpers must return a `strategy: "file-copy"` manifest:
 
 ```json
 {

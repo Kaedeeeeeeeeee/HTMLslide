@@ -20,7 +20,6 @@ import type {
   AgentRunState,
   AgentRunStatus,
   AgentOrchestratorOptions,
-  CheckpointMetadata,
   JsonObject,
   ModelProvider,
   NormalizedBrief,
@@ -80,25 +79,6 @@ export const createAgentRunId = (): string => {
   nextRunNumber += 1;
   return runId;
 };
-
-export const createCheckpointMetadata = (input: {
-  runId: string;
-  projectRoot: string;
-  createdAt: string;
-}): CheckpointMetadata => ({
-  id: `checkpoint-${input.runId}`,
-  runId: input.runId,
-  projectRoot: input.projectRoot,
-  strategy: "metadata-only",
-  createdAt: input.createdAt,
-  label: `Before agent run ${input.runId}`,
-  sourceRoots: ["deck.json", "slides/", "notes/", "theme/", "assets/"],
-  files: [],
-  restore: {
-    canRevert: false,
-    notes: "Metadata-only checkpoint. Future git-diff or file-copy adapters should populate reversible file snapshots."
-  }
-});
 
 const emptyOutputs = (): AgentRunOutputs => ({
   checks: [],

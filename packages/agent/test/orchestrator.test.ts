@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   canTransitionAgentRunState,
-  createCheckpointMetadata,
+  createFileCopyCheckpoint,
   createMockFailedCheck,
   createMockPassedCheck,
   createMockProvider,
@@ -545,12 +545,12 @@ describe("agent orchestrator", () => {
   });
 
   it("uses a caller-provided checkpoint callback instead of the default", async () => {
-    const checkpoint = createCheckpointMetadata({
+    const checkpoint = await createFileCopyCheckpoint({
       runId: "run-custom-checkpoint",
       projectRoot,
       createdAt: fixedClock().toISOString()
     });
-    const createCheckpoint = vi.fn(() => checkpoint);
+    const createCheckpoint = vi.fn(async () => checkpoint);
 
     const result = await runMockAgent({
       runId: "run-custom-checkpoint",

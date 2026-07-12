@@ -1,4 +1,4 @@
-import { Button, PanelHeader, StatusPill } from "@htmlslide/shared-ui";
+import { Button, IconButton, PanelHeader, StatusPill } from "@htmlslide/shared-ui";
 import { listBuiltInDeckTemplates } from "@htmlslide/core/templates";
 import {
   BookOpen,
@@ -15,7 +15,7 @@ import {
   Sparkles,
   Trash2
 } from "lucide-react";
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from "react";
 import {
   formatRedactedKeyStatus,
   isExternalAgentRunnableByHtmlslide,
@@ -167,7 +167,7 @@ export function ProjectLibrary({
   workspacePath
 }: ProjectLibraryProps): ReactNode {
   return (
-    <main className="library-shell">
+    <main aria-label="HTMLslide project library" className="library-shell">
       <aside className="library-nav">
         <div className="brand-block">
           <span className="brand-mark">Hs</span>
@@ -185,7 +185,7 @@ export function ProjectLibrary({
               onClick={() => onLibrarySectionChange(item.id)}
               type="button"
             >
-              <item.icon />
+              <item.icon aria-hidden="true" />
               <span>{item.label}</span>
             </button>
           ))}
@@ -285,6 +285,7 @@ function RecentProjects({
   const [creatingDeck, setCreatingDeck] = useState(false);
   const [draft, setDraft] = useState<NewDeckDraft>(() => createDefaultNewDeckDraft());
   const [folderEdited, setFolderEdited] = useState(false);
+  const newDeckTriggerRef = useRef<HTMLButtonElement | null>(null);
   const selectedExternalStatus = selectedExternalAgentStatus(aiEngineSettings, externalAgentStatuses);
   const selectedExternalRunnable =
     aiEngineSettings.mode === "external-agent" && isExternalAgentRunnableByHtmlslide(selectedExternalStatus);
@@ -296,6 +297,7 @@ function RecentProjects({
   const busy = operationStatus.kind === "running" && operationStatus.message === "Creating deck";
   const canCreate = !busy && validationMessage === undefined;
   const statusMessage = validationMessage ?? (operationStatus.kind === "failed" ? operationStatus.message : undefined);
+  const feedbackMessage = busy ? operationStatus.message : statusMessage;
   const engineOptions = buildNewDeckEngineOptions({
     apiKeyStatus: formatRedactedKeyStatus(aiEngineSettings),
     hasApiKey: aiEngineSettings.apiKey.hasKey,
@@ -304,12 +306,14 @@ function RecentProjects({
   });
   const selectedEngine = engineOptions.find((engine) => engine.id === draft.generationMode) ?? engineOptions[0]!;
 
-  const openNewDeckPanel = (): void => {
+  const openNewDeckPanel = (event?: MouseEvent<HTMLButtonElement>): void => {
+    newDeckTriggerRef.current = event?.currentTarget ?? null;
     setCreatingDeck(true);
   };
 
   const closeNewDeckPanel = (): void => {
     setCreatingDeck(false);
+    newDeckTriggerRef.current?.focus();
   };
 
   const updateTitle = (nextTitle: string): void => {
@@ -357,7 +361,7 @@ function RecentProjects({
           <>
             <Button
               icon={<Plus />}
-              onClick={openNewDeckPanel}
+              onClick={(event) => openNewDeckPanel(event)}
               variant="primary"
             >
               New Deck
@@ -373,17 +377,27 @@ function RecentProjects({
         }
         eyebrow={workspacePath ? `Workspace: ${workspacePath}` : "Recent workspaces"}
         title="Projects"
+        titleId="library-title"
       />
 
       {creatingDeck ? (
         <form
+          aria-busy={busy}
+          aria-describedby={feedbackMessage ? newDeckStatusId : undefined}
+          aria-labelledby="new-deck-title"
           className="new-deck-panel"
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && !busy) {
+              event.preventDefault();
+              closeNewDeckPanel();
+            }
+          }}
           onSubmit={submitNewDeck}
         >
           <div className="new-deck-panel__title">
             <Plus />
             <div>
-              <strong>New Deck</strong>
+              <strong id="new-deck-title">New Deck</strong>
               <span>{workspacePath ?? "Default workspace"}</span>
             </div>
           </div>
@@ -600,7 +614,8 @@ function RecentProjects({
           </div>
           <div className="new-deck-panel__actions">
             <Button
-              aria-describedby={statusMessage ? newDeckStatusId : undefined}
+              aria-busy={busy}
+              aria-describedby={feedbackMessage ? newDeckStatusId : undefined}
               disabled={!canCreate}
               icon={<Plus />}
               type="submit"
@@ -616,14 +631,14 @@ function RecentProjects({
             >
               Cancel
             </Button>
-            {statusMessage ? (
+            {feedbackMessage ? (
               <p
-                aria-live="polite"
-                className="settings-note is-danger"
+                aria-live={busy ? "polite" : "assertive"}
+                className={busy ? "settings-note" : "settings-note is-danger"}
                 id={newDeckStatusId}
-                role="alert"
+                role={busy ? "status" : "alert"}
               >
-                {statusMessage}
+                {feedbackMessage}
               </p>
             ) : null}
           </div>
@@ -638,7 +653,7 @@ function RecentProjects({
           <div>
             <Button
               icon={<Plus />}
-              onClick={openNewDeckPanel}
+              onClick={(event) => openNewDeckPanel(event)}
               variant="primary"
             >
               New Deck
@@ -666,6 +681,7 @@ function RecentProjects({
               key={project.id}
             >
               <button
+                aria-label={`Open ${project.title}, ${project.slideCount} slides`}
                 className="project-card__preview"
                 onClick={() => onOpenProject(project.id)}
                 type="button"
@@ -683,15 +699,11 @@ function RecentProjects({
               <footer>
                 <span>Last opened {project.lastOpened}</span>
                 <div className="project-card__actions">
-                  <Button
-                    aria-label={`Remove ${project.title}`}
+                  <IconButton
                     icon={<Trash2 />}
+                    label={`Remove ${project.title}`}
                     onClick={() => onRemoveProject(project.id)}
-                    size="sm"
-                    variant="quiet"
-                  >
-                    Remove
-                  </Button>
+                  />
                   <Button
                     aria-label={`Open ${project.title}`}
                     onClick={() => onOpenProject(project.id)}
@@ -716,6 +728,7 @@ function TemplatesLibrary(): ReactNode {
       <PanelHeader
         eyebrow="Built-in starters"
         title="Templates"
+        titleId="templates-title"
       />
       <div className="library-grid">
         {builtInDeckTemplates.map((template) => (

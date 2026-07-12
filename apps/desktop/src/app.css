@@ -67,8 +67,9 @@ svg {
   background: var(--hs-bg);
   display: grid;
   gap: 18px;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
   height: 100%;
+  min-width: 0;
   padding: 24px;
 }
 
@@ -89,12 +90,21 @@ svg {
 .onboarding-panel {
   display: grid;
   grid-template-rows: auto 1fr;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
   padding: 28px;
 }
 
 .onboarding-content {
   align-self: center;
   max-width: 720px;
+  min-width: 0;
+  width: 100%;
+}
+
+.onboarding-step-content {
+  min-width: 0;
 }
 
 .onboarding-content .onboarding-description {
@@ -147,6 +157,7 @@ svg {
   display: grid;
   gap: 14px;
   grid-template-columns: 38px minmax(0, 1fr);
+  min-width: 0;
   padding: 16px 0;
 }
 
@@ -282,6 +293,8 @@ svg {
   gap: 10px;
   list-style: none;
   margin: 0;
+  min-width: 0;
+  overflow: auto;
   padding: 14px;
 }
 
@@ -350,12 +363,14 @@ svg {
   gap: 18px;
   grid-template-columns: 240px minmax(0, 1fr);
   height: 100%;
+  min-width: 0;
   padding: 18px;
 }
 
 .library-nav {
   display: grid;
   grid-template-rows: auto 1fr;
+  min-width: 0;
   padding: 18px;
 }
 
@@ -373,6 +388,18 @@ svg {
   padding: 0 11px;
 }
 
+.library-nav__item:hover:not(.is-selected) {
+  background: var(--hs-surface-muted);
+  border-color: var(--hs-line);
+}
+
+.library-nav__item:focus-visible,
+.project-card__preview:focus-visible,
+.new-deck-engine:focus-visible {
+  outline: 3px solid rgba(49, 95, 203, 0.28);
+  outline-offset: 2px;
+}
+
 .library-nav__item svg {
   color: var(--hs-text-muted);
   height: 17px;
@@ -380,8 +407,15 @@ svg {
 }
 
 .library-main {
+  min-height: 0;
+  min-width: 0;
   overflow: auto;
   padding: 22px;
+}
+
+.library-main .hs-panel-header__actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .library-grid {
@@ -389,6 +423,7 @@ svg {
   gap: 16px;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   margin-top: 18px;
+  min-width: 0;
 }
 
 .library-empty {
@@ -441,6 +476,7 @@ svg {
   gap: 14px;
   grid-template-columns: minmax(0, 1fr);
   margin-top: 18px;
+  min-width: 0;
   padding: 14px;
 }
 
@@ -449,6 +485,11 @@ svg {
   display: grid;
   gap: 10px;
   grid-template-columns: 36px minmax(0, 1fr);
+  min-width: 0;
+}
+
+.new-deck-panel__title > div,
+.project-card__body > div {
   min-width: 0;
 }
 
@@ -553,6 +594,11 @@ svg {
   text-align: left;
 }
 
+.new-deck-engine:hover:not(:disabled) {
+  background: var(--hs-surface-muted);
+  border-color: var(--hs-line-strong);
+}
+
 .new-deck-engine.is-selected {
   background: var(--hs-accent-soft);
   border-color: rgba(49, 95, 203, 0.28);
@@ -628,6 +674,12 @@ svg {
   padding: 0 10px;
 }
 
+.new-deck-output:focus-within {
+  border-color: var(--hs-accent);
+  outline: 3px solid rgba(49, 95, 203, 0.22);
+  outline-offset: 2px;
+}
+
 .new-deck-output input {
   position: absolute;
   opacity: 0;
@@ -690,6 +742,11 @@ svg {
   align-items: center;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.new-deck-panel__actions .settings-note {
+  min-width: min(100%, 280px);
+  overflow-wrap: anywhere;
 }
 
 .settings-layout,
@@ -1095,6 +1152,15 @@ svg {
   padding: 0 10px;
 }
 
+.settings-field input:focus-visible,
+.settings-field select:focus-visible,
+.settings-field textarea:focus-visible,
+.new-deck-panel__brief textarea:focus-visible {
+  border-color: var(--hs-accent);
+  outline: 3px solid rgba(49, 95, 203, 0.22);
+  outline-offset: 1px;
+}
+
 .settings-field input:disabled {
   background: var(--hs-surface-muted);
   color: var(--hs-text-subtle);
@@ -1208,6 +1274,7 @@ svg {
   background: var(--hs-surface-raised);
   border: 1px solid var(--hs-line);
   border-radius: var(--hs-radius-md);
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -1221,10 +1288,17 @@ svg {
   cursor: pointer;
   display: grid;
   gap: 8px;
+  aspect-ratio: 16 / 9;
   min-height: 150px;
   padding: 18px;
   text-align: left;
   width: 100%;
+}
+
+.project-card__preview:hover {
+  background:
+    linear-gradient(135deg, rgba(49, 95, 203, 0.2), transparent),
+    #f9fbff;
 }
 
 .project-card__preview span {
@@ -1243,8 +1317,10 @@ svg {
 .project-card footer {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   justify-content: space-between;
+  min-width: 0;
   padding: 14px;
 }
 
@@ -1261,6 +1337,7 @@ svg {
 .project-card footer span {
   color: var(--hs-text-muted);
   font-size: 12px;
+  min-width: 0;
 }
 
 .project-card p {
@@ -1273,6 +1350,7 @@ svg {
   display: flex;
   flex: 0 0 auto;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .project-card__actions svg {
@@ -2792,6 +2870,32 @@ svg {
   padding: 4px 5px;
 }
 
+@media (max-width: 960px) {
+  .onboarding-shell {
+    gap: 12px;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    padding: 16px;
+  }
+
+  .library-shell {
+    gap: 12px;
+    grid-template-columns: 200px minmax(0, 1fr);
+    padding: 12px;
+  }
+
+  .library-nav {
+    padding: 14px;
+  }
+
+  .library-nav nav {
+    margin-top: 20px;
+  }
+
+  .library-main {
+    padding: 18px;
+  }
+}
+
 @media (max-width: 1100px) {
   .ai-settings__modes,
   .ai-settings__grid {
@@ -2880,6 +2984,10 @@ svg {
     padding: 18px;
   }
 
+  .onboarding-actions > .hs-button {
+    flex: 1 1 200px;
+  }
+
   .onboarding-content .hs-panel-header h2 {
     font-size: 30px;
   }
@@ -2903,7 +3011,18 @@ svg {
   }
 
   .setup-rail {
-    display: none;
+    display: grid;
+    grid-auto-columns: minmax(148px, 1fr);
+    grid-auto-flow: column;
+    grid-template-columns: none;
+    max-width: 100%;
+    overflow-x: auto;
+    padding: 8px;
+  }
+
+  .setup-step {
+    min-width: 148px;
+    padding: 10px;
   }
 
   .library-shell {
@@ -2911,7 +3030,22 @@ svg {
   }
 
   .library-nav {
-    display: none;
+    display: grid;
+    grid-template-rows: auto auto;
+    padding: 12px;
+  }
+
+  .library-nav nav {
+    grid-auto-columns: minmax(110px, 1fr);
+    grid-auto-flow: column;
+    grid-template-columns: none;
+    margin-top: 14px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .library-nav__item {
+    min-width: 110px;
   }
 
   .library-main {
@@ -2924,6 +3058,7 @@ svg {
   }
 
   .library-main .hs-panel-header__actions {
+    align-items: stretch;
     flex-wrap: wrap;
   }
 
@@ -3094,5 +3229,20 @@ svg {
   .presenter-timer-panel,
   .presenter-keyboard > div {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .onboarding-shell,
+  .onboarding-shell *,
+  .library-shell,
+  .library-shell * {
+    animation: none !important;
+    scroll-behavior: auto !important;
+    transition: none !important;
   }
 }

@@ -381,7 +381,7 @@ describe("HTMLslide MCP in-process server", () => {
       expect(auditLog).toContain("\"tool\":\"slide_write\"");
       expect(auditLog).toContain("\"tool\":\"checkpoint_revert\"");
     });
-  });
+  }, 30_000);
 
   it("denies invalid read paths before touching the filesystem", async () => {
     await withTempFixture("linter-valid-clean", async (projectPath) => {

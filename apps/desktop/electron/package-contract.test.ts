@@ -221,6 +221,20 @@ describe("macOS alpha packaging contract", () => {
     expect(movedAppSmokeBlock).toContain('run(shimPath, ["doctor"');
   });
 
+  it("keeps presenter display reconnect events wired through the isolated preload", async () => {
+    const mainSource = await readText("apps/desktop/electron/main.ts");
+    const preloadSource = await readText("apps/desktop/electron/preload.cts");
+    const desktopApiSource = await readText("apps/desktop/src/desktop-api.ts");
+
+    expect(mainSource).toContain('screen.on("display-added", notifyPresenterDisplaysChanged)');
+    expect(mainSource).toContain('screen.on("display-removed", notifyPresenterDisplaysChanged)');
+    expect(mainSource).toContain('screen.on("display-metrics-changed", notifyPresenterDisplaysChanged)');
+    expect(mainSource).toContain("reconcileAudienceWindowDisplay");
+    expect(preloadSource).toContain('ipcRenderer.on("htmlslide:presenter-displays-changed", listener)');
+    expect(preloadSource).toContain("onPresenterDisplaysChanged");
+    expect(desktopApiSource).toContain("onPresenterDisplaysChanged(handler: () => void): () => void;");
+  });
+
   it("keeps the alpha packaging workflow gated and artifact-producing", async () => {
     const workflow = await readText(".github/workflows/alpha-package.yml");
     const packageIndex = workflow.indexOf("run: pnpm package:alpha");

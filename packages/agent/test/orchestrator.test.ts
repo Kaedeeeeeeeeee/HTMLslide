@@ -1,6 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   canTransitionAgentRunState,
+  createCheckpointMetadata,
   createMockFailedCheck,
   createMockPassedCheck,
   createMockProvider,
@@ -13,8 +17,26 @@ import {
   type ModelResponse
 } from "../src/index.js";
 
-const projectRoot = "/tmp/htmlslide-agent-project";
+let projectRoot = "";
 const fixedClock = (): Date => new Date("2026-07-09T00:00:00.000Z");
+
+const createProjectFixture = async (): Promise<string> => {
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-agent-orchestrator-"));
+  await Promise.all([
+    mkdir(path.join(fixtureRoot, "slides"), { recursive: true }),
+    mkdir(path.join(fixtureRoot, "notes"), { recursive: true }),
+    mkdir(path.join(fixtureRoot, "theme"), { recursive: true }),
+    mkdir(path.join(fixtureRoot, "assets"), { recursive: true })
+  ]);
+  await Promise.all([
+    writeFile(path.join(fixtureRoot, "deck.json"), '{"schemaVersion":"0.1.0","id":"fixture","title":"Fixture","language":"en-US","aspectRatio":"16:9","viewport":{"width":1600,"height":900},"slides":[{"id":"001-title","title":"Title","source":"slides/001-title.html"}]}\n', "utf8"),
+    writeFile(path.join(fixtureRoot, "slides", "001-title.html"), '<section data-slide-id="001-title">Fixture</section>\n', "utf8"),
+    writeFile(path.join(fixtureRoot, "notes", "001-title.md"), "# Fixture\n", "utf8"),
+    writeFile(path.join(fixtureRoot, "theme", "theme.css"), ".slide { color: black; }\n", "utf8"),
+    writeFile(path.join(fixtureRoot, "assets", "data.json"), '{"fixture":true}\n', "utf8")
+  ]);
+  return fixtureRoot;
+};
 
 const runMockAgent = (overrides: Partial<Parameters<typeof runAgent>[0]> = {}) =>
   runAgent(
@@ -31,6 +53,15 @@ const runMockAgent = (overrides: Partial<Parameters<typeof runAgent>[0]> = {}) =
       clock: fixedClock
     }
   );
+
+beforeEach(async () => {
+  projectRoot = await createProjectFixture();
+});
+
+afterEach(async () => {
+  await rm(projectRoot, { recursive: true, force: true });
+  projectRoot = "";
+});
 
 describe("agent orchestrator", () => {
   it("moves from brief to outline with deterministic mock output", async () => {
@@ -489,21 +520,49 @@ describe("agent orchestrator", () => {
     expect(observedLogs).toEqual(result.logs);
   });
 
-  it("creates checkpoint metadata before model stages", async () => {
+  it("creates a reversible file-copy checkpoint before model stages", async () => {
     const result = await runMockAgent({ runId: "run-checkpoint" });
 
     expect(result.checkpoint).toMatchObject({
       id: "checkpoint-run-checkpoint",
       runId: "run-checkpoint",
       projectRoot,
-      strategy: "metadata-only",
+      strategy: "file-copy",
       sourceRoots: ["deck.json", "slides/", "notes/", "theme/", "assets/"],
       restore: {
-        canRevert: false
+        canRevert: true
       }
     });
+    const checkpointRoot = path.join(projectRoot, ".htmlslide", "checkpoints", "run-checkpoint");
+    await expect(access(path.join(checkpointRoot, "manifest.json"))).resolves.toBeUndefined();
+    await expect(access(path.join(checkpointRoot, "snapshot"))).resolves.toBeUndefined();
+    await expect(readFile(path.join(checkpointRoot, "snapshot", "deck.json"), "utf8")).resolves.toContain(
+      '"id":"fixture"'
+    );
+    await expect(readFile(path.join(checkpointRoot, "manifest.json"), "utf8")).resolves.toContain('"strategy": "file-copy"');
     expect(result.events[0]?.type).toBe("run-created");
     expect(result.events[1]?.type).toBe("checkpoint-created");
+  });
+
+  it("uses a caller-provided checkpoint callback instead of the default", async () => {
+    const checkpoint = createCheckpointMetadata({
+      runId: "run-custom-checkpoint",
+      projectRoot,
+      createdAt: fixedClock().toISOString()
+    });
+    const createCheckpoint = vi.fn(() => checkpoint);
+
+    const result = await runMockAgent({
+      runId: "run-custom-checkpoint",
+      createCheckpoint
+    });
+
+    expect(createCheckpoint).toHaveBeenCalledWith({
+      runId: "run-custom-checkpoint",
+      projectRoot,
+      createdAt: fixedClock().toISOString()
+    });
+    expect(result.checkpoint).toEqual(checkpoint);
   });
 
   it("exposes the controlled state-machine transitions", () => {

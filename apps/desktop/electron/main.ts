@@ -488,6 +488,40 @@ function closeAudienceWindow() {
   };
 }
 
+function reconcileAudienceWindowDisplay(): void {
+  if (!audienceWindow || audienceWindow.isDestroyed() || audienceWindowDisplayId === undefined) {
+    return;
+  }
+
+  const displayStillConnected = screen.getAllDisplays().some((display) => display.id === audienceWindowDisplayId);
+  if (displayStillConnected) {
+    return;
+  }
+
+  const primaryDisplay = screen.getPrimaryDisplay();
+  audienceWindowDisplayId = primaryDisplay.id;
+  audienceWindow.setBounds(audienceWindowBounds(primaryDisplay.id));
+}
+
+function notifyPresenterDisplaysChanged(): void {
+  reconcileAudienceWindowDisplay();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("htmlslide:presenter-displays-changed");
+  }
+}
+
+function registerPresenterDisplayListeners(): void {
+  screen.on("display-added", notifyPresenterDisplaysChanged);
+  screen.on("display-removed", notifyPresenterDisplaysChanged);
+  screen.on("display-metrics-changed", notifyPresenterDisplaysChanged);
+}
+
+function unregisterPresenterDisplayListeners(): void {
+  screen.removeListener("display-added", notifyPresenterDisplaysChanged);
+  screen.removeListener("display-removed", notifyPresenterDisplaysChanged);
+  screen.removeListener("display-metrics-changed", notifyPresenterDisplaysChanged);
+}
+
 function audienceSlideDataUrl(payload: DesktopAudienceSlidePayload): string {
   return `data:text/html;charset=utf-8,${encodeURIComponent(audienceSlideHtml(payload))}`;
 }
@@ -1051,6 +1085,7 @@ function createWindow(): void {
 
 if (hasSingleInstanceLock) {
   void app.whenReady().then(async () => {
+    registerPresenterDisplayListeners();
     if (smokeQuitAfterReady) {
       void writeSmokeMarker({
         status: "main-started",
@@ -1088,6 +1123,10 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
+});
+
+app.on("will-quit", () => {
+  unregisterPresenterDisplayListeners();
 });
 
 let agentRunsDrainedForQuit = false;

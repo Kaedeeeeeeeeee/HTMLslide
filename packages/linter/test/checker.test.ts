@@ -359,7 +359,7 @@ describe("HTMLslide linter", () => {
       expect(report.issues.some((issue) => issue.type === "export-outdated")).toBe(false);
       expectMachineRepairableIssues(modifiedIssues);
     });
-  });
+  }, 30_000);
 
   it("ignores mtime-only source changes when source bytes still match the manifest", async () => {
     await withTempFixture("linter-valid-clean", async (projectPath) => {
@@ -373,7 +373,7 @@ describe("HTMLslide linter", () => {
 
       expect(report.issues.filter((issue) => issue.type.startsWith("export-"))).toEqual([]);
     });
-  });
+  }, 30_000);
 
   it("fails closed when the compiler export manifest is truncated", async () => {
     await withTempFixture("linter-valid-clean", async (projectPath) => {

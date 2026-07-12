@@ -1808,6 +1808,11 @@ fetch("${previewNetworkOrigin}/fetch");
     await expect(currentSlideFrame.getByRole("heading", { name: "HTML as source" })).toBeVisible();
     await expect(presenter.getByRole("heading", { name: "Speaker Notes" })).toBeVisible();
     await expect(presenter.getByLabel("Presenter target display")).toBeVisible();
+    const refreshDisplaysButton = presenter.getByRole("button", { name: "Refresh displays", exact: true });
+    await expect(refreshDisplaysButton).toHaveAttribute("title", "Refresh displays");
+    await refreshDisplaysButton.click();
+    await expect(presenter).toBeVisible();
+    await expect(presenter.getByLabel("Presenter target display")).toBeVisible();
     await expect(presenter.locator(".presenter-notes").getByText("今天我们把 HTML 作为源码")).toBeVisible();
 
     const audienceWindowPromise = electronApp.waitForEvent("window");

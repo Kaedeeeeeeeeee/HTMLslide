@@ -120,6 +120,7 @@ interface WorkspaceProps {
   onCommandChange: (value: string) => void;
   onCommandSubmit: () => void;
   onInspectorTabChange: (tab: InspectorTab) => void;
+  onPresenterDisplaysChanged?: (handler: () => void) => () => void;
   onQaFilterChange: (filter: QaFilter) => void;
   onRevertDiff?: () => void;
   onRunAction: (action: "start" | "pause" | "cancel" | "retry") => void;
@@ -264,6 +265,7 @@ export function Workspace({
   onCommandChange,
   onCommandSubmit,
   onInspectorTabChange,
+  onPresenterDisplaysChanged,
   closeAudienceWindow,
   loadSlidePreview,
   loadPresenterDeck,
@@ -551,6 +553,7 @@ export function Workspace({
           openAudienceWindow={openAudienceWindow}
           project={project}
           listPresenterDisplays={listPresenterDisplays}
+          onPresenterDisplaysChanged={onPresenterDisplaysChanged}
           session={presenterState.session}
           slides={slides}
           source={presenterState.source}
@@ -566,6 +569,7 @@ interface PresenterModeProps {
   deck: PresenterDeck;
   project: ProjectSummary;
   listPresenterDisplays?: () => Promise<DesktopPresenterDisplay[]>;
+  onPresenterDisplaysChanged?: (handler: () => void) => () => void;
   openAudienceWindow?: (request: DesktopAudienceWindowRequest) => Promise<DesktopAudienceWindowState>;
   session: PresenterSessionState;
   slides: SlideSummary[];
@@ -579,6 +583,7 @@ function PresenterMode({
   closeAudienceWindow,
   deck,
   listPresenterDisplays,
+  onPresenterDisplaysChanged,
   onExit,
   onSessionChange,
   openAudienceWindow,
@@ -593,6 +598,8 @@ function PresenterMode({
   const [presenterDisplays, setPresenterDisplays] = useState<DesktopPresenterDisplay[]>([]);
   const [selectedDisplayId, setSelectedDisplayId] = useState<number | undefined>();
   const [displayError, setDisplayError] = useState<string | undefined>();
+  const selectedDisplayIdRef = useRef<number | undefined>(undefined);
+  const displayRefreshRequestIdRef = useRef(0);
   const [audienceWindowState, setAudienceWindowState] = useState<DesktopAudienceWindowState>({ open: false });
   const [audienceWindowError, setAudienceWindowError] = useState<string | undefined>();
 
@@ -601,43 +608,66 @@ function PresenterMode({
     return () => window.clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
+  const refreshPresenterDisplays = useCallback(async (): Promise<void> => {
+    const requestId = ++displayRefreshRequestIdRef.current;
     if (!listPresenterDisplays) {
+      selectedDisplayIdRef.current = undefined;
       setPresenterDisplays([]);
       setSelectedDisplayId(undefined);
       setDisplayError(undefined);
+      return;
+    }
+
+    try {
+      const displays = await listPresenterDisplays();
+      if (requestId !== displayRefreshRequestIdRef.current) {
+        return;
+      }
+
+      const currentSelectedDisplayId = selectedDisplayIdRef.current;
+      const selectedDisplay = displays.find((display) => display.id === currentSelectedDisplayId);
+      const preferredDisplay =
+        selectedDisplay ??
+        displays.find((display) => !display.internal && !display.primary) ??
+        displays.find((display) => display.primary) ??
+        displays[0];
+
+      selectedDisplayIdRef.current = preferredDisplay?.id;
+      setPresenterDisplays(displays);
+      setDisplayError(undefined);
+      setSelectedDisplayId(preferredDisplay?.id);
+    } catch (error: unknown) {
+      if (requestId !== displayRefreshRequestIdRef.current) {
+        return;
+      }
+
+      selectedDisplayIdRef.current = undefined;
+      setPresenterDisplays([]);
+      setSelectedDisplayId(undefined);
+      setDisplayError(error instanceof Error ? error.message : String(error));
+    }
+  }, [listPresenterDisplays]);
+
+  useEffect(() => {
+    void refreshPresenterDisplays();
+    if (!onPresenterDisplaysChanged) {
       return () => {
-        cancelled = true;
+        displayRefreshRequestIdRef.current += 1;
       };
     }
 
-    listPresenterDisplays()
-      .then((displays) => {
-        if (cancelled) {
-          return;
-        }
-        setPresenterDisplays(displays);
-        setDisplayError(undefined);
-        const preferredDisplay =
-          displays.find((display) => !display.internal && !display.primary) ??
-          displays.find((display) => display.primary) ??
-          displays[0];
-        setSelectedDisplayId(preferredDisplay?.id);
-      })
-      .catch((error: unknown) => {
-        if (cancelled) {
-          return;
-        }
-        setPresenterDisplays([]);
-        setSelectedDisplayId(undefined);
-        setDisplayError(error instanceof Error ? error.message : String(error));
-      });
-
+    let active = true;
+    const unsubscribe = onPresenterDisplaysChanged(() => {
+      if (active) {
+        void refreshPresenterDisplays();
+      }
+    });
     return () => {
-      cancelled = true;
+      active = false;
+      displayRefreshRequestIdRef.current += 1;
+      unsubscribe();
     };
-  }, [listPresenterDisplays]);
+  }, [onPresenterDisplaysChanged, refreshPresenterDisplays]);
 
   const view = useMemo(
     () => getPresenterSessionView(deck, session, nowMs),
@@ -673,6 +703,11 @@ function PresenterMode({
     displayId: selectedDisplayId,
     payload: audiencePayload
   }), [audiencePayload, selectedDisplayId]);
+
+  const handleSelectedDisplayIdChange = useCallback((displayId: number | undefined): void => {
+    selectedDisplayIdRef.current = displayId;
+    setSelectedDisplayId(displayId);
+  }, []);
 
   const handleClosePresenter = useCallback((): void => {
     if (audienceWindowState.open) {
@@ -844,9 +879,11 @@ function PresenterMode({
             audienceOpen={audienceWindowState.open}
             displayError={displayError}
             displays={presenterDisplays}
+            canRefreshDisplays={Boolean(listPresenterDisplays)}
             onCloseAudienceWindow={handleCloseAudienceWindow}
             onOpenAudienceWindow={handleOpenAudienceWindow}
-            onSelectedDisplayIdChange={setSelectedDisplayId}
+            onRefreshDisplays={refreshPresenterDisplays}
+            onSelectedDisplayIdChange={handleSelectedDisplayIdChange}
             selectedDisplayId={selectedDisplayId}
           />
 
@@ -999,19 +1036,23 @@ function PresenterTimerPanel({ view }: { view: PresenterSessionView }): ReactNod
 function PresenterDisplayPanel({
   audienceError,
   audienceOpen,
+  canRefreshDisplays,
   displayError,
   displays,
   onCloseAudienceWindow,
   onOpenAudienceWindow,
+  onRefreshDisplays,
   onSelectedDisplayIdChange,
   selectedDisplayId
 }: {
   audienceError?: string;
   audienceOpen: boolean;
+  canRefreshDisplays: boolean;
   displayError?: string;
   displays: DesktopPresenterDisplay[];
   onCloseAudienceWindow: () => void;
   onOpenAudienceWindow: () => void;
+  onRefreshDisplays: () => void;
   selectedDisplayId?: number;
   onSelectedDisplayIdChange: (displayId: number | undefined) => void;
 }): ReactNode {
@@ -1028,6 +1069,14 @@ function PresenterDisplayPanel({
   return (
     <section className="presenter-panel presenter-display-panel">
       <PanelHeader
+        actions={
+          <IconButton
+            disabled={!canRefreshDisplays}
+            icon={<RotateCcw />}
+            label="Refresh displays"
+            onClick={onRefreshDisplays}
+          />
+        }
         eyebrow={displayCountLabel}
         title="Presenter Display"
       />

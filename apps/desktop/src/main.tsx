@@ -1763,6 +1763,7 @@ function App(): React.ReactNode {
       onInspectorTabChange={setInspectorTab}
       loadPresenterDeck={loadPresenterDeck}
       listPresenterDisplays={listPresenterDisplays}
+      onPresenterDisplaysChanged={desktopApi?.onPresenterDisplaysChanged}
       openAudienceWindow={openAudienceWindow}
       updateAudienceWindow={updateAudienceWindow}
       closeAudienceWindow={closeAudienceWindow}

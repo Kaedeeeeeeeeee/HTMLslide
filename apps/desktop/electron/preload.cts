@@ -45,6 +45,11 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
   },
   reportSmokeReady: (marker: unknown) => ipcRenderer.invoke("htmlslide:report-smoke-ready", marker),
   listPresenterDisplays: () => ipcRenderer.invoke("htmlslide:list-presenter-displays"),
+  onPresenterDisplaysChanged: (handler: () => void) => {
+    const listener = () => handler();
+    ipcRenderer.on("htmlslide:presenter-displays-changed", listener);
+    return () => ipcRenderer.removeListener("htmlslide:presenter-displays-changed", listener);
+  },
   openAudienceWindow: (request: unknown) => ipcRenderer.invoke("htmlslide:open-audience-window", request),
   updateAudienceWindow: (request: unknown) => ipcRenderer.invoke("htmlslide:update-audience-window", request),
   closeAudienceWindow: () => ipcRenderer.invoke("htmlslide:close-audience-window"),

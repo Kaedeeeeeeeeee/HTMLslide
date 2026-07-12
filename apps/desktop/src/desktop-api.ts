@@ -458,6 +458,7 @@ export type HtmlslideDesktopApi = {
   onOpenRequest(handler: (request: DesktopInitialOpenRequest) => void): () => void;
   reportSmokeReady(marker: DesktopSmokeReadyMarker): Promise<{ ok: boolean }>;
   listPresenterDisplays(): Promise<DesktopPresenterDisplay[]>;
+  onPresenterDisplaysChanged(handler: () => void): () => void;
   openAudienceWindow(request: DesktopAudienceWindowRequest): Promise<DesktopAudienceWindowState>;
   updateAudienceWindow(request: DesktopAudienceWindowRequest): Promise<DesktopAudienceWindowState>;
   closeAudienceWindow(): Promise<DesktopAudienceWindowState>;

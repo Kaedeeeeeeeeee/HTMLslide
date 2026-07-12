@@ -6,6 +6,7 @@ import {
   FolderOpen,
   KeyRound,
   Plug,
+  SkipForward,
   Settings2,
   Sparkles,
   TerminalSquare
@@ -116,10 +117,16 @@ export function Onboarding({
     skillsInstalled: officialSkills?.installed === true,
     skillsRunning: officialSkillsStatus.kind === "running"
   });
+  const setupBusy =
+    choosingWorkspace ||
+    selectingAiEngine ||
+    aiEngineStatus.kind === "running" ||
+    cliIntegrationStatus.kind === "running" ||
+    officialSkillsStatus.kind === "running";
 
   return (
-    <main className="onboarding-shell">
-      <section className="onboarding-panel">
+    <main aria-busy={setupBusy} aria-labelledby="onboarding-title" className="onboarding-shell">
+      <section aria-describedby="onboarding-step-content" className="onboarding-panel">
         <div className="brand-block">
           <span className="brand-mark">Hs</span>
           <div>
@@ -132,22 +139,26 @@ export function Onboarding({
           <PanelHeader
             eyebrow={`Step ${activeStepIndex + 1} of ${steps.length}`}
             title={activeStep.title}
+            titleId="onboarding-title"
           />
-          <p className="onboarding-description">{activeStep.description}</p>
-          <OnboardingStepContent
-            aiEngineSettings={aiEngineSettings}
-            aiEngineSelectionDisabled={selectingAiEngine}
-            aiEngineStatus={aiEngineStatus}
-            cliIntegration={cliIntegration}
-            cliIntegrationStatus={cliIntegrationStatus}
-            officialSkills={officialSkills}
-            officialSkillsStatus={officialSkillsStatus}
-            onSelectAiEngine={(mode) => void handleSelectAiEngine(mode)}
-            stepId={activeStep.id}
-            workspacePath={workspacePath}
-          />
+          <div aria-live="polite" className="onboarding-step-content" id="onboarding-step-content">
+            <p className="onboarding-description">{activeStep.description}</p>
+            <OnboardingStepContent
+              aiEngineSettings={aiEngineSettings}
+              aiEngineSelectionDisabled={selectingAiEngine}
+              aiEngineStatus={aiEngineStatus}
+              cliIntegration={cliIntegration}
+              cliIntegrationStatus={cliIntegrationStatus}
+              officialSkills={officialSkills}
+              officialSkillsStatus={officialSkillsStatus}
+              onSelectAiEngine={(mode) => void handleSelectAiEngine(mode)}
+              stepId={activeStep.id}
+              workspacePath={workspacePath}
+            />
+          </div>
           <div className="onboarding-actions">
             <Button
+              aria-busy={primaryAction.busy}
               disabled={primaryAction.disabled}
               icon={primaryAction.icon}
               onClick={() => void handlePrimaryAction()}
@@ -157,7 +168,9 @@ export function Onboarding({
             </Button>
             {!finalStep ? (
               <Button
-                disabled={activeStep.id === "engine" && selectingAiEngine}
+                aria-busy={setupBusy}
+                disabled={setupBusy}
+                icon={<SkipForward />}
                 onClick={() => void handleSkip()}
                 variant="ghost"
               >
@@ -179,6 +192,7 @@ export function Onboarding({
               aria-label={`${step.title}, ${stateLabel}`}
               aria-current={active ? "step" : undefined}
               className={active ? "setup-step is-active" : "setup-step"}
+              data-state={active ? "current" : done ? "complete" : "upcoming"}
               key={step.id}
             >
               <span className={done ? "setup-step__icon is-done" : "setup-step__icon"}>
@@ -227,7 +241,7 @@ function OnboardingStepContent({
         <span className="onboarding-status-card__icon"><FolderOpen /></span>
         <span>
           <small>Current workspace</small>
-          <strong>{workspacePath ?? "Loading default workspace..."}</strong>
+          <strong aria-live="polite">{workspacePath ?? "Loading default workspace..."}</strong>
         </span>
       </section>
     );
@@ -302,9 +316,11 @@ function SetupOperationStatus({ label, status }: { label: string; status: Operat
   return (
     <StatusPill
       aria-atomic="true"
+      aria-busy={status.kind === "running"}
       aria-label={label}
       aria-live="polite"
       className="onboarding-operation-status"
+      data-status={status.kind}
       role="status"
       tone={status.kind === "failed" ? "danger" : status.kind === "success" ? "success" : "neutral"}
     >
@@ -325,7 +341,11 @@ function SetupCapabilityCard({
   status: OperationStatus;
 }): ReactNode {
   return (
-    <section aria-label={label} className="onboarding-status-card onboarding-status-card--capability">
+    <section
+      aria-busy={status.kind === "running"}
+      aria-label={label}
+      className="onboarding-status-card onboarding-status-card--capability"
+    >
       <span className={installed ? "onboarding-status-card__icon is-complete" : "onboarding-status-card__icon"}>
         {installed ? <Check /> : <CircleDashed />}
       </span>
@@ -360,9 +380,10 @@ function onboardingPrimaryAction(options: {
   setupReady: boolean;
   skillsInstalled: boolean;
   skillsRunning: boolean;
-}): { disabled: boolean; icon: ReactNode; label: string } {
+}): { busy: boolean; disabled: boolean; icon: ReactNode; label: string } {
   if (options.activeStepId === "welcome" && !options.setupReady) {
     return {
+      busy: true,
       disabled: true,
       icon: <CircleDashed />,
       label: "Loading Setup"
@@ -370,6 +391,7 @@ function onboardingPrimaryAction(options: {
   }
   if (options.activeStepId === "workspace") {
     return {
+      busy: options.choosingWorkspace,
       disabled: options.choosingWorkspace,
       icon: <FolderOpen />,
       label: options.choosingWorkspace ? "Choosing Workspace" : "Choose Workspace"
@@ -377,6 +399,7 @@ function onboardingPrimaryAction(options: {
   }
   if (options.activeStepId === "engine") {
     return {
+      busy: options.engineRunning,
       disabled: options.engineRunning,
       icon: options.engineRunning ? <CircleDashed /> : <ArrowRight />,
       label: options.engineRunning ? "Saving AI Engine" : "Continue"
@@ -384,6 +407,7 @@ function onboardingPrimaryAction(options: {
   }
   if (options.activeStepId === "cli" && !options.cliInstalled) {
     return {
+      busy: options.cliRunning,
       disabled: options.cliRunning,
       icon: <TerminalSquare />,
       label: options.cliRunning ? "Installing CLI" : "Install CLI"
@@ -391,12 +415,14 @@ function onboardingPrimaryAction(options: {
   }
   if (options.activeStepId === "skills" && !options.skillsInstalled) {
     return {
+      busy: options.skillsRunning,
       disabled: options.skillsRunning,
       icon: <Sparkles />,
       label: options.skillsRunning ? "Installing Skills" : "Install Skills"
     };
   }
   return {
+    busy: false,
     disabled: false,
     icon: options.finalStep ? <Check /> : <ArrowRight />,
     label: options.finalStep ? "Open Library" : options.activeStepId === "welcome" ? "Start Setup" : "Continue"

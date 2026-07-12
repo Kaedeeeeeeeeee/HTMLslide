@@ -1,4 +1,5 @@
 import { AgentRunCancelledError, AgentRunFailureError, errorMessage, isCancellationError } from "./errors.js";
+import { createFileCopyCheckpoint } from "./checkpoint.js";
 import type {
   AgentBuildResult,
   AgentCheckResult,
@@ -367,26 +368,23 @@ export class AgentRunController {
 
   async #createCheckpoint(): Promise<void> {
     const createdAt = this.#now();
-    const checkpoint =
-      (await this.#input.createCheckpoint?.({
+    const checkpointInput = {
         runId: this.runId,
         projectRoot: this.#input.projectRoot,
         createdAt
-      })) ??
-      createCheckpointMetadata({
-        runId: this.runId,
-        projectRoot: this.#input.projectRoot,
-        createdAt
-      });
+    };
+    const checkpoint = await (this.#input.createCheckpoint === undefined
+      ? createFileCopyCheckpoint(checkpointInput)
+      : this.#input.createCheckpoint(checkpointInput));
 
     this.#snapshot.checkpoint = checkpoint;
-    this.#emit("checkpoint-created", "brief", "running", "Checkpoint metadata created.", {
+    this.#emit("checkpoint-created", "brief", "running", "Checkpoint created.", {
       checkpointId: checkpoint.id,
       metadata: {
         strategy: checkpoint.strategy
       }
     });
-    this.#log("info", "Checkpoint metadata created.", "brief", {
+    this.#log("info", "Checkpoint created.", "brief", {
       checkpointId: checkpoint.id,
       strategy: checkpoint.strategy
     });

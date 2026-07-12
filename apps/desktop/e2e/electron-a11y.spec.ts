@@ -125,22 +125,44 @@ test.describe("HTMLslide desktop accessibility smoke", () => {
 
     const page = await electronApp.firstWindow();
     const browserErrors = collectBrowserErrors(page);
+    await page.emulateMedia({ reducedMotion: "reduce" });
     await page.waitForLoadState("domcontentloaded");
 
     await expect(page.getByRole("heading", { name: "Welcome to HTMLslide" })).toBeVisible();
     await expect(page.getByRole("list", { name: "Setup progress" }).getByRole("listitem")).toHaveCount(6);
+    const skipOnboarding = page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true });
+    await skipOnboarding.focus();
+    await expect(skipOnboarding).toBeFocused();
     await expectNoAccessibilityViolations(page, "onboarding");
 
-    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await skipOnboarding.click();
     await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
-    await expect(page.getByRole("navigation", { name: "Project library" }).getByRole("button", { name: "Recent" })).toHaveAttribute(
+    const libraryNav = page.getByRole("navigation", { name: "Project library" });
+    const recentNav = libraryNav.getByRole("button", { name: "Recent", exact: true });
+    await expect(recentNav).toHaveAttribute(
       "aria-current",
       "page"
     );
     await expectNoAccessibilityViolations(page, "project library");
 
-    await page.locator(".library-main").getByRole("button", { name: "New Deck", exact: true }).first().click();
+    await page.setViewportSize({ width: 640, height: 800 });
+    await expect(libraryNav).toBeVisible();
+    const templatesNav = libraryNav.getByRole("button", { name: "Templates", exact: true });
+    await templatesNav.click();
+    await expect(page.getByRole("heading", { name: "Templates", exact: true })).toBeVisible();
+    await recentNav.click();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+    await expectNoAccessibilityViolations(page, "project library mobile");
+
+    const newDeckTrigger = page.locator(".library-main").getByRole("button", { name: "New Deck", exact: true }).first();
+    await newDeckTrigger.click();
     const newDeckPanel = page.locator(".new-deck-panel");
+    await expect(newDeckPanel).toBeVisible();
+    await expect(newDeckPanel.getByLabel("Deck title")).toBeFocused();
+    await newDeckPanel.press("Escape");
+    await expect(newDeckPanel).toBeHidden();
+    await expect(newDeckTrigger).toBeFocused();
+    await newDeckTrigger.click();
     await expect(newDeckPanel).toBeVisible();
     await expect(newDeckPanel.getByRole("button", { name: /No AI/ })).toHaveAttribute("aria-pressed", "true");
     await newDeckPanel.getByRole("button", { name: /HTMLslide Agent/ }).click();

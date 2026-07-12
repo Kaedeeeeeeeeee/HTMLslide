@@ -146,6 +146,13 @@ export type DesktopSlidePreviewDocument = {
   htmlDocument: string;
 };
 
+export type DesktopSaveSlideNotesResult = {
+  projectPath: string;
+  slideId: string;
+  notesPath: string;
+  bytes: number;
+};
+
 export type DesktopCliResult = {
   ok: boolean;
   exitCode: number;
@@ -454,6 +461,8 @@ export type HtmlslideDesktopApi = {
   openProjectDialog(): Promise<DesktopProjectPreview | undefined>;
   loadProject(projectPath: string): Promise<DesktopProjectPreview>;
   loadSlidePreview(projectPath: string, slideId: string): Promise<DesktopSlidePreviewDocument>;
+  saveSlideNotes(projectPath: string, slideId: string, content: string): Promise<DesktopSaveSlideNotesResult>;
+  addQaIgnoreRule(projectPath: string, issueType: string): Promise<{ issueTypes: string[] }>;
   createProject(request: NewDeckDraft & { workspacePath?: string }): Promise<DesktopCliResult>;
   checkProject(projectPath: string): Promise<DesktopCliResult>;
   exportProject(projectPath: string): Promise<DesktopCliResult>;

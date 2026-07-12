@@ -19,6 +19,7 @@ import { OFFICIAL_SKILLS } from "@htmlslide/skills";
 import { exportDeck } from "../../../packages/compiler/src/index";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  addDesktopQaIgnoreRule,
   diffDesktopCheckpoint,
   findCliRuntime,
   getDesktopCliIntegration,
@@ -41,6 +42,7 @@ import {
   runHtmlslideCli,
   runDesktopMockAgent,
   sanitizeDesktopAgentMetadata,
+  saveDesktopSlideNotes,
   summarizeDeckProject,
   uninstallDesktopCliIntegration,
   upsertRecentProject,
@@ -605,6 +607,46 @@ describe("desktop services", () => {
       status: "ready"
     });
     expect(preview.slides[0]).not.toHaveProperty("html");
+  });
+
+  it("saves speaker notes through the manifest-declared notes path", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+
+    await expect(saveDesktopSlideNotes(projectPath, "001-title", "# Updated notes\n")).resolves.toMatchObject({
+      notesPath: "notes/001-title.md",
+      slideId: "001-title"
+    });
+    await expect(readFile(path.join(projectPath, "notes", "001-title.md"), "utf8")).resolves.toBe("# Updated notes\n");
+  });
+
+  it("stores QA ignore rules inside the project runtime directory", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+
+    await expect(addDesktopQaIgnoreRule(projectPath, "text-overflow")).resolves.toEqual({
+      issueTypes: ["text-overflow"]
+    });
+    await expect(readFile(path.join(projectPath, ".htmlslide", "qa-ignores.json"), "utf8")).resolves.toContain(
+      '"text-overflow"'
+    );
+  });
+
+  it("rejects speaker notes that traverse a symlink", async () => {
+    const projectPath = await tempDir();
+    const outsidePath = await tempDir();
+    await writeDeck(projectPath);
+    await writeFile(path.join(outsidePath, "notes.md"), "outside\n");
+    await rm(path.join(projectPath, "notes", "001-title.md"));
+    await symlink(
+      path.join(outsidePath, "notes.md"),
+      path.join(projectPath, "notes", "001-title.md")
+    );
+
+    await expect(saveDesktopSlideNotes(projectPath, "001-title", "should not write\n")).rejects.toThrow(
+      "symbolic links"
+    );
+    await expect(readFile(path.join(outsidePath, "notes.md"), "utf8")).resolves.toBe("outside\n");
   });
 
   it("builds an isolated compiler document for one slide without exposing raw HTML in project metadata", async () => {

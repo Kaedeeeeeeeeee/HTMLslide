@@ -9,6 +9,8 @@ import {
   fingerprintProjectFiles,
   MAX_EXPORT_MANIFEST_BYTES,
   readProjectFileSnapshot,
+  readQaIgnoreConfig,
+  QA_IGNORE_RULES_PATH,
   sha256Hex,
   statusFromIssueSummary,
   summarizeIssues,
@@ -67,6 +69,7 @@ export type LintProjectInput = {
   writeReport?: boolean;
   reportFileName?: string;
 };
+
 
 type NormalizedLintInput = LintProjectInput & {
   projectPath: string;
@@ -200,6 +203,27 @@ const makeIssue = (issue: HtmlslideIssue): HtmlslideIssue => ({
   measurement: issue.measurement ?? {}
 });
 
+const applyQaIgnoreRules = async (projectRoot: string, issues: HtmlslideIssue[]): Promise<HtmlslideIssue[]> => {
+  try {
+    const config = await readQaIgnoreConfig(projectRoot);
+    const ignored = new Set(config.issueTypes);
+    return issues.filter((issue) => !ignored.has(issue.type));
+  } catch (error) {
+    return [
+      ...issues,
+      makeIssue({
+        agentInstruction: "Repair or remove .htmlslide/qa-ignores.json, then rerun htmlslide check.",
+        message: error instanceof Error ? error.message : String(error),
+        path: QA_IGNORE_RULES_PATH,
+        severity: "error",
+        slideId: "deck",
+        suggestedFix: "Ensure the QA ignore file is valid JSON with version 1 and an issueTypes array.",
+        type: "qa-ignore-config-invalid"
+      })
+    ];
+  }
+};
+
 const pathExists = async (filePath: string): Promise<boolean> => {
   try {
     await access(filePath);
@@ -285,7 +309,8 @@ const checkLoadedDeckProject = async (
 
   issues.push(...(await checkExports(project, [...localAssetPaths])));
 
-  const report = buildReport(project.projectRoot, sortIssues(issues, slideOrder));
+  const filteredIssues = await applyQaIgnoreRules(project.projectRoot, issues);
+  const report = buildReport(project.projectRoot, sortIssues(filteredIssues, slideOrder));
   await writeReportIfRequested(report, input);
   return report;
 };
@@ -301,7 +326,8 @@ const checkManualProject = async (input: NormalizedLintInput): Promise<CheckRepo
     issues.push(...slideResult.issues);
   }
 
-  const report = buildReport(projectRoot, sortIssues(issues, slideOrder));
+  const filteredIssues = await applyQaIgnoreRules(projectRoot, issues);
+  const report = buildReport(projectRoot, sortIssues(filteredIssues, slideOrder));
   await writeReportIfRequested(report, input);
   return report;
 };

@@ -19,6 +19,7 @@ my-talk/
     checkpoints/
     logs/
     reports/
+    qa-ignores.json
   exports/
 ```
 
@@ -42,6 +43,8 @@ my-talk/
 Agents should edit source areas. The compiler owns artifact areas.
 
 The compiler also owns transient export coordination state under `.htmlslide/cache/`. The project-level export lock serializes compiler writes for one project, and private staging directories hold uncommitted bytes. Staged files are not exports. The compiler commits artifacts first and atomically replaces `exports/export-manifest.json` last.
+
+`.htmlslide/qa-ignores.json` is an optional, source-controlled review preference containing stable linter issue types to suppress. It is read by the shared linter used by the CLI, desktop checks, and export gate; malformed content fails closed as `qa-ignore-config-invalid`. The desktop "Ignore once" action never writes this file.
 
 ## Project Loading
 

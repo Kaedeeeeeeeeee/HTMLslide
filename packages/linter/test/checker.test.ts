@@ -115,6 +115,20 @@ describe("HTMLslide linter", () => {
     expect(ranks).toEqual([...ranks].sort((left, right) => left - right));
   });
 
+  it("applies project-local QA ignore rules to the shared check report", async () => {
+    await withTempFixture("linter-text-overflow", async (projectPath) => {
+      await mkdir(path.join(projectPath, ".htmlslide"), { recursive: true });
+      await writeFile(
+        path.join(projectPath, ".htmlslide", "qa-ignores.json"),
+        `${JSON.stringify({ version: 1, issueTypes: ["text-overflow"] }, null, 2)}\n`
+      );
+
+      const report = await checkProject(projectPath);
+
+      expect(issueTypes(report)).not.toContain("text-overflow");
+    });
+  });
+
   it("detects text overflow in fixed-height slide copy", async () => {
     const report = await checkProject(fixturePath("linter-text-overflow"));
     const overflowIssue = report.issues.find((issue) => issue.type === "text-overflow");

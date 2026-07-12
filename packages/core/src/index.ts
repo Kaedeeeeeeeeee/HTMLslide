@@ -3,5 +3,6 @@ export * from "./export-manifest.js";
 export * from "./issues.js";
 export * from "./paths.js";
 export * from "./project.js";
+export * from "./qa-ignore.js";
 export * from "./templates.js";
 export * from "./version.js";

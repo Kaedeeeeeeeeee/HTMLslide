@@ -42,6 +42,7 @@ import {
   Pause,
   Play,
   RotateCcw,
+  Save,
   Send,
   Settings2,
   ShieldCheck,
@@ -62,6 +63,7 @@ import {
   useState,
   type CSSProperties,
   type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode
 } from "react";
 import {
@@ -79,6 +81,7 @@ import type {
   OperationStatus,
   ProjectSummary,
   QaFilter,
+  QaIgnoreScope,
   QaIssue,
   SlideSummary
 } from "../model";
@@ -118,6 +121,8 @@ interface WorkspaceProps {
   diffReview?: AgentDiffReview;
   initialPresenterOpen?: InitialPresenterOpen;
   operationStatus: OperationStatus;
+  notesSaveStatus: OperationStatus;
+  notesReadOnly: boolean;
   onAcceptDiff?: () => void;
   onCloseDiff?: () => void;
   onCommandChange: (value: string) => void;
@@ -128,6 +133,9 @@ interface WorkspaceProps {
   onQaFilterChange: (filter: QaFilter) => void;
   onRevertDiff?: () => void;
   onRunAction: (action: "start" | "pause" | "cancel" | "retry") => void;
+  onSaveSlideNotes: (slideId: string, content: string) => Promise<boolean>;
+  onFixQaIssue: (issue: QaIssue) => void;
+  onIgnoreQaIssue: (issue: QaIssue, scope: QaIgnoreScope) => Promise<boolean>;
   onSelectVisualDirection: (directionId: string) => void;
   onSelectSlide: (slideId: string) => void;
   onSettingsOpen: () => void;
@@ -280,12 +288,17 @@ export function Workspace({
   onQaFilterChange,
   onRevertDiff,
   onRunAction,
+  onSaveSlideNotes,
+  onFixQaIssue,
+  onIgnoreQaIssue,
   onSelectVisualDirection,
   onSelectSlide,
   onSettingsOpen,
   onToolbarAction,
   onViewDiff,
   operationStatus,
+  notesSaveStatus,
+  notesReadOnly,
   pendingVisualDirections,
   project,
   previewRevision,
@@ -417,6 +430,7 @@ export function Workspace({
     [project.title, slides]
   );
   const [presenterState, setPresenterState] = useState<ActivePresenterState | null>(null);
+  const presenterTriggerRef = useRef<HTMLElement | null>(null);
   const openedInitialPresenterIdRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
@@ -454,6 +468,7 @@ export function Workspace({
   }, []);
 
   const handleOpenPresenter = useCallback(async (): Promise<void> => {
+    presenterTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const loadedPresenterDeck = loadPresenterDeck ? await loadPresenterDeck().catch(() => null) : null;
     const nextPresenterDeck = loadedPresenterDeck ?? rehearsalPresenterDeck;
     const source: PresenterSource = loadedPresenterDeck ? "deckpkg" : "rehearsal";
@@ -474,6 +489,11 @@ export function Workspace({
     });
     onToolbarAction("present");
   }, [loadPresenterDeck, onToolbarAction, rehearsalPresenterDeck, selectedSlideId]);
+
+  const handlePresenterExit = useCallback((): void => {
+    setPresenterState(null);
+    window.requestAnimationFrame(() => presenterTriggerRef.current?.focus());
+  }, []);
 
   const handleWorkspaceToolbarAction = useCallback(
     (action: "generate" | "check" | "export" | "present"): void => {
@@ -523,7 +543,12 @@ export function Workspace({
           issueCounts={selectedIssueCounts}
           issues={selectedIssues}
           onQaFilterChange={onQaFilterChange}
+          onFixQaIssue={onFixQaIssue}
+          onIgnoreQaIssue={onIgnoreQaIssue}
           onToolbarAction={handleWorkspaceToolbarAction}
+          onSaveSlideNotes={onSaveSlideNotes}
+          notesReadOnly={notesReadOnly}
+          notesSaveStatus={notesSaveStatus}
           operationStatus={operationStatus}
           onTabChange={onInspectorTabChange}
           qaFilter={qaFilter}
@@ -559,7 +584,7 @@ export function Workspace({
         <PresenterMode
           closeAudienceWindow={closeAudienceWindow}
           deck={presenterState.deck}
-          onExit={() => setPresenterState(null)}
+          onExit={handlePresenterExit}
           onSessionChange={handlePresenterSessionChange}
           openAudienceWindow={openAudienceWindow}
           project={project}
@@ -613,6 +638,39 @@ function PresenterMode({
   const displayRefreshRequestIdRef = useRef(0);
   const [audienceWindowState, setAudienceWindowState] = useState<DesktopAudienceWindowState>({ open: false });
   const [audienceWindowError, setAudienceWindowError] = useState<string | undefined>();
+
+  useEffect(() => {
+    const focusFrame = window.requestAnimationFrame(() => shellRef.current?.focus());
+    return () => window.cancelAnimationFrame(focusFrame);
+  }, []);
+
+  const handlePresenterFocusTrap = useCallback((event: ReactKeyboardEvent<HTMLElement>): void => {
+    if (event.key !== "Tab") {
+      return;
+    }
+
+    const shell = shellRef.current;
+    if (!shell) {
+      return;
+    }
+    const focusable = Array.from(
+      shell.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), select:not([disabled]), textarea:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+      )
+    ).filter((element) => element.getAttribute("aria-hidden") !== "true");
+    if (focusable.length === 0) {
+      event.preventDefault();
+      shell.focus();
+      return;
+    }
+
+    const currentIndex = focusable.indexOf(document.activeElement as HTMLElement);
+    const nextIndex = event.shiftKey
+      ? currentIndex <= 0 ? focusable.length - 1 : currentIndex - 1
+      : currentIndex === focusable.length - 1 ? 0 : currentIndex + 1;
+    event.preventDefault();
+    focusable[nextIndex]?.focus();
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
@@ -757,6 +815,7 @@ function PresenterMode({
       .then((state) => {
         setAudienceWindowState(state);
         setAudienceWindowError(undefined);
+        window.requestAnimationFrame(() => shellRef.current?.focus());
       })
       .catch((error: unknown) => {
         setAudienceWindowError(error instanceof Error ? error.message : String(error));
@@ -811,8 +870,11 @@ function PresenterMode({
   );
 
   useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent): void => {
-      if (isTextInputTarget(event.target)) {
+    const handleKeyDown = (event: globalThis.KeyboardEvent): void => {
+      if (event.key !== "Escape" && isPresenterTextInputTarget(event.target)) {
+        return;
+      }
+      if ((event.key === " " || event.key === "Enter") && isPresenterActivationTarget(event.target)) {
         return;
       }
 
@@ -832,14 +894,18 @@ function PresenterMode({
   return (
     <section
       aria-label="Presenter rehearsal mode"
+      aria-modal="true"
       className={`presenter-mode presenter-mode--${view.screen}`}
+      onKeyDown={handlePresenterFocusTrap}
       ref={shellRef}
+      role="dialog"
+      tabIndex={-1}
     >
       <header className="presenter-mode__topbar">
         <div className="workspace-title">
           <span className="brand-mark">Hs</span>
           <div>
-            <strong>{project.title}</strong>
+            <strong id="presenter-mode-title">{project.title}</strong>
             <span>{source === "rehearsal" ? "Windowed Presenter / Rehearsal Mode" : "Deck Package Presenter / Rehearsal Mode"}</span>
           </div>
         </div>
@@ -1254,8 +1320,12 @@ function formatDisplayBounds(bounds: DesktopPresenterDisplay["bounds"]): string 
   return `${bounds.width} x ${bounds.height}`;
 }
 
-function isTextInputTarget(target: EventTarget | null): boolean {
+function isPresenterTextInputTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName);
+}
+
+function isPresenterActivationTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && ["A", "BUTTON"].includes(target.tagName);
 }
 
 function togglePresenterFullscreen(element: HTMLElement | null): void {
@@ -1640,9 +1710,14 @@ interface InspectorProps {
   issues: QaIssue[];
   operationStatus: OperationStatus;
   qaFilter: QaFilter;
+  onFixQaIssue: (issue: QaIssue) => void;
+  onIgnoreQaIssue: (issue: QaIssue, scope: QaIgnoreScope) => Promise<boolean>;
   onQaFilterChange: (filter: QaFilter) => void;
+  onSaveSlideNotes: (slideId: string, content: string) => Promise<boolean>;
+  notesReadOnly: boolean;
   onTabChange: (tab: InspectorTab) => void;
   onToolbarAction: (action: "generate" | "check" | "export" | "present") => void;
+  notesSaveStatus: OperationStatus;
 }
 
 function Inspector({
@@ -1650,8 +1725,13 @@ function Inspector({
   currentSlide,
   issueCounts,
   issues,
+  onFixQaIssue,
+  onIgnoreQaIssue,
   onQaFilterChange,
+  onSaveSlideNotes,
+  notesReadOnly,
   onToolbarAction,
+  notesSaveStatus,
   operationStatus,
   onTabChange,
   qaFilter
@@ -1667,11 +1747,20 @@ function Inspector({
       <div className="inspector-body">
         {activeTab === "outline" ? <OutlinePanel slide={currentSlide} /> : null}
         {activeTab === "design" ? <DesignPanel slide={currentSlide} /> : null}
-        {activeTab === "notes" ? <NotesPanel slide={currentSlide} /> : null}
+        {activeTab === "notes" ? (
+          <NotesPanel
+            onSave={onSaveSlideNotes}
+            readOnly={notesReadOnly}
+            saveStatus={notesSaveStatus}
+            slide={currentSlide}
+          />
+        ) : null}
         {activeTab === "qa" ? (
           <QaPanel
             issueCounts={issueCounts}
             issues={issues}
+            onFixQaIssue={onFixQaIssue}
+            onIgnoreQaIssue={onIgnoreQaIssue}
             onQaFilterChange={onQaFilterChange}
             qaFilter={qaFilter}
           />
@@ -1743,19 +1832,77 @@ function DesignPanel({ slide }: { slide: SlideSummary }): ReactNode {
   );
 }
 
-function NotesPanel({ slide }: { slide: SlideSummary }): ReactNode {
+function NotesPanel({
+  onSave,
+  readOnly,
+  saveStatus,
+  slide
+}: {
+  onSave: (slideId: string, content: string) => Promise<boolean>;
+  readOnly: boolean;
+  saveStatus: OperationStatus;
+  slide: SlideSummary;
+}): ReactNode {
+  const [draft, setDraft] = useState(slide.speakerNotes);
+  const [dirty, setDirty] = useState(false);
+  const draftsBySlideRef = useRef(new Map<string, string>());
+
+  useEffect(() => {
+    const draftForSlide = draftsBySlideRef.current.get(slide.id);
+    setDraft(draftForSlide ?? slide.speakerNotes);
+    setDirty(draftForSlide !== undefined && draftForSlide !== slide.speakerNotes);
+  }, [slide.id, slide.speakerNotes]);
+
+  const handleSave = async (): Promise<void> => {
+    const saved = await onSave(slide.id, draft);
+    if (saved) {
+      draftsBySlideRef.current.delete(slide.id);
+      setDirty(false);
+    }
+  };
+
   return (
     <section className="inspector-section">
-      <PanelHeader title="Presenter Notes" />
+      <PanelHeader
+        actions={
+          <Button
+            aria-busy={saveStatus.kind === "running"}
+            disabled={!dirty || saveStatus.kind === "running" || readOnly || slide.notesPath === undefined}
+            icon={<Save />}
+            onClick={() => void handleSave()}
+            size="sm"
+            title={readOnly ? "Deck package notes are read-only." : slide.notesPath === undefined ? "This slide has no notes file." : "Save speaker notes"}
+          >
+            Save
+          </Button>
+        }
+        title="Presenter Notes"
+      />
       <textarea
         aria-label="Presenter notes"
-        defaultValue={slide.speakerNotes}
+        disabled={readOnly || slide.notesPath === undefined}
+        onChange={(event) => {
+          const nextDraft = event.currentTarget.value;
+          draftsBySlideRef.current.set(slide.id, nextDraft);
+          setDraft(nextDraft);
+          setDirty(nextDraft !== slide.speakerNotes);
+        }}
         rows={9}
+        value={draft}
       />
       <div className="notes-meta">
         <StatusPill tone="info">{slide.duration}</StatusPill>
-        <span>Readable in rehearsal mode</span>
+        <span>{readOnly ? "Deck package notes are read-only" : dirty ? "Unsaved changes" : slide.notesPath ? "Saved to project notes" : "No notes file for this slide"}</span>
       </div>
+      {saveStatus.kind !== "idle" ? (
+        <p
+          aria-live={saveStatus.kind === "failed" ? "assertive" : "polite"}
+          className={saveStatus.kind === "failed" ? "settings-note is-danger" : "settings-note"}
+          role={saveStatus.kind === "failed" ? "alert" : "status"}
+        >
+          {saveStatus.message}
+        </p>
+      ) : null}
     </section>
   );
 }
@@ -1764,12 +1911,16 @@ interface QaPanelProps {
   issueCounts: Record<"error" | "warning" | "suggestion", number>;
   issues: QaIssue[];
   qaFilter: QaFilter;
+  onFixQaIssue: (issue: QaIssue) => void;
+  onIgnoreQaIssue: (issue: QaIssue, scope: QaIgnoreScope) => Promise<boolean>;
   onQaFilterChange: (filter: QaFilter) => void;
 }
 
 function QaPanel({
   issueCounts,
   issues,
+  onFixQaIssue,
+  onIgnoreQaIssue,
   onQaFilterChange,
   qaFilter
 }: QaPanelProps): ReactNode {
@@ -1863,6 +2014,7 @@ function QaPanel({
                   <div className="qa-issue__actions">
                     <Button
                       aria-label={`Fix ${issue.type} with AI`}
+                      onClick={() => onFixQaIssue(issue)}
                       size="sm"
                       variant="primary"
                     >
@@ -1870,6 +2022,7 @@ function QaPanel({
                     </Button>
                     <Button
                       aria-label={`Ignore ${issue.type} once`}
+                      onClick={() => void onIgnoreQaIssue(issue, "once")}
                       size="sm"
                       variant="ghost"
                     >
@@ -1877,6 +2030,7 @@ function QaPanel({
                     </Button>
                     <Button
                       aria-label={`Ignore ${issue.type} rule`}
+                      onClick={() => void onIgnoreQaIssue(issue, "rule")}
                       size="sm"
                       variant="ghost"
                     >

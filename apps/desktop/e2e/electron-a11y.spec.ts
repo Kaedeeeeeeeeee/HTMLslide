@@ -283,6 +283,7 @@ test.describe("HTMLslide desktop accessibility smoke", () => {
     await expect(page.getByRole("region", { name: "QA Panel" })).toBeVisible({ timeout: 30_000 });
     await inspector.getByRole("tab", { name: "Notes", exact: true }).click();
     await expect(inspector.getByRole("textbox", { name: "Presenter notes" })).toBeVisible();
+    await expect(inspector.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
     await expectNoAccessibilityViolations(page, "narrow workspace inspector");
 
     await expectNoFrameworkOverlay(page);
@@ -315,7 +316,28 @@ test.describe("HTMLslide desktop accessibility smoke", () => {
     const pauseTimerButton = presenter.getByRole("button", { name: "Pause timer", exact: true });
     await expect(pauseTimerButton).toHaveAttribute("aria-pressed", "false");
     await pauseTimerButton.click();
-    await expect(presenter.getByRole("button", { name: "Resume timer", exact: true })).toHaveAttribute("aria-pressed", "true");
+    const resumeTimerButton = presenter.getByRole("button", { name: "Resume timer", exact: true });
+    await expect(resumeTimerButton).toHaveAttribute("aria-pressed", "true");
+    await resumeTimerButton.focus();
+    await resumeTimerButton.press("Space");
+    await expect(presenter.getByRole("button", { name: "Pause timer", exact: true })).toHaveAttribute("aria-pressed", "false");
+    await presenter.focus();
+    await expect(presenter).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect.poll(() => page.evaluate(() => {
+      const active = document.activeElement;
+      return Boolean(active?.closest('[aria-label="Presenter rehearsal mode"]'));
+    })).toBe(true);
+    for (let index = 0; index < 12; index += 1) {
+      await page.keyboard.press("Tab");
+    }
+    await expect.poll(() => page.evaluate(() => {
+      const active = document.activeElement;
+      return Boolean(active?.closest('[aria-label="Presenter rehearsal mode"]'));
+    })).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(presenter).toBeHidden();
+    await expect(page.locator(".workspace-toolbar").getByRole("button", { name: "Present", exact: true })).toBeFocused();
     await expectNoAccessibilityViolations(page, "presenter rehearsal mode");
 
     await expectNoFrameworkOverlay(page);

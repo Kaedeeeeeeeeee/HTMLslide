@@ -29,6 +29,10 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
   loadProject: (projectPath: string) => ipcRenderer.invoke("htmlslide:load-project", projectPath),
   loadSlidePreview: (projectPath: string, slideId: string) =>
     ipcRenderer.invoke("htmlslide:load-slide-preview", projectPath, slideId),
+  saveSlideNotes: (projectPath: string, slideId: string, content: string) =>
+    ipcRenderer.invoke("htmlslide:save-slide-notes", projectPath, slideId, content),
+  addQaIgnoreRule: (projectPath: string, issueType: string) =>
+    ipcRenderer.invoke("htmlslide:add-qa-ignore-rule", projectPath, issueType),
   createProject: (request: { title: string; folderName: string; templateId?: string; workspacePath?: string }) =>
     ipcRenderer.invoke("htmlslide:create-project", request),
   checkProject: (projectPath: string) => ipcRenderer.invoke("htmlslide:check-project", projectPath),

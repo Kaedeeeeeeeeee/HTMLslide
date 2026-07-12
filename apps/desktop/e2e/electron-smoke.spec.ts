@@ -955,6 +955,21 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(readFile(path.join(projectDir, "notes", "001-title.md"), "utf8")).resolves.toContain(
       "Deck title: Investor Demo"
     );
+
+    const inspector = page.locator(".inspector");
+    await inspector.getByRole("tab", { name: "Notes", exact: true }).click();
+    const notesEditor = inspector.getByRole("textbox", { name: "Presenter notes" });
+    await notesEditor.fill("# Draft survives navigation");
+    const filmstripSlides = page.locator(".filmstrip-list .filmstrip-item");
+    await filmstripSlides.nth(1).click();
+    await filmstripSlides.first().click();
+    await expect(notesEditor).toHaveValue("# Draft survives navigation");
+    await notesEditor.fill("# Reviewed notes\n\nReady for rehearsal.");
+    await inspector.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(inspector.getByRole("status")).toContainText("Speaker notes saved");
+    await expect(readFile(path.join(projectDir, "notes", "001-title.md"), "utf8")).resolves.toBe(
+      "# Reviewed notes\n\nReady for rehearsal."
+    );
     await expectNoFrameworkOverlay(page);
   });
 
@@ -2251,6 +2266,23 @@ fetch("${previewNetworkOrigin}/fetch");
     await expect(qaResultSummary).toContainText("QA Panel shows no warning issues.");
     await expect(qaPanel.getByRole("list", { name: "QA issues" })).toHaveCount(0);
     await expect(qaPanel.getByText("No issues in this filter")).toBeVisible();
+    await qaSeverityTabs.getByRole("tab", { name: /All\s+1/ }).click();
+
+    await overflowIssue.getByRole("button", { name: "Ignore text-overflow once" }).click();
+    await expect(qaIssueList).toHaveCount(0);
+    await page.locator(".workspace-toolbar").getByRole("button", { name: "Check", exact: true }).click();
+    await expect(page.getByText(/check: Check found issues/)).toBeVisible({ timeout: 30_000 });
+    const restoredOverflowIssue = qaPanel.getByRole("list", { name: "QA issues" }).getByRole("listitem", { name: "text-overflow" });
+    await expect(restoredOverflowIssue).toBeVisible();
+    await restoredOverflowIssue.getByRole("button", { name: "Ignore text-overflow rule" }).click();
+    await expect(readFile(path.join(projectPath, ".htmlslide", "qa-ignores.json"), "utf8")).resolves.toContain(
+      '"text-overflow"'
+    );
+    await expect(page.getByText(/check: Check passed/)).toBeVisible({ timeout: 30_000 });
+    await expect(qaPanel.getByRole("list", { name: "QA issues" })).toHaveCount(0);
+
+    await expect(qaSeverityTabs.getByRole("tab", { name: /All\s+0/ })).toBeVisible();
+    await expect(qaPanel.getByRole("list", { name: "QA issues" })).toHaveCount(0);
 
     await expectNoFrameworkOverlay(page);
     expect(browserErrors).toEqual([]);

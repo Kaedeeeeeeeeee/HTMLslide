@@ -48,7 +48,13 @@ import {
   type VisualDirection
 } from "@htmlslide/agent";
 import { buildSlidePreviewDocument } from "@htmlslide/compiler";
-import { ExportManifestSchema, parseDeck, type Deck } from "@htmlslide/core";
+import {
+  ExportManifestSchema,
+  addQaIgnoreRule,
+  parseDeck,
+  resolveProjectRelativePathInsideRealProject,
+  type Deck
+} from "@htmlslide/core";
 import { AGENT_RUN_REPORT_SCHEMA_VERSION } from "@htmlslide/core/version";
 import {
   DeckPackageValidationError,
@@ -1262,6 +1268,52 @@ export async function loadSlidePreview(
   slideId: string
 ): Promise<DesktopSlidePreviewDocument> {
   return buildSlidePreviewDocument(projectPath, { slideId });
+}
+
+export type DesktopSaveSlideNotesResult = {
+  projectPath: string;
+  slideId: string;
+  notesPath: string;
+  bytes: number;
+};
+
+export async function saveDesktopSlideNotes(
+  projectPath: string,
+  slideId: string,
+  content: string
+): Promise<DesktopSaveSlideNotesResult> {
+  const root = path.resolve(projectPath);
+  const normalizedSlideId = slideId.trim();
+  if (normalizedSlideId.length === 0) {
+    throw new Error("Speaker notes require a slide id.");
+  }
+  if (typeof content !== "string") {
+    throw new Error("Speaker notes must be text.");
+  }
+
+  const manifest = await readDeckManifest(root);
+  const slide = manifest.slides?.find((candidate) => candidate.id === normalizedSlideId);
+  const notesPath = typeof slide?.notes === "string" ? slide.notes.trim() : "";
+  if (notesPath.length === 0) {
+    throw new Error(`Slide ${normalizedSlideId} does not define a speaker notes path.`);
+  }
+  if (notesPath !== "notes" && !notesPath.startsWith("notes/")) {
+    throw new Error(`Speaker notes must stay under notes/: ${notesPath}`);
+  }
+
+  const notesFilePath = await resolveProjectRelativePathInsideRealProject(root, notesPath);
+  await fs.writeFile(notesFilePath, content, "utf8");
+  return {
+    bytes: Buffer.byteLength(content, "utf8"),
+    notesPath,
+    projectPath: root,
+    slideId: normalizedSlideId
+  };
+}
+
+export async function addDesktopQaIgnoreRule(projectPath: string, issueType: string): Promise<{ issueTypes: string[] }> {
+  const config = await addQaIgnoreRule(path.resolve(projectPath), issueType);
+  return { issueTypes: config.issueTypes };
 }
 
 export async function loadDesktopPresenterDeck(

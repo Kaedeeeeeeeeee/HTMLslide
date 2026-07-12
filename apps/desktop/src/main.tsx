@@ -263,6 +263,10 @@ function App(): React.ReactNode {
   const [running, setRunning] = useState(false);
   const [activeStageIndex, setActiveStageIndex] = useState(4);
   const [operationStatus, setOperationStatus] = useState<OperationStatus>(idleStatus);
+  const [notesSaveStatus, setNotesSaveStatus] = useState<OperationStatus>({
+    kind: "idle",
+    message: "No note edits"
+  });
   const [commandActionStatuses, setCommandActionStatuses] = useState<CommandActionStatuses>(() =>
     defaultCommandActionStatuses()
   );
@@ -1085,6 +1089,76 @@ function App(): React.ReactNode {
     directPresenterOpen && activeProject?.path === directPresenterOpen.deckpkgPath
   );
 
+  const handleSaveSlideNotes = useCallback(
+    async (slideId: string, content: string): Promise<boolean> => {
+      if (!desktopApi || !activeProject || activeProject.path.startsWith("~") || activeProjectIsDeckPackage) {
+        setNotesSaveStatus({ kind: "failed", message: "Speaker notes require a local project." });
+        return false;
+      }
+
+      setNotesSaveStatus({ kind: "running", message: "Saving speaker notes" });
+      try {
+        await desktopApi.saveSlideNotes(activeProject.path, slideId, content);
+        const updateSlide = (slide: SlideSummary): SlideSummary =>
+          slide.id === slideId ? { ...slide, speakerNotes: content } : slide;
+        setActiveSlides((current) => current.map(updateSlide));
+        setProjectPreviews((current) => {
+          const preview = current[activeProject.id];
+          if (!preview) {
+            return current;
+          }
+          return {
+            ...current,
+            [activeProject.id]: {
+              ...preview,
+              project: { ...preview.project, status: "Needs check" },
+              slides: preview.slides.map(updateSlide)
+            }
+          };
+        });
+        setProjects((current) => current.map((project) =>
+          project.id === activeProject.id ? { ...project, status: "Needs check" } : project
+        ));
+        setPreviewRevision((current) => current + 1);
+        setNotesSaveStatus({ kind: "success", message: "Speaker notes saved" });
+        return true;
+      } catch (error: unknown) {
+        setNotesSaveStatus({
+          kind: "failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+        return false;
+      }
+    },
+    [activeProject, activeProjectIsDeckPackage, desktopApi]
+  );
+
+  const handleFixQaIssue = useCallback(
+    (issue: QaIssue): void => {
+      if (running) {
+        setOperationStatus({ kind: "failed", message: "Finish the active agent run before starting a QA repair." });
+        return;
+      }
+      setSelectedSlideId(issue.slideId);
+      startAgentGeneration([
+        "Fix one HTMLslide QA issue in the existing project.",
+        `Scope: slide ${issue.slideId}`,
+        `Issue type: ${issue.type}`,
+        `Location: ${issue.selector}`,
+        `Report: ${issue.message}`,
+        `Suggested fix: ${issue.suggestedFix}`,
+        "Constraints:",
+        "- Keep the slide id unchanged.",
+        "- Keep the fixed 1920x1080 viewport and project source boundary.",
+        "- Do not edit exports/ or .htmlslide/.",
+        "- Run htmlslide check after the repair."
+      ].join("\n"), {
+        projectPath: activeProject?.path
+      });
+    },
+    [activeProject?.path, running, startAgentGeneration]
+  );
+
   useEffect(() => {
     if (!desktopApi || !activeProject || activeProject.path.startsWith("~") || activeProjectIsDeckPackage) {
       return;
@@ -1497,6 +1571,35 @@ function App(): React.ReactNode {
       .finally(() => setPreviewRevision((current) => current + 1));
   }, [activeProject, activeProjectIsDeckPackage, desktopApi, updateCommandActionStatus]);
 
+  const handleIgnoreQaIssue = useCallback(
+    async (issue: QaIssue, scope: "once" | "rule"): Promise<boolean> => {
+      if (scope === "once") {
+        setQaIssues((current) => current.filter((candidate) => candidate.id !== issue.id));
+        setOperationStatus({ kind: "success", message: `Ignored ${issue.type} for this review` });
+        return true;
+      }
+
+      if (!desktopApi || !activeProject || activeProject.path.startsWith("~") || activeProjectIsDeckPackage) {
+        setOperationStatus({ kind: "failed", message: "Issue rules require a local deck project." });
+        return false;
+      }
+
+      try {
+        await desktopApi.addQaIgnoreRule(activeProject.path, issue.type);
+        setOperationStatus({ kind: "running", message: `Ignoring ${issue.type} and refreshing QA` });
+        runCheck();
+        return true;
+      } catch (error: unknown) {
+        setOperationStatus({
+          kind: "failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+        return false;
+      }
+    },
+    [activeProject, activeProjectIsDeckPackage, desktopApi, runCheck]
+  );
+
   const runExport = useCallback((): void => {
     if (!desktopApi || !activeProject || activeProject.path.startsWith("~") || activeProjectIsDeckPackage) {
       setInspectorTab("export");
@@ -1829,6 +1932,8 @@ function App(): React.ReactNode {
       updateAudienceWindow={updateAudienceWindow}
       closeAudienceWindow={closeAudienceWindow}
       onQaFilterChange={setQaFilter}
+      onFixQaIssue={handleFixQaIssue}
+      onIgnoreQaIssue={handleIgnoreQaIssue}
       onRevertDiff={handleRevertDiff}
       onRunAction={(action) => {
         if (action === "start") {
@@ -1877,6 +1982,9 @@ function App(): React.ReactNode {
       slides={activeSlides}
       stages={agentStages}
       loadSlidePreview={desktopApi?.loadSlidePreview}
+      notesSaveStatus={notesSaveStatus}
+      notesReadOnly={activeProjectIsDeckPackage}
+      onSaveSlideNotes={handleSaveSlideNotes}
     />
   );
 }

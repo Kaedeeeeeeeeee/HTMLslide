@@ -36,6 +36,19 @@ The HTMLslide QA checker validates deck projects and writes an agent-readable re
 
 Every checker-produced issue must include `slideId`, `severity`, `type`, `message`, `measurement`, `suggestedFix`, and `agentInstruction`. `path` and `selector` should be present when a file or DOM target is known.
 
+## QA Ignore Rules
+
+Projects may opt into stable type-level suppressions in `.htmlslide/qa-ignores.json`:
+
+```json
+{
+  "version": 1,
+  "issueTypes": ["title-too-long"]
+}
+```
+
+The shared linter, CLI, desktop Check action, and export gate apply these rules consistently. `Ignore once` is an in-memory desktop review action and does not write the file. Invalid configuration fails closed with `qa-ignore-config-invalid`.
+
 ## Checks
 
 - Core project checks: `deck.json` schema, duplicate slide ids, safe project paths, and referenced slide, notes, and theme files via `@htmlslide/core`.

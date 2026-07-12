@@ -6,6 +6,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import {
   defaultWorkspacePath,
+  addDesktopQaIgnoreRule,
   detectExternalAgentStatuses,
   diffDesktopCheckpoint,
   findCliRuntime,
@@ -29,6 +30,7 @@ import {
   runDesktopExternalAgent,
   runDesktopMockAgent,
   runHtmlslideCli,
+  saveDesktopSlideNotes,
   summarizeDeckProject,
   uninstallDesktopCliIntegration,
   upsertRecentProject,
@@ -868,6 +870,32 @@ function registerIpcHandlers(): void {
       await new Promise((resolveDelay) => setTimeout(resolveDelay, e2ePreviewDelayMs));
     }
     return loadSlidePreview(projectPath, slideId);
+  });
+
+  ipcMain.handle(
+    "htmlslide:save-slide-notes",
+    async (_event, projectPath: unknown, slideId: unknown, content: unknown) => {
+      if (typeof projectPath !== "string" || projectPath.trim().length === 0) {
+        throw new Error("Speaker notes require a project path.");
+      }
+      if (typeof slideId !== "string" || slideId.trim().length === 0) {
+        throw new Error("Speaker notes require a slide id.");
+      }
+      if (typeof content !== "string") {
+        throw new Error("Speaker notes must be text.");
+      }
+      return saveDesktopSlideNotes(projectPath, slideId, content);
+    }
+  );
+
+  ipcMain.handle("htmlslide:add-qa-ignore-rule", async (_event, projectPath: unknown, issueType: unknown) => {
+    if (typeof projectPath !== "string" || projectPath.trim().length === 0) {
+      throw new Error("QA ignore rules require a project path.");
+    }
+    if (typeof issueType !== "string" || issueType.trim().length === 0) {
+      throw new Error("QA ignore rules require an issue type.");
+    }
+    return addDesktopQaIgnoreRule(projectPath, issueType);
   });
 
   ipcMain.handle("htmlslide:create-project", async (_event, request: DesktopCreateProjectRequest) => {

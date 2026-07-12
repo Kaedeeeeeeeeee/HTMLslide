@@ -799,6 +799,12 @@ svg {
   border-color: rgba(49, 95, 203, 0.25);
 }
 
+.ai-mode-card:disabled,
+.external-agent-item:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
 .ai-mode-card strong,
 .ai-mode-card span,
 .external-agent-item strong,

@@ -57,7 +57,7 @@ interface ProjectLibraryProps {
   onInstallOfficialSkills: () => void;
   onLibrarySectionChange: (section: LibrarySection) => void;
   onRefreshExternalAgents: () => void;
-  onSaveAiEngineSettings: (draft: AiEngineSettingsDraft) => void;
+  onSaveAiEngineSettings: (draft: AiEngineSettingsDraft) => Promise<boolean> | void;
   onChooseWorkspace: () => void;
   onNewDeck: (draft: NewDeckDraft) => void;
   onOpenFolder: () => void;

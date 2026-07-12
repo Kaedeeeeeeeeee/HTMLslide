@@ -24,7 +24,7 @@ interface AiEngineSettingsPanelProps {
   statuses: ExternalAgentStatus[];
   operationStatus: OperationStatus;
   onRefreshExternalAgents: () => void;
-  onSaveSettings: (draft: AiEngineSettingsDraft) => void;
+  onSaveSettings: (draft: AiEngineSettingsDraft) => Promise<boolean> | void;
 }
 
 export function AiEngineSettingsPanel({
@@ -41,6 +41,7 @@ export function AiEngineSettingsPanel({
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [externalAgentId, setExternalAgentId] = useState<ExternalAgentId>(settings.externalAgent.selectedId);
   const [customCommand, setCustomCommand] = useState(settings.externalAgent.customCommand);
+  const busy = operationStatus.kind === "running";
 
   useEffect(() => {
     setMode(settings.mode);
@@ -76,8 +77,8 @@ export function AiEngineSettingsPanel({
   const keyStatus = formatRedactedKeyStatus(settings);
   const externalAgentReadiness = useMemo(() => buildExternalAgentReadiness(selectedStatus), [selectedStatus]);
 
-  const save = (clearKey = false): void => {
-    onSaveSettings({
+  const save = async (clearKey = false): Promise<void> => {
+    const saved = await onSaveSettings({
       apiKeyInput,
       baseUrl,
       clearKey,
@@ -87,15 +88,18 @@ export function AiEngineSettingsPanel({
       model,
       provider
     });
-    setApiKeyInput("");
+    if (saved !== false) {
+      setApiKeyInput("");
+    }
   };
 
   return (
-    <section className="ai-settings">
+    <section aria-busy={busy} className="ai-settings">
       <PanelHeader
         actions={
           <StatusPill
             aria-atomic="true"
+            aria-busy={busy}
             aria-label="AI engine operation status"
             aria-live="polite"
             role="status"
@@ -113,6 +117,7 @@ export function AiEngineSettingsPanel({
           <button
             aria-pressed={mode === item.id}
             className={mode === item.id ? "ai-mode-card is-selected" : "ai-mode-card"}
+            disabled={busy}
             key={item.id}
             onClick={() => setMode(item.id)}
             type="button"
@@ -134,6 +139,7 @@ export function AiEngineSettingsPanel({
             <label className="settings-field">
               <span>Provider</span>
               <select
+                disabled={busy}
                 onChange={(event) => setProvider(event.currentTarget.value as ApiKeyProvider)}
                 value={provider}
               >
@@ -148,6 +154,7 @@ export function AiEngineSettingsPanel({
             <label className="settings-field">
               <span>Model</span>
               <input
+                disabled={busy}
                 onChange={(event) => setModel(event.currentTarget.value)}
                 placeholder={apiKeyProviders.find((item) => item.id === provider)?.defaultModel}
                 value={model}
@@ -158,6 +165,7 @@ export function AiEngineSettingsPanel({
               <label className="settings-field">
                 <span>Base URL</span>
                 <input
+                  disabled={busy}
                   onChange={(event) => setBaseUrl(event.currentTarget.value)}
                   placeholder="https://api.openai.com/v1"
                   value={baseUrl}
@@ -169,6 +177,7 @@ export function AiEngineSettingsPanel({
               <span>API key</span>
               <input
                 autoComplete="off"
+                disabled={busy}
                 onChange={(event) => setApiKeyInput(event.currentTarget.value)}
                 placeholder={settings.apiKey.hasKey ? "******** key saved" : "Paste provider API key"}
                 type="password"
@@ -180,15 +189,17 @@ export function AiEngineSettingsPanel({
 
             <div className="settings-actions">
               <Button
+                disabled={busy}
                 icon={<Save />}
-                onClick={() => save(false)}
+                onClick={() => void save(false)}
                 variant="primary"
               >
                 {apiKeyInput.trim().length > 0 ? "Save Key" : "Save Settings"}
               </Button>
               <Button
+                disabled={busy || !settings.apiKey.hasKey}
                 icon={<Trash2 />}
-                onClick={() => save(true)}
+                onClick={() => void save(true)}
                 variant="ghost"
               >
                 Clear Key
@@ -211,6 +222,7 @@ export function AiEngineSettingsPanel({
                 <button
                   aria-pressed={externalAgentId === item.id}
                   className={externalAgentId === item.id ? "external-agent-item is-selected" : "external-agent-item"}
+                  disabled={busy}
                   key={item.id}
                   onClick={() => setExternalAgentId(item.id)}
                   type="button"
@@ -235,7 +247,7 @@ export function AiEngineSettingsPanel({
           <label className="settings-field">
             <span>Generic command</span>
             <input
-              disabled={externalAgentId !== "generic"}
+              disabled={busy || externalAgentId !== "generic"}
               onChange={(event) => setCustomCommand(event.currentTarget.value)}
               placeholder="my-agent --cwd {{projectPath}} --prompt-file {{promptFile}}"
               value={customCommand}
@@ -244,13 +256,15 @@ export function AiEngineSettingsPanel({
 
           <div className="settings-actions">
             <Button
+              disabled={busy}
               icon={<Save />}
-              onClick={() => save(false)}
+              onClick={() => void save(false)}
               variant="primary"
             >
               Save Selection
             </Button>
             <Button
+              disabled={busy}
               icon={<RefreshCcw />}
               onClick={onRefreshExternalAgents}
             >

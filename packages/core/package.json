@@ -18,6 +18,10 @@
     "./templates": {
       "types": "./dist/templates.d.ts",
       "import": "./dist/templates.js"
+    },
+    "./source-material-limits": {
+      "types": "./dist/source-material-limits.d.ts",
+      "import": "./dist/source-material-limits.js"
     }
   },
   "files": [

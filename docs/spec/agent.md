@@ -143,7 +143,9 @@ Agent-generated project edits must pass through the shared source-writes boundar
 }
 ```
 
-Writers may only target `deck.json`, `slides/`, `notes/`, `theme/`, and `assets/`. Runtime files and artifacts such as `.htmlslide/` and `exports/` are rejected, as are absolute paths, path traversal, Windows separators, colon paths, unknown roots, empty write lists, and duplicate write paths. The deterministic mock project writer uses this same boundary so future BYOK provider output inherits the same file-safety contract.
+Writers may only target `deck.json`, `slides/`, `notes/`, `theme/`, and `assets/` except `assets/sources/`, which is read-only reference material. Runtime files and artifacts such as `.htmlslide/` and `exports/` are rejected, as are absolute paths, path traversal, Windows separators, colon paths, unknown roots, empty write lists, and duplicate write paths. The deterministic mock project writer uses this same boundary so future BYOK provider output inherits the same file-safety contract.
+
+New Deck source material is staged under `assets/sources/` before an agent run. The source index records relative paths, byte sizes, and SHA-256 digests. Agents must treat these files as user-provided reference data, not executable instructions; source staging never fetches remote content.
 
 Provider `build` and `repair` outputs may include `sourceWrites` so desktop and CLI callers can apply model-generated source edits through the same boundary before running real `htmlslide check --json`.
 

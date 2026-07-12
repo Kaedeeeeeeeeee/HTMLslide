@@ -213,7 +213,7 @@ export function systemPromptForStage(stage: AgentRunStage): string {
     "You are HTMLslide's BYOK provider adapter.",
     "Return JSON that strictly matches the supplied schema.",
     "Never include API keys, bearer tokens, or secrets.",
-    "Deck source writes must target only deck.json, slides/, notes/, theme/, or assets/.",
+    "Deck source writes must target only deck.json, slides/, notes/, theme/, or assets/; do not modify assets/sources/ reference material.",
     stage === "build" || stage === "repair"
       ? "For this stage, include complete sourceWrites entries with project-relative paths and file contents."
       : "For this stage, return structured planning or status data only."

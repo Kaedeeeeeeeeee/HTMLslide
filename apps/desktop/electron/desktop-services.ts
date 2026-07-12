@@ -50,9 +50,14 @@ import {
 import { buildSlidePreviewDocument } from "@htmlslide/compiler";
 import {
   ExportManifestSchema,
+  MAX_SOURCE_MATERIAL_BYTES_PER_FILE,
+  MAX_SOURCE_MATERIAL_COUNT,
   addQaIgnoreRule,
   parseDeck,
   resolveProjectRelativePathInsideRealProject,
+  stageSourceMaterials,
+  type SourceMaterialInput,
+  type SourceMaterialRecord,
   type Deck
 } from "@htmlslide/core";
 import { AGENT_RUN_REPORT_SCHEMA_VERSION } from "@htmlslide/core/version";
@@ -126,6 +131,18 @@ export type DesktopCreateProjectRequest = {
   folderName: string;
   templateId?: string;
   workspacePath?: string;
+  sources?: DesktopNewDeckSource[];
+};
+
+export type DesktopNewDeckSource =
+  | { kind: "file"; name: string; path: string; size?: number }
+  | { kind: "text"; name: string; content: string };
+
+export type DesktopSourceFileSelection = {
+  kind: "file";
+  name: string;
+  path: string;
+  size: number;
 };
 
 export type DesktopResolvedCreateProjectRequest = {
@@ -815,6 +832,74 @@ export function resolveCreateProjectRequest(
     title,
     workspacePath
   };
+}
+
+export async function inspectDesktopSourceFiles(filePaths: readonly string[]): Promise<DesktopSourceFileSelection[]> {
+  const uniquePaths = [...new Set(filePaths.map((filePath) => filePath.trim()).filter(Boolean))];
+  if (uniquePaths.length > MAX_SOURCE_MATERIAL_COUNT) {
+    throw new Error(`Choose no more than ${MAX_SOURCE_MATERIAL_COUNT} source files at a time.`);
+  }
+
+  const selections = await Promise.all(uniquePaths.map(async (filePath) => {
+    if (!path.isAbsolute(filePath)) {
+      throw new Error(`Source file must be an absolute local path: ${filePath}`);
+    }
+    const fileInfo = await fs.lstat(filePath);
+    if (fileInfo.isSymbolicLink()) {
+      throw new Error(`Source file symlinks are not allowed: ${path.basename(filePath)}`);
+    }
+    if (!fileInfo.isFile()) {
+      throw new Error(`Source must be a regular file: ${path.basename(filePath)}`);
+    }
+    if (fileInfo.size > MAX_SOURCE_MATERIAL_BYTES_PER_FILE) {
+      throw new Error(`Source file exceeds the 25 MiB limit: ${path.basename(filePath)}`);
+    }
+    if (isSecretLikeSourceName(path.basename(filePath))) {
+      throw new Error(`Secret-like files cannot be added as source material: ${path.basename(filePath)}`);
+    }
+    return {
+      kind: "file" as const,
+      name: path.basename(filePath),
+      path: filePath,
+      size: fileInfo.size
+    };
+  }));
+
+  return selections;
+}
+
+export async function stageDesktopNewDeckSources(
+  projectPath: string,
+  sources: readonly DesktopNewDeckSource[] = []
+): Promise<SourceMaterialRecord[]> {
+  const inputs: SourceMaterialInput[] = sources.map((source) => {
+    if (source.kind === "file") {
+      return {
+        kind: "file",
+        name: source.name,
+        sourcePath: source.path
+      };
+    }
+    return {
+      content: source.content,
+      kind: "text",
+      name: source.name
+    };
+  });
+  const result = await stageSourceMaterials(path.resolve(projectPath), inputs);
+  return result.records;
+}
+
+function isSecretLikeSourceName(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  return normalized === ".env"
+    || normalized.startsWith(".env.")
+    || normalized.includes("credential")
+    || normalized.includes("secret")
+    || normalized.includes("token")
+    || normalized.endsWith(".pem")
+    || normalized.endsWith(".key")
+    || normalized === "id_rsa";
 }
 
 export async function readDesktopLibrary(

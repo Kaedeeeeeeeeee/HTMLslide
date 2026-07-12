@@ -250,6 +250,10 @@ describe("desktop model helpers", () => {
       language: "en-US",
       slideCount: "8",
       speakerNotes: "full-script",
+      sources: [
+        { id: "file-1", kind: "file" as const, name: "research.csv", path: "/tmp/research.csv", size: 42 },
+        { content: "Ship the beta", id: "text-1", kind: "text" as const, name: "Meeting transcript" }
+      ],
       templateId: "default",
       title: "Investor Update",
       tone: "executive"
@@ -260,6 +264,8 @@ describe("desktop model helpers", () => {
     expect(buildNewDeckAgentBrief(draft)).toContain("Brief: Summarize Q3 growth and expansion risks.");
     expect(buildNewDeckAgentBrief(draft)).toContain("Audience: investors");
     expect(buildNewDeckAgentBrief(draft)).toContain("AI engine: local deterministic mock agent");
+    expect(buildNewDeckAgentBrief(draft)).toContain("Source materials: file: research.csv, text: Meeting transcript");
+    expect(buildNewDeckAgentBrief(draft)).toContain("Read any staged source materials under assets/sources/");
     expect(buildNewDeckAgentBrief(draft)).toContain("Slide count: 8 slides");
     expect(buildNewDeckAgentBrief(draft)).toContain("Speaker notes: full speaker script");
     expect(buildNewDeckAgentBrief(draft)).toContain("fixed 1920x1080 canvas");

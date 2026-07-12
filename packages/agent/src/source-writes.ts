@@ -16,6 +16,7 @@ export type ApplyAgentSourceWritesResult = {
 const sourceDirectoryRoots = new Set(["assets", "notes", "slides", "theme"]);
 const sourceFileRoots = new Set(["deck.json"]);
 const forbiddenRoots = new Set([".htmlslide", "exports"]);
+const protectedSourceMaterialPath = "assets/sources";
 
 export function parseAgentSourceWrites(value: unknown): AgentSourceWrite[] {
   const rawWrites = Array.isArray(value)
@@ -179,6 +180,10 @@ function assertSafeAgentSourceWritePath(projectRelativePath: string): void {
   const root = segments[0];
   if (root === undefined || forbiddenRoots.has(root)) {
     throw new Error(`Refusing to write non-source path: ${projectRelativePath}`);
+  }
+
+  if (projectRelativePath === protectedSourceMaterialPath || projectRelativePath.startsWith(`${protectedSourceMaterialPath}/`)) {
+    throw new Error(`Refusing to modify user-provided source material: ${projectRelativePath}`);
   }
 
   if (sourceFileRoots.has(root)) {

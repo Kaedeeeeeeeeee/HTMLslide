@@ -97,7 +97,7 @@ export function validateReportedFileWrites(projectRoot: string, reportedWrites: 
   if (forbiddenSourceWrite !== undefined) {
     throw new AgentAdapterFailureError(
       createAgentAdapterFailure("forbidden-file-write", {
-        detail: "External agents may only report writes to deck source files: deck.json, slides/, notes/, theme/, or assets/.",
+        detail: "External agents may only report writes to deck source files: deck.json, slides/, notes/, theme/, or assets/ except assets/sources/ reference material.",
         path: forbiddenSourceWrite
       })
     );
@@ -153,6 +153,10 @@ export function isEditableProjectSourcePath(projectRoot: string, candidatePath: 
 
   const segments = relativePath.split("/");
   if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) {
+    return false;
+  }
+
+  if (relativePath === "assets/sources" || relativePath.startsWith("assets/sources/")) {
     return false;
   }
 

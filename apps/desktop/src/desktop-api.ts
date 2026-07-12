@@ -1,4 +1,4 @@
-import type { NewDeckDraft, ProjectSummary, SlideSummary } from "./model";
+import type { NewDeckDraft, NewDeckSource, ProjectSummary, SlideSummary } from "./model";
 import type { AiEngineSettings, ExternalAgentStatus } from "./settings-model";
 import type { PresenterDeck } from "@htmlslide/presenter/session";
 import type { AgentAdapterRunResult } from "@htmlslide/agent-adapters";
@@ -125,6 +125,13 @@ export type DesktopProjectRecord = Omit<ProjectSummary, "lastOpened"> & {
 export type DesktopProjectReference = {
   id?: string;
   path?: string;
+};
+
+export type DesktopSourceFileSelection = {
+  kind: "file";
+  name: string;
+  path: string;
+  size: number;
 };
 
 export type DesktopProjectPreview = {
@@ -457,13 +464,14 @@ export type HtmlslideDesktopApi = {
   getAiEngineSettings(): Promise<AiEngineSettings>;
   saveAiEngineSettings(request: DesktopAiEngineSettingsSaveRequest): Promise<AiEngineSettings>;
   detectExternalAgents(): Promise<ExternalAgentStatus[]>;
+  chooseSourceFiles(): Promise<DesktopSourceFileSelection[]>;
   chooseWorkspace(): Promise<string | undefined>;
   openProjectDialog(): Promise<DesktopProjectPreview | undefined>;
   loadProject(projectPath: string): Promise<DesktopProjectPreview>;
   loadSlidePreview(projectPath: string, slideId: string): Promise<DesktopSlidePreviewDocument>;
   saveSlideNotes(projectPath: string, slideId: string, content: string): Promise<DesktopSaveSlideNotesResult>;
   addQaIgnoreRule(projectPath: string, issueType: string): Promise<{ issueTypes: string[] }>;
-  createProject(request: NewDeckDraft & { workspacePath?: string }): Promise<DesktopCliResult>;
+  createProject(request: NewDeckDraft & { workspacePath?: string; sources?: NewDeckSource[] }): Promise<DesktopCliResult>;
   checkProject(projectPath: string): Promise<DesktopCliResult>;
   exportProject(projectPath: string): Promise<DesktopCliResult>;
   loadPresenterDeck(projectPath: string): Promise<DesktopPresenterDeckResult>;

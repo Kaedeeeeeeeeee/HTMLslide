@@ -24,6 +24,7 @@ import {
   findCliRuntime,
   getDesktopCliIntegration,
   getDesktopOfficialSkills,
+  inspectDesktopSourceFiles,
   installDesktopCliIntegration,
   installDesktopOfficialSkills,
   listDesktopPresenterDisplays,
@@ -43,6 +44,7 @@ import {
   runDesktopMockAgent,
   sanitizeDesktopAgentMetadata,
   saveDesktopSlideNotes,
+  stageDesktopNewDeckSources,
   summarizeDeckProject,
   uninstallDesktopCliIntegration,
   upsertRecentProject,
@@ -630,6 +632,52 @@ describe("desktop services", () => {
     await expect(readFile(path.join(projectPath, ".htmlslide", "qa-ignores.json"), "utf8")).resolves.toContain(
       '"text-overflow"'
     );
+  });
+
+  it("stages selected files and pasted text into the project source area", async () => {
+    const projectPath = await tempDir();
+    const sourcePath = path.join(await tempDir(), "research.csv");
+    await writeFile(sourcePath, "quarter,revenue\nQ3,42\n", "utf8");
+    await writeDeck(projectPath);
+
+    await expect(inspectDesktopSourceFiles([sourcePath])).resolves.toEqual([
+      expect.objectContaining({ kind: "file", name: "research.csv", path: sourcePath })
+    ]);
+    const records = await stageDesktopNewDeckSources(projectPath, [
+      { kind: "file", name: "research.csv", path: sourcePath },
+      { kind: "text", name: "Meeting transcript", content: "Decisions\n\n- Ship the beta\n" }
+    ]);
+
+    expect(records.map((record) => record.path)).toEqual([
+      "assets/sources/research.csv",
+      "assets/sources/Meeting transcript.md"
+    ]);
+    await expect(readFile(path.join(projectPath, "assets/sources/research.csv"), "utf8")).resolves.toContain("Q3,42");
+    await expect(readFile(path.join(projectPath, "assets/sources/Meeting transcript.md"), "utf8")).resolves.toContain(
+      "Ship the beta"
+    );
+    await expect(readFile(path.join(projectPath, "assets/sources/index.json"), "utf8")).resolves.toContain(
+      '"kind": "text"'
+    );
+  });
+
+  it("rejects directories, symlinks, and secret-like selected source files", async () => {
+    const projectPath = await tempDir();
+    const sourceRoot = await tempDir();
+    const secretPath = path.join(sourceRoot, ".env");
+    const directoryPath = path.join(sourceRoot, "folder");
+    const symlinkPath = path.join(sourceRoot, "alias.txt");
+    await writeFile(secretPath, "TOKEN=do-not-copy\n", "utf8");
+    await mkdir(directoryPath);
+    await writeFile(path.join(sourceRoot, "safe.txt"), "safe\n", "utf8");
+    await symlink(path.join(sourceRoot, "safe.txt"), symlinkPath);
+
+    await expect(inspectDesktopSourceFiles([secretPath])).rejects.toThrow("Secret-like");
+    await expect(inspectDesktopSourceFiles([directoryPath])).rejects.toThrow("regular file");
+    await expect(inspectDesktopSourceFiles([symlinkPath])).rejects.toThrow("symlinks");
+    await expect(stageDesktopNewDeckSources(projectPath, [
+      { kind: "file", name: "secret.txt", path: secretPath }
+    ])).rejects.toThrow();
   });
 
   it("rejects speaker notes that traverse a symlink", async () => {

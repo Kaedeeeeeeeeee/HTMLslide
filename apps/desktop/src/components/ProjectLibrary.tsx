@@ -1,19 +1,27 @@
 import { Button, IconButton, PanelHeader, StatusPill } from "@htmlslide/shared-ui";
+import {
+  MAX_SOURCE_MATERIAL_BYTES_PER_FILE,
+  MAX_SOURCE_MATERIAL_BYTES_TOTAL,
+  MAX_SOURCE_MATERIAL_COUNT
+} from "@htmlslide/core/source-material-limits";
 import { listBuiltInDeckTemplates } from "@htmlslide/core/templates";
 import {
   BookOpen,
   Bot,
   Check,
   Code2,
+  FilePlus2,
   FolderOpen,
   GalleryVerticalEnd,
   Import,
   Layers3,
   MonitorPlay,
+  Paperclip,
   Plus,
   Settings,
   Sparkles,
-  Trash2
+  Trash2,
+  X
 } from "lucide-react";
 import { useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from "react";
 import {
@@ -25,7 +33,11 @@ import {
   type AiEngineSettings,
   type ExternalAgentStatus
 } from "../settings-model";
-import type { DesktopCliIntegrationState, DesktopOfficialSkillsState } from "../desktop-api";
+import type {
+  DesktopCliIntegrationState,
+  DesktopOfficialSkillsState,
+  DesktopSourceFileSelection
+} from "../desktop-api";
 import {
   createDefaultNewDeckDraft,
   type LibrarySection,
@@ -60,6 +72,7 @@ interface ProjectLibraryProps {
   onRefreshExternalAgents: () => void;
   onSaveAiEngineSettings: (draft: AiEngineSettingsDraft) => Promise<boolean> | void;
   onChooseWorkspace: () => void;
+  onChooseSourceFiles: () => Promise<DesktopSourceFileSelection[]>;
   onNewDeck: (draft: NewDeckDraft) => void;
   onOpenFolder: () => void;
   onOpenProject: (projectId: string) => void;
@@ -159,6 +172,7 @@ export function ProjectLibrary({
   onLibrarySectionChange,
   onRefreshExternalAgents,
   onSaveAiEngineSettings,
+  onChooseSourceFiles,
   onChooseWorkspace,
   onNewDeck,
   onOpenFolder,
@@ -198,6 +212,7 @@ export function ProjectLibrary({
           <RecentProjects
             aiEngineSettings={aiEngineSettings}
             externalAgentStatuses={externalAgentStatuses}
+            onChooseSourceFiles={onChooseSourceFiles}
             onChooseWorkspace={onChooseWorkspace}
             onNewDeck={onNewDeck}
             onOpenFolder={onOpenFolder}
@@ -263,6 +278,7 @@ export function ProjectLibrary({
 function RecentProjects({
   aiEngineSettings,
   externalAgentStatuses,
+  onChooseSourceFiles,
   onChooseWorkspace,
   onNewDeck,
   onOpenFolder,
@@ -274,6 +290,7 @@ function RecentProjects({
 }: {
   aiEngineSettings: AiEngineSettings;
   externalAgentStatuses: ExternalAgentStatus[];
+  onChooseSourceFiles: () => Promise<DesktopSourceFileSelection[]>;
   projects: ProjectSummary[];
   workspacePath?: string;
   onChooseWorkspace: () => void;
@@ -286,6 +303,11 @@ function RecentProjects({
   const [creatingDeck, setCreatingDeck] = useState(false);
   const [draft, setDraft] = useState<NewDeckDraft>(() => createDefaultNewDeckDraft());
   const [folderEdited, setFolderEdited] = useState(false);
+  const [addingTextSource, setAddingTextSource] = useState(false);
+  const [sourceName, setSourceName] = useState("Reference notes");
+  const [sourceText, setSourceText] = useState("");
+  const [sourceError, setSourceError] = useState<string | undefined>();
+  const sourceIdRef = useRef(0);
   const newDeckTriggerRef = useRef<HTMLButtonElement | null>(null);
   const selectedExternalStatus = selectedExternalAgentStatus(aiEngineSettings, externalAgentStatuses);
   const selectedExternalRunnable =
@@ -341,6 +363,73 @@ function RecentProjects({
     }));
   };
 
+  const addSourceFiles = async (): Promise<void> => {
+    setSourceError(undefined);
+    try {
+      const selections = await onChooseSourceFiles();
+      if (selections.length === 0) {
+        return;
+      }
+      setDraft((current) => {
+        const existingPaths = new Set(
+          current.sources
+            .filter((source) => source.kind === "file")
+            .map((source) => source.path)
+        );
+        const nextSources = selections
+          .filter((selection) => !existingPaths.has(selection.path))
+          .map((selection) => ({
+            id: `file-${sourceIdRef.current++}`,
+            kind: "file" as const,
+            name: selection.name,
+            path: selection.path,
+            size: selection.size
+          }));
+        return nextSources.length > 0
+          ? { ...current, sources: [...current.sources, ...nextSources] }
+          : current;
+      });
+    } catch (error: unknown) {
+      setSourceError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const addTextSource = (): void => {
+    const trimmedName = sourceName.trim();
+    if (trimmedName.length === 0) {
+      setSourceError("Name the pasted source before adding it.");
+      return;
+    }
+    if (trimmedName === "." || trimmedName === ".." || /[\\/\0]/u.test(trimmedName)) {
+      setSourceError("Source name must be one plain file name without path separators.");
+      return;
+    }
+    if (sourceText.trim().length === 0) {
+      setSourceError("Paste some source text before adding it.");
+      return;
+    }
+    if (sourceByteLength({ content: sourceText, kind: "text" }) > MAX_SOURCE_MATERIAL_BYTES_PER_FILE) {
+      setSourceError("Pasted source text exceeds the 25 MiB per-source limit.");
+      return;
+    }
+    setDraft((current) => ({
+      ...current,
+      sources: [
+        ...current.sources,
+        {
+          content: sourceText,
+          id: `text-${sourceIdRef.current++}`,
+          kind: "text",
+          name: trimmedName
+        }
+      ]
+    }));
+    setAddingTextSource(false);
+    setSourceName("Reference notes");
+    setSourceText("");
+    setSourceError(undefined);
+  };
+
   const submitNewDeck = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
     if (!canCreate) {
@@ -373,7 +462,13 @@ function RecentProjects({
             >
               Open Folder
             </Button>
-            <Button icon={<Import />}>Import</Button>
+            <Button
+              icon={<Import />}
+              onClick={(event) => openNewDeckPanel(event)}
+              title="Start a new deck with source material"
+            >
+              Import sources
+            </Button>
           </>
         }
         eyebrow={workspacePath ? `Workspace: ${workspacePath}` : "Recent workspaces"}
@@ -447,6 +542,108 @@ function RecentProjects({
               value={draft.brief}
             />
           </label>
+          <section
+            aria-labelledby="new-deck-sources-title"
+            className="new-deck-sources"
+          >
+            <div className="new-deck-section-label">
+              <span id="new-deck-sources-title">Sources</span>
+              <small>Staged into assets/sources when the deck is created</small>
+            </div>
+            <div className="new-deck-source-actions">
+              <Button
+                icon={<Paperclip />}
+                onClick={() => void addSourceFiles()}
+                type="button"
+                variant="secondary"
+              >
+                Add files
+              </Button>
+              <Button
+                icon={<FilePlus2 />}
+                onClick={() => {
+                  setAddingTextSource(true);
+                  setSourceError(undefined);
+                }}
+                type="button"
+                variant="ghost"
+              >
+                Paste text
+              </Button>
+            </div>
+            {addingTextSource ? (
+              <div className="new-deck-source-editor">
+                <label className="settings-field">
+                  <span>Source name</span>
+                  <input
+                    onChange={(event) => setSourceName(event.currentTarget.value)}
+                    value={sourceName}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span>Source text</span>
+                  <textarea
+                    autoFocus
+                    onChange={(event) => setSourceText(event.currentTarget.value)}
+                    placeholder="Paste notes, a transcript, a brief, or webpage text."
+                    rows={5}
+                    value={sourceText}
+                  />
+                </label>
+                <div className="new-deck-source-editor__actions">
+                  <Button
+                    icon={<Plus />}
+                    onClick={addTextSource}
+                    type="button"
+                    variant="primary"
+                  >
+                    Add source
+                  </Button>
+                  <Button
+                    onClick={() => setAddingTextSource(false)}
+                    type="button"
+                    variant="ghost"
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+            {draft.sources.length > 0 ? (
+              <ul className="new-deck-source-list">
+                {draft.sources.map((source) => (
+                  <li key={source.id}>
+                    <span className="new-deck-source-list__icon">
+                      {source.kind === "file" ? <Paperclip aria-hidden="true" /> : <FilePlus2 aria-hidden="true" />}
+                    </span>
+                    <span className="new-deck-source-list__copy">
+                      <strong>{source.name}</strong>
+                      <small>{source.kind === "file" ? formatSourceSize(source.size) : "Pasted text"}</small>
+                    </span>
+                    <IconButton
+                      icon={<X />}
+                      label={`Remove ${source.name}`}
+                      onClick={() => setDraft((current) => ({
+                        ...current,
+                        sources: current.sources.filter((candidate) => candidate.id !== source.id)
+                      }))}
+                    />
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="new-deck-sources__empty">No source material added.</p>
+            )}
+            {sourceError ? (
+              <p
+                aria-live="assertive"
+                className="settings-note is-danger"
+                role="alert"
+              >
+                {sourceError}
+              </p>
+            ) : null}
+          </section>
           <section
             aria-label="AI engine"
             className="new-deck-engines"
@@ -765,6 +962,16 @@ function slugifyDeckFolder(value: string): string {
     .slice(0, 64) || "untitled-deck";
 }
 
+function formatSourceSize(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${Math.round(bytes / 1024)} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function validateNewDeckDraft(
   draft: NewDeckDraft,
   options: {
@@ -810,7 +1017,25 @@ function validateNewDeckDraft(
     return "Choose at least one output.";
   }
 
+  if (draft.sources.length > MAX_SOURCE_MATERIAL_COUNT) {
+    return `Choose no more than ${MAX_SOURCE_MATERIAL_COUNT} source materials.`;
+  }
+
+  const oversizedSource = draft.sources.find((source) => sourceByteLength(source) > MAX_SOURCE_MATERIAL_BYTES_PER_FILE);
+  if (oversizedSource) {
+    return `Source ${oversizedSource.name} exceeds the 25 MiB per-source limit.`;
+  }
+
+  const totalSourceBytes = draft.sources.reduce((total, source) => total + sourceByteLength(source), 0);
+  if (totalSourceBytes > MAX_SOURCE_MATERIAL_BYTES_TOTAL) {
+    return "Source materials exceed the 200 MiB total limit.";
+  }
+
   return undefined;
+}
+
+function sourceByteLength(source: { kind: "file"; size: number } | { kind: "text"; content: string }): number {
+  return source.kind === "file" ? source.size : new TextEncoder().encode(source.content).byteLength;
 }
 
 function buildNewDeckEngineOptions({

@@ -21,6 +21,7 @@ import {
   type DesktopPresenterDeckResult,
   type DesktopProjectPreview,
   type DesktopProjectRecord,
+  type DesktopSourceFileSelection,
   type DesktopSmokeReadyMarker
 } from "./desktop-api";
 import {
@@ -1278,6 +1279,13 @@ function App(): React.ReactNode {
       });
   }, [desktopApi, openPreview]);
 
+  const handleChooseSourceFiles = useCallback(async (): Promise<DesktopSourceFileSelection[]> => {
+    if (!desktopApi) {
+      return [];
+    }
+    return desktopApi.chooseSourceFiles();
+  }, [desktopApi]);
+
   const handleNewDeck = useCallback((draft: NewDeckDraft): void => {
     if (!desktopApi) {
       handleOpenProject(sampleProjects[0]?.id ?? "demo-alpha");
@@ -1880,6 +1888,7 @@ function App(): React.ReactNode {
         onCliIntegrationInstall={handleInstallCliIntegration}
         onCliIntegrationRefresh={handleRefreshCliIntegration}
         onCliIntegrationUninstall={handleUninstallCliIntegration}
+        onChooseSourceFiles={handleChooseSourceFiles}
         onChooseWorkspace={handleChooseWorkspace}
         onLibrarySectionChange={setLibrarySection}
         onNewDeck={handleNewDeck}

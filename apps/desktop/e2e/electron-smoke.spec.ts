@@ -454,9 +454,13 @@ test.describe("HTMLslide desktop smoke", () => {
     const homeDir = path.join(tempRoot, "home");
     const userDataDir = path.join(tempRoot, "user-data");
     const workspaceDir = path.join(tempRoot, "workspace");
+    const sourceDir = path.join(tempRoot, "source-material");
+    const sourceFile = path.join(sourceDir, "research.csv");
     await mkdir(homeDir, { recursive: true });
     await mkdir(userDataDir, { recursive: true });
     await mkdir(workspaceDir, { recursive: true });
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(sourceFile, "quarter,revenue\nQ3,42\n", "utf8");
 
     electronApp = await electron.launch({
       executablePath: electronExecutable,
@@ -465,6 +469,7 @@ test.describe("HTMLslide desktop smoke", () => {
         ...process.env,
         ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
         HOME: homeDir,
+        HTMLSLIDE_E2E_SOURCE_FILES: JSON.stringify([sourceFile]),
         HTMLSLIDE_USER_DATA_DIR: userDataDir,
         HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir
       }
@@ -516,6 +521,13 @@ test.describe("HTMLslide desktop smoke", () => {
     await newDeckPanel.getByRole("button", { name: /No AI/ }).click();
     await newDeckPanel.getByLabel("Deck title").fill("Investor Update");
     await expect(newDeckPanel.getByLabel("Folder")).toHaveValue("investor-update");
+    await newDeckPanel.getByRole("button", { name: "Add files", exact: true }).click();
+    await expect(newDeckPanel.getByText("research.csv", { exact: true })).toBeVisible();
+    await newDeckPanel.getByRole("button", { name: "Paste text", exact: true }).click();
+    await newDeckPanel.getByLabel("Source name").fill("Meeting transcript");
+    await newDeckPanel.getByLabel("Source text").fill("Decisions\n\n- Ship the beta");
+    await newDeckPanel.getByRole("button", { name: "Add source", exact: true }).click();
+    await expect(newDeckPanel.getByText("Meeting transcript", { exact: true })).toBeVisible();
     await newDeckPanel.getByRole("button", { name: "Create Deck", exact: true }).click();
 
     await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Investor Update" })).toBeVisible({
@@ -530,6 +542,15 @@ test.describe("HTMLslide desktop smoke", () => {
       title?: string;
     };
     expect(manifest.title).toBe("Investor Update");
+    await expect(readFile(path.join(workspaceDir, "investor-update", "assets", "sources", "research.csv"), "utf8")).resolves.toContain(
+      "Q3,42"
+    );
+    await expect(readFile(path.join(workspaceDir, "investor-update", "assets", "sources", "Meeting transcript.md"), "utf8")).resolves.toContain(
+      "Ship the beta"
+    );
+    await expect(readFile(path.join(workspaceDir, "investor-update", "assets", "sources", "index.json"), "utf8")).resolves.toContain(
+      '"research.csv"'
+    );
     await expectNoFrameworkOverlay(page);
   });
 

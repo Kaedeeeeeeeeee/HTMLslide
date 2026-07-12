@@ -4,5 +4,6 @@ export * from "./issues.js";
 export * from "./paths.js";
 export * from "./project.js";
 export * from "./qa-ignore.js";
+export * from "./source-materials.js";
 export * from "./templates.js";
 export * from "./version.js";

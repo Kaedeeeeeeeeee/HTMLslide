@@ -30,6 +30,7 @@ my-talk/
 - `notes/`: Markdown speaker notes.
 - `theme/`: CSS, tokens, and layout guidance.
 - `assets/`: local images, fonts, and data files.
+- `assets/sources/`: user-provided reference material staged by the New Deck wizard. Files and pasted text are copied here before an agent run; `index.json` records relative paths, byte sizes, and SHA-256 digests.
 - `skills/`, `.agents/`, `.claude/`: project-local agent guidance.
 
 ## Artifact Areas
@@ -63,3 +64,7 @@ The desktop app displays that complete document in an unprivileged iframe with s
 The desktop app keeps a local recent-project index at its Electron user-data `library.json` path. The index stores project metadata such as title, path, last-opened time, status, slide count, and optional thumbnail path. It does not store deck source content.
 
 Opening a recent project refreshes the index from the project manifest. If referenced source files are missing, the app records the project as `Missing files` and keeps the user in the Project Library. Removing a recent project deletes only the index entry; it never deletes the project folder or artifacts.
+
+## Source Material Intake
+
+The desktop New Deck wizard accepts local files and pasted text. The main process validates selected files as regular, non-symlink files, rejects secret-like names, and enforces the public-alpha limits of 20 files, 25 MiB per file, and 200 MiB total. It copies accepted material into `assets/sources/` and never executes it or fetches remote content. Agent prompts identify the staged directory as reference material and instruct the agent to treat its contents as data, not instructions.

@@ -977,6 +977,7 @@ function requireArg(args, name) {
     for (const reportedWrite of [
       "exports/deck.pdf",
       ".htmlslide/cache/thumb.png",
+      "assets/sources/index.json",
       "slides/\0secret.html",
       path.resolve(project.projectRoot, "..", "outside.txt")
     ]) {
@@ -1033,7 +1034,7 @@ function nodeCommandTemplate(): string {
 function builtInTaskPrompt(promptFile: string): string {
   return [
     `Read and follow the HTMLslide task instructions in ${promptFile}.`,
-    "Only edit source files in deck.json, slides/, notes/, theme/, and assets/.",
+    "Only edit source files in deck.json, slides/, notes/, theme/, and assets/; do not modify assets/sources/ reference material.",
     "Do not edit exports/ or .htmlslide/."
   ].join(" ");
 }

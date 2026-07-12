@@ -1,6 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, screen, shell, type Rectangle } from "electron";
 import { statSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,7 @@ import {
   getDesktopOfficialSkills,
   installDesktopCliIntegration,
   installDesktopOfficialSkills,
+  inspectDesktopSourceFiles,
   listDesktopPresenterDisplays,
   loadProjectPreview,
   loadSlidePreview,
@@ -27,6 +28,7 @@ import {
   revertDesktopCheckpoint,
   runDesktopByokAgent,
   saveAiEngineSettings,
+  stageDesktopNewDeckSources,
   runDesktopExternalAgent,
   runDesktopMockAgent,
   runHtmlslideCli,
@@ -805,6 +807,37 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle("htmlslide:detect-external-agents", async () => detectExternalAgentStatuses());
 
+  ipcMain.handle("htmlslide:choose-source-files", async () => {
+    const configuredPaths = process.env.HTMLSLIDE_E2E_SOURCE_FILES;
+    let filePaths: string[];
+    if (configuredPaths) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(configuredPaths);
+      } catch {
+        throw new Error("HTMLSLIDE_E2E_SOURCE_FILES must be a JSON array of absolute file paths.");
+      }
+      if (!Array.isArray(parsed) || parsed.some((filePath) => typeof filePath !== "string")) {
+        throw new Error("HTMLSLIDE_E2E_SOURCE_FILES must be a JSON array of absolute file paths.");
+      }
+      filePaths = parsed;
+    } else {
+      const result = await dialog.showOpenDialog({
+        buttonLabel: "Add Sources",
+        filters: [
+          { name: "Source material", extensions: ["md", "markdown", "txt", "csv", "json", "html", "htm", "pdf", "png", "jpg", "jpeg", "webp", "gif", "svg"] },
+          { name: "All files", extensions: ["*"] }
+        ],
+        properties: ["openFile", "multiSelections"]
+      });
+      if (result.canceled) {
+        return [];
+      }
+      filePaths = result.filePaths;
+    }
+    return inspectDesktopSourceFiles(filePaths);
+  });
+
   ipcMain.handle("htmlslide:choose-workspace", async () => {
     const selectedWorkspacePath = process.env.HTMLSLIDE_E2E_CHOOSE_WORKSPACE_PATH
       ? resolve(process.env.HTMLSLIDE_E2E_CHOOSE_WORKSPACE_PATH)
@@ -916,12 +949,25 @@ function registerIpcHandlers(): void {
       return result;
     }
 
-    const project = await summarizeDeckProject(resolved.projectPath);
-    await upsertRecentProject(libraryPath(), project, resolved.workspacePath);
-    return {
-      ...result,
-      project: await loadProjectPreview(project.path)
-    };
+    try {
+      if (request.sources && request.sources.length > 0) {
+        await stageDesktopNewDeckSources(resolved.projectPath, request.sources);
+      }
+      const project = await summarizeDeckProject(resolved.projectPath);
+      await upsertRecentProject(libraryPath(), project, resolved.workspacePath);
+      return {
+        ...result,
+        project: await loadProjectPreview(project.path)
+      };
+    } catch (error: unknown) {
+      await rm(resolved.projectPath, { force: true, recursive: true }).catch(() => undefined);
+      return {
+        ...result,
+        error: error instanceof Error ? error.message : String(error),
+        exitCode: 1,
+        ok: false
+      };
+    }
   });
 
   ipcMain.handle("htmlslide:check-project", async (_event, projectPath: string) => {

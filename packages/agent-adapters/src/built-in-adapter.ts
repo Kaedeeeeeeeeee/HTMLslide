@@ -199,7 +199,7 @@ export async function runBuiltInExternalAgentAdapter(
 function buildTaskPrompt(promptFile: string): string {
   return [
     `Read and follow the HTMLslide task instructions in ${promptFile}.`,
-    "Only edit source files in deck.json, slides/, notes/, theme/, and assets/.",
+    "Only edit source files in deck.json, slides/, notes/, theme/, and assets/; do not modify assets/sources/ reference material.",
     "Do not edit exports/ or .htmlslide/."
   ].join(" ");
 }

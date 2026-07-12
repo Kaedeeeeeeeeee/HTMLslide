@@ -79,6 +79,7 @@ describe("agent source writes", () => {
       "slides:001-title.html",
       "exports/deck.pdf",
       ".htmlslide/runs/run-1/prompt.md",
+      "assets/sources/index.json",
       "README.md"
     ];
 

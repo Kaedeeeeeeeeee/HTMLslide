@@ -2183,7 +2183,7 @@ svg {
 }
 
 .visual-direction-card__sample-chrome {
-  color: color-mix(in srgb, var(--direction-text) 58%, transparent);
+  color: var(--direction-text);
   display: flex;
   font-size: 7px;
   justify-content: space-between;
@@ -2225,7 +2225,7 @@ svg {
 }
 
 .visual-direction-card__sample-content small {
-  color: color-mix(in srgb, var(--direction-text) 62%, transparent);
+  color: var(--direction-text);
   font-size: 7px;
   line-height: 1.15;
   max-height: 16px;

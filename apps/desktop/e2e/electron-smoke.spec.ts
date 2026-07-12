@@ -907,9 +907,11 @@ test.describe("HTMLslide desktop smoke", () => {
     await newDeckPanel.getByLabel("Tone").selectOption("executive");
     await newDeckPanel.getByLabel("Design").selectOption("consulting-clean");
     await newDeckPanel.getByLabel("Speaker notes").selectOption("full-script");
-    await newDeckPanel.getByLabel("HTML", { exact: true }).uncheck({ force: true });
-    await newDeckPanel.getByLabel("Thumbnails", { exact: true }).uncheck({ force: true });
-    await newDeckPanel.getByLabel("deckpkg", { exact: true }).uncheck({ force: true });
+    for (const output of ["HTML", "Thumbnails", "deckpkg"]) {
+      const checkbox = newDeckPanel.getByLabel(output, { exact: true });
+      await newDeckPanel.locator("label.new-deck-output").filter({ hasText: output }).click();
+      await expect(checkbox).not.toBeChecked();
+    }
     await newDeckPanel.getByRole("button", { name: "Create & Generate", exact: true }).click();
     await chooseVisualDirection(page, 1);
 

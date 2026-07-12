@@ -488,21 +488,34 @@ export function Workspace({
     openedInitialPresenterIdRef.current = initialPresenterOpen.id;
     let active = true;
     const fallbackPreferences = defaultPresenterPreferencesForProject(project);
-    Promise.resolve(loadPresenterPreferences?.())
+    setPresenterState({
+      deck: initialPresenterOpen.deck,
+      deckpkgPath: initialPresenterOpen.deckpkgPath,
+      preferences: fallbackPreferences,
+      source: initialPresenterOpen.source,
+      session: createPresenterSessionFromPreferences(initialPresenterOpen.deck, fallbackPreferences, selectedSlideId)
+    });
+    onToolbarAction("present");
+
+    void Promise.resolve(loadPresenterPreferences?.())
       .catch(() => undefined)
       .then((loadedPreferences) => {
-        if (!active) {
+        if (!active || !loadedPreferences) {
           return;
         }
-        const preferences = loadedPreferences ?? fallbackPreferences;
-        setPresenterState({
-          deck: initialPresenterOpen.deck,
-          deckpkgPath: initialPresenterOpen.deckpkgPath,
-          preferences,
-          source: initialPresenterOpen.source,
-          session: createPresenterSessionFromPreferences(initialPresenterOpen.deck, preferences, selectedSlideId)
+        setPresenterState((current) => {
+          if (!current || current.deckpkgPath !== initialPresenterOpen.deckpkgPath) {
+            return current;
+          }
+          return {
+            ...current,
+            preferences: loadedPreferences,
+            session: {
+              ...current.session,
+              notesFontSizePx: loadedPreferences.notesFontSizePx
+            }
+          };
         });
-        onToolbarAction("present");
       });
     return () => {
       active = false;

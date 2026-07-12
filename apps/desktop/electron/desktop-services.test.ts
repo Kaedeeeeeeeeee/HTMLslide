@@ -35,6 +35,7 @@ import {
   loadSlidePreview,
   markRecentProjectMissing,
   readDesktopLibrary,
+  readDesktopPresenterPreferences,
   removeRecentProject,
   resolveDesktopCliIntegrationTarget,
   resolveCreateProjectRequest,
@@ -50,6 +51,7 @@ import {
   uninstallDesktopCliIntegration,
   upsertRecentProject,
   writeDesktopLibrary,
+  writeDesktopPresenterPreferences,
   type CliRunResult,
   type CliRuntime,
   type DesktopCliRunner,
@@ -535,6 +537,7 @@ describe("desktop services", () => {
     expect(await readDesktopLibrary(libraryPath, "/workspace")).toEqual({
       defaultWorkspace: "/workspace",
       onboardingCompleted: false,
+      presenterPreferences: [],
       recentProjects: [],
       version: 1
     });
@@ -542,6 +545,7 @@ describe("desktop services", () => {
     await writeDesktopLibrary(libraryPath, {
       defaultWorkspace: "/workspace",
       onboardingCompleted: true,
+      presenterPreferences: [],
       recentProjects: [firstProject],
       version: 1
     });
@@ -569,6 +573,49 @@ describe("desktop services", () => {
     });
   });
 
+  it("round-trips presenter preferences and isolates projects", async () => {
+    const root = await tempDir();
+    const libraryPath = path.join(root, "library.json");
+    const firstProject = projectRecord(path.join(root, "one"), "One");
+    const secondProject = projectRecord(path.join(root, "two"), "Two");
+
+    await expect(readDesktopPresenterPreferences(libraryPath, firstProject, "/workspace")).resolves.toMatchObject({
+      projectId: firstProject.id,
+      projectPath: path.resolve(firstProject.path),
+      notesFontSizePx: 20
+    });
+
+    await expect(writeDesktopPresenterPreferences(libraryPath, firstProject, {
+      notesFontSizePx: 36,
+      recentSlideId: "002-solution",
+      selectedDisplay: { id: 2, internal: false, label: "Studio Display" }
+    }, "/workspace")).resolves.toMatchObject({
+      notesFontSizePx: 36,
+      recentSlideId: "002-solution",
+      selectedDisplay: { id: 2, label: "Studio Display" }
+    });
+    await expect(readDesktopPresenterPreferences(libraryPath, { id: "renamed", path: firstProject.path }, "/workspace")).resolves.toMatchObject({
+      projectId: "renamed",
+      notesFontSizePx: 36,
+      recentSlideId: "002-solution"
+    });
+    await expect(readDesktopPresenterPreferences(libraryPath, secondProject, "/workspace")).resolves.toMatchObject({
+      projectId: secondProject.id,
+      notesFontSizePx: 20
+    });
+
+    await expect(writeDesktopPresenterPreferences(libraryPath, firstProject, {
+      notesFontSizePx: 999,
+      recentSlideId: "",
+      selectedDisplay: { id: -1, internal: "no", label: "" }
+    }, "/workspace")).resolves.toMatchObject({
+      notesFontSizePx: 20
+    });
+    const sanitized = await readDesktopPresenterPreferences(libraryPath, firstProject, "/workspace");
+    expect(sanitized).not.toHaveProperty("recentSlideId");
+    expect(sanitized).not.toHaveProperty("selectedDisplay");
+  });
+
   it("removes and marks recent projects without touching project files", async () => {
     const root = await tempDir();
     const libraryPath = path.join(root, "library.json");
@@ -580,6 +627,7 @@ describe("desktop services", () => {
     await writeDesktopLibrary(libraryPath, {
       defaultWorkspace: "/workspace",
       onboardingCompleted: false,
+      presenterPreferences: [],
       recentProjects: [firstProject, secondProject],
       version: 1
     });

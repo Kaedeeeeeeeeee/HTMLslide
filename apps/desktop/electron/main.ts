@@ -25,6 +25,7 @@ import {
   normalizeDesktopExportOptions,
   readAiEngineSettings,
   readDesktopLibrary,
+  readDesktopPresenterPreferences,
   removeRecentProject,
   resolveCreateProjectRequest,
   revertDesktopCheckpoint,
@@ -35,6 +36,7 @@ import {
   runDesktopMockAgent,
   runHtmlslideCli,
   saveDesktopSlideNotes,
+  writeDesktopPresenterPreferences,
   summarizeDeckProject,
   uninstallDesktopCliIntegration,
   upsertRecentProject,
@@ -804,6 +806,19 @@ function registerIpcHandlers(): void {
     const library = await markRecentProjectMissing(libraryPath(), project, configuredWorkspacePath());
     return library.recentProjects;
   });
+
+  ipcMain.handle("htmlslide:get-presenter-preferences", async (_event, project: { id?: string; path?: string }) =>
+    readDesktopPresenterPreferences(libraryPath(), project, configuredWorkspacePath())
+  );
+
+  ipcMain.handle(
+    "htmlslide:save-presenter-preferences",
+    async (
+      _event,
+      project: { id?: string; path?: string },
+      preferences: { recentSlideId?: string; notesFontSizePx?: number; selectedDisplay?: unknown }
+    ) => writeDesktopPresenterPreferences(libraryPath(), project, preferences, configuredWorkspacePath())
+  );
 
   ipcMain.handle("htmlslide:get-ai-engine-settings", async () => readAiEngineSettings(aiEngineSettingsPath()));
 

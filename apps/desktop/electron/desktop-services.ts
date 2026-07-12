@@ -66,7 +66,12 @@ import {
   readDeckPackage,
   type PresenterDeckPackage
 } from "@htmlslide/presenter";
-import type { PresenterDeck } from "@htmlslide/presenter/session";
+import {
+  DEFAULT_NOTES_FONT_SIZE_PX,
+  MAX_NOTES_FONT_SIZE_PX,
+  MIN_NOTES_FONT_SIZE_PX,
+  type PresenterDeck
+} from "@htmlslide/presenter/session";
 import {
   inspectInstalledSkill,
   installSkill,
@@ -105,11 +110,26 @@ export type DesktopProjectReference = {
   path?: string;
 };
 
+export type DesktopPresenterDisplayPreference = {
+  id: number;
+  label: string;
+  internal: boolean;
+};
+
+export type DesktopPresenterPreferences = {
+  projectId: string;
+  projectPath: string;
+  recentSlideId?: string;
+  notesFontSizePx: number;
+  selectedDisplay?: DesktopPresenterDisplayPreference;
+};
+
 export type DesktopLibrary = {
   version: 1;
   defaultWorkspace: string;
   onboardingCompleted: boolean;
   recentProjects: DesktopProjectRecord[];
+  presenterPreferences: DesktopPresenterPreferences[];
 };
 
 export type DesktopSlidePreview = {
@@ -692,6 +712,7 @@ type DeckManifest = {
 
 const DEFAULT_LIBRARY: Omit<DesktopLibrary, "defaultWorkspace"> = {
   onboardingCompleted: false,
+  presenterPreferences: [],
   version: 1,
   recentProjects: []
 };
@@ -925,6 +946,9 @@ export async function readDesktopLibrary(
           ? parsed.defaultWorkspace
           : defaultWorkspace,
       onboardingCompleted: parsed.onboardingCompleted !== false,
+      presenterPreferences: Array.isArray(parsed.presenterPreferences)
+        ? parsed.presenterPreferences.map(normalizeStoredPresenterPreferences).filter(isPresent)
+        : [],
       recentProjects: Array.isArray(parsed.recentProjects)
         ? parsed.recentProjects.filter(isProjectRecord)
         : []
@@ -943,6 +967,39 @@ export async function readDesktopLibrary(
 export async function writeDesktopLibrary(libraryPath: string, library: DesktopLibrary): Promise<void> {
   await fs.mkdir(path.dirname(libraryPath), { recursive: true });
   await fs.writeFile(libraryPath, `${JSON.stringify(library, null, 2)}\n`);
+}
+
+export async function readDesktopPresenterPreferences(
+  libraryPath: string,
+  project: DesktopProjectReference,
+  defaultWorkspace = defaultWorkspacePath()
+): Promise<DesktopPresenterPreferences> {
+  const reference = requirePresenterProjectReference(project);
+  const library = await readDesktopLibrary(libraryPath, defaultWorkspace);
+  const stored = library.presenterPreferences.find((preferences) => matchesPresenterProject(preferences, reference));
+  return stored
+    ? { ...stored, projectId: reference.id, projectPath: reference.path }
+    : defaultPresenterPreferences(reference);
+}
+
+export async function writeDesktopPresenterPreferences(
+  libraryPath: string,
+  project: DesktopProjectReference,
+  preferences: unknown,
+  defaultWorkspace = defaultWorkspacePath()
+): Promise<DesktopPresenterPreferences> {
+  const reference = requirePresenterProjectReference(project);
+  const library = await readDesktopLibrary(libraryPath, defaultWorkspace);
+  const nextPreferences = normalizePresenterPreferences(preferences, reference);
+  const nextLibrary: DesktopLibrary = {
+    ...library,
+    presenterPreferences: [
+      nextPreferences,
+      ...library.presenterPreferences.filter((item) => !matchesPresenterProject(item, reference))
+    ]
+  };
+  await writeDesktopLibrary(libraryPath, nextLibrary);
+  return nextPreferences;
 }
 
 export async function readAiEngineSettings(settingsPath: string): Promise<DesktopAiEngineSettings> {
@@ -5516,6 +5573,89 @@ function pathExistsSync(filePath: string): boolean {
 
 function isPresent<T>(value: T | null | undefined): value is T {
   return value !== null && value !== undefined;
+}
+
+function requirePresenterProjectReference(project: DesktopProjectReference): { id: string; path: string } {
+  const id = typeof project.id === "string" ? project.id.trim() : "";
+  const projectPath = typeof project.path === "string" ? project.path.trim() : "";
+  if (id.length === 0 || projectPath.length === 0) {
+    throw new Error("Presenter preferences require a project id and path.");
+  }
+  return {
+    id,
+    path: path.resolve(projectPath)
+  };
+}
+
+function defaultPresenterPreferences(reference: { id: string; path: string }): DesktopPresenterPreferences {
+  return {
+    notesFontSizePx: DEFAULT_NOTES_FONT_SIZE_PX,
+    projectId: reference.id,
+    projectPath: reference.path
+  };
+}
+
+function normalizePresenterPreferences(
+  value: unknown,
+  reference: { id: string; path: string }
+): DesktopPresenterPreferences {
+  const record = isRecord(value) ? value : {};
+  const recentSlideId = typeof record.recentSlideId === "string" && record.recentSlideId.trim().length > 0
+    ? record.recentSlideId.trim().slice(0, 256)
+    : undefined;
+  const notesFontSizePx = Number.isInteger(record.notesFontSizePx) &&
+      Number(record.notesFontSizePx) >= MIN_NOTES_FONT_SIZE_PX &&
+      Number(record.notesFontSizePx) <= MAX_NOTES_FONT_SIZE_PX
+    ? Number(record.notesFontSizePx)
+    : DEFAULT_NOTES_FONT_SIZE_PX;
+  const selectedDisplay = normalizePresenterDisplayPreference(record.selectedDisplay);
+
+  return {
+    ...(recentSlideId ? { recentSlideId } : {}),
+    notesFontSizePx,
+    projectId: reference.id,
+    projectPath: reference.path,
+    ...(selectedDisplay ? { selectedDisplay } : {})
+  };
+}
+
+function normalizeStoredPresenterPreferences(value: unknown): DesktopPresenterPreferences | undefined {
+  if (!isRecord(value) || typeof value.projectId !== "string" || typeof value.projectPath !== "string") {
+    return undefined;
+  }
+
+  const projectId = value.projectId.trim();
+  const projectPath = value.projectPath.trim();
+  if (projectId.length === 0 || projectPath.length === 0 || !path.isAbsolute(projectPath)) {
+    return undefined;
+  }
+
+  return normalizePresenterPreferences(value, { id: projectId, path: path.resolve(projectPath) });
+}
+
+function normalizePresenterDisplayPreference(value: unknown): DesktopPresenterDisplayPreference | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const id = typeof value.id === "number" ? value.id : undefined;
+  const label = typeof value.label === "string" ? value.label.trim() : "";
+  if (id === undefined || !Number.isSafeInteger(id) || id < 0 || label.length === 0 || label.length > 200 || typeof value.internal !== "boolean") {
+    return undefined;
+  }
+
+  return {
+    id,
+    internal: value.internal,
+    label
+  };
+}
+
+function matchesPresenterProject(
+  preferences: DesktopPresenterPreferences,
+  reference: { id: string; path: string }
+): boolean {
+  return preferences.projectId === reference.id || path.resolve(preferences.projectPath) === reference.path;
 }
 
 function isProjectRecord(value: unknown): value is DesktopProjectRecord {

@@ -19,6 +19,7 @@ import {
   type DesktopCliIntegrationState,
   type DesktopExportOptions,
   type DesktopOfficialSkillsState,
+  type DesktopPresenterPreferences,
   type DesktopPresenterDeckResult,
   type DesktopProjectPreview,
   type DesktopProjectRecord,
@@ -196,6 +197,14 @@ function projectRecordToSummary(project: DesktopProjectRecord): ProjectSummary {
 
 function projectRecordsToSummaries(projects: DesktopProjectRecord[]): ProjectSummary[] {
   return projects.map(projectRecordToSummary);
+}
+
+function defaultPresenterPreferences(project: ProjectSummary): DesktopPresenterPreferences {
+  return {
+    notesFontSizePx: 20,
+    projectId: project.id,
+    projectPath: project.path
+  };
 }
 
 function reportToIssues(report: DesktopCheckReport | undefined): QaIssue[] {
@@ -1553,45 +1562,45 @@ function App(): React.ReactNode {
       });
   }, [desktopApi]);
 
-  const runCheck = useCallback((): void => {
+  const runProjectCheck = useCallback(async (): Promise<boolean> => {
     if (!desktopApi || !activeProject || activeProject.path.startsWith("~") || activeProjectIsDeckPackage) {
       setInspectorTab("qa");
       setOperationStatus({ kind: "failed", message: "Open a local deck project before running check" });
       updateCommandActionStatus("check", { kind: "failed", message: "Local project required" });
-      return;
+      return false;
     }
 
     setInspectorTab("qa");
     setOperationStatus({ kind: "running", message: "Running check" });
     updateCommandActionStatus("check", { kind: "running", message: "Checking project" });
-    desktopApi.checkProject(activeProject.path)
-      .then((result) => {
-        const report = result.json as DesktopCheckReport | undefined;
-        setQaIssues(reportToIssues(report));
-        const nextStatus: OperationStatus = {
-          kind: result.ok ? "success" : "failed",
-          message: result.ok ? "Check passed" : report?.status === "failed" ? "Check found issues" : result.error ?? "Check failed"
-        };
-        setOperationStatus({
-          kind: nextStatus.kind,
-          message: nextStatus.message
-        });
-        updateCommandActionStatus("check", nextStatus);
-        updateCommandActionStatus("repair", {
-          kind: result.ok ? "idle" : "running",
-          message: result.ok ? "No repair needed" : "Repair recommended"
-        });
-      })
-      .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        setOperationStatus({
-          kind: "failed",
-          message
-        });
-        updateCommandActionStatus("check", { kind: "failed", message });
-      })
-      .finally(() => setPreviewRevision((current) => current + 1));
+    try {
+      const result = await desktopApi.checkProject(activeProject.path);
+      const report = result.json as DesktopCheckReport | undefined;
+      setQaIssues(reportToIssues(report));
+      const nextStatus: OperationStatus = {
+        kind: result.ok ? "success" : "failed",
+        message: result.ok ? "Check passed" : report?.status === "failed" ? "Check found issues" : result.error ?? "Check failed"
+      };
+      setOperationStatus(nextStatus);
+      updateCommandActionStatus("check", nextStatus);
+      updateCommandActionStatus("repair", {
+        kind: result.ok ? "idle" : "running",
+        message: result.ok ? "No repair needed" : "Repair recommended"
+      });
+      return result.ok;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setOperationStatus({ kind: "failed", message });
+      updateCommandActionStatus("check", { kind: "failed", message });
+      return false;
+    } finally {
+      setPreviewRevision((current) => current + 1);
+    }
   }, [activeProject, activeProjectIsDeckPackage, desktopApi, updateCommandActionStatus]);
+
+  const runCheck = useCallback((): void => {
+    void runProjectCheck();
+  }, [runProjectCheck]);
 
   const handleIgnoreQaIssue = useCallback(
     async (issue: QaIssue, scope: "once" | "rule"): Promise<boolean> => {
@@ -1622,7 +1631,7 @@ function App(): React.ReactNode {
     [activeProject, activeProjectIsDeckPackage, desktopApi, runCheck]
   );
 
-  const runExport = useCallback((exportOptions: DesktopExportOptions = defaultNewDeckExportSelection()): void => {
+  const runExport = useCallback(async (exportOptions: DesktopExportOptions = defaultNewDeckExportSelection()): Promise<void> => {
     if (!desktopApi || !activeProject || activeProject.path.startsWith("~") || activeProjectIsDeckPackage) {
       setInspectorTab("export");
       setOperationStatus({ kind: "failed", message: "Open a local deck project before export" });
@@ -1630,35 +1639,44 @@ function App(): React.ReactNode {
       return;
     }
 
+    const checkPassed = await runProjectCheck();
+    if (!checkPassed) {
+      const message = "Fix Check issues before export";
+      setInspectorTab("qa");
+      setOperationStatus({ kind: "failed", message });
+      updateCommandActionStatus("export", { kind: "failed", message });
+      updateCommandActionStatus("review", { kind: "idle", message: "Waiting for clean Check" });
+      return;
+    }
+
     setInspectorTab("export");
     setOperationStatus({ kind: "running", message: "Exporting artifacts" });
     updateCommandActionStatus("export", { kind: "running", message: "Exporting artifacts" });
-    desktopApi.exportProject(activeProject.path, exportOptions)
-      .then((result) => {
-        const nextStatus: OperationStatus = {
-          kind: result.ok ? "success" : "failed",
-          message: result.ok ? "Export complete" : result.error ?? `Export exited with ${result.exitCode}`
-        };
-        setOperationStatus({
-          kind: nextStatus.kind,
-          message: nextStatus.message
-        });
-        updateCommandActionStatus("export", nextStatus);
-        updateCommandActionStatus("review", {
-          kind: result.ok ? "running" : "idle",
-          message: result.ok ? "Ready for review" : "Waiting for clean export"
-        });
-      })
-      .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        setOperationStatus({
-          kind: "failed",
-          message
-        });
-        updateCommandActionStatus("export", { kind: "failed", message });
-      })
-      .finally(() => setPreviewRevision((current) => current + 1));
-  }, [activeProject, activeProjectIsDeckPackage, desktopApi, updateCommandActionStatus]);
+    try {
+      const result = await desktopApi.exportProject(activeProject.path, exportOptions);
+      const report = result.json as DesktopCheckReport | undefined;
+      if (!result.ok && report?.status === "failed") {
+        setQaIssues(reportToIssues(report));
+        setInspectorTab("qa");
+      }
+      const nextStatus: OperationStatus = {
+        kind: result.ok ? "success" : "failed",
+        message: result.ok ? "Export complete" : result.error ?? `Export exited with ${result.exitCode}`
+      };
+      setOperationStatus(nextStatus);
+      updateCommandActionStatus("export", nextStatus);
+      updateCommandActionStatus("review", {
+        kind: result.ok ? "running" : "idle",
+        message: result.ok ? "Ready for review" : "Waiting for clean export"
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setOperationStatus({ kind: "failed", message });
+      updateCommandActionStatus("export", { kind: "failed", message });
+    } finally {
+      setPreviewRevision((current) => current + 1);
+    }
+  }, [activeProject, activeProjectIsDeckPackage, desktopApi, runProjectCheck, updateCommandActionStatus]);
 
   const loadPresenterDeck = useCallback(async (): Promise<PresenterDeck | null> => {
     if (directPresenterOpen && activeProject?.path === directPresenterOpen.deckpkgPath) {
@@ -1690,6 +1708,48 @@ function App(): React.ReactNode {
     updateCommandActionStatus("review", { kind: "idle", message: "Using rehearsal fallback" });
     return null;
   }, [activeProject, desktopApi, directPresenterOpen, updateCommandActionStatus]);
+
+  const loadPresenterPreferences = useCallback(async (): Promise<DesktopPresenterPreferences> => {
+    if (!activeProject) {
+      return defaultPresenterPreferences({
+        id: "unknown-project",
+        lastOpened: "",
+        path: "",
+        slideCount: 0,
+        status: "Needs check",
+        title: ""
+      });
+    }
+    if (!desktopApi || activeProject.path.startsWith("~")) {
+      return defaultPresenterPreferences(activeProject);
+    }
+    return desktopApi.getPresenterPreferences({ id: activeProject.id, path: activeProject.path });
+  }, [activeProject, desktopApi]);
+
+  const savePresenterPreferences = useCallback(
+    (
+      preferences: Pick<DesktopPresenterPreferences, "recentSlideId" | "notesFontSizePx" | "selectedDisplay">
+    ): Promise<DesktopPresenterPreferences> => {
+      if (!activeProject || !desktopApi || activeProject.path.startsWith("~")) {
+        return Promise.resolve({
+          ...defaultPresenterPreferences(activeProject ?? {
+            id: "unknown-project",
+            lastOpened: "",
+            path: "",
+            slideCount: 0,
+            status: "Needs check",
+            title: ""
+          }),
+          ...preferences
+        });
+      }
+      return desktopApi.savePresenterPreferences(
+        { id: activeProject.id, path: activeProject.path },
+        preferences
+      );
+    },
+    [activeProject, desktopApi]
+  );
 
   const listPresenterDisplays = useCallback(
     () => desktopApi?.listPresenterDisplays() ?? Promise.resolve([]),
@@ -1950,9 +2010,11 @@ function App(): React.ReactNode {
       onCopyRepairPrompt={copyAgentRepairPrompt}
       onInspectorTabChange={setInspectorTab}
       loadPresenterDeck={loadPresenterDeck}
+      loadPresenterPreferences={loadPresenterPreferences}
       listPresenterDisplays={listPresenterDisplays}
       onPresenterDisplaysChanged={desktopApi?.onPresenterDisplaysChanged}
       openAudienceWindow={openAudienceWindow}
+      savePresenterPreferences={savePresenterPreferences}
       updateAudienceWindow={updateAudienceWindow}
       closeAudienceWindow={closeAudienceWindow}
       onQaFilterChange={setQaFilter}

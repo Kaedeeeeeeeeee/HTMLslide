@@ -20,6 +20,12 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
     ipcRenderer.invoke("htmlslide:remove-recent-project", project),
   markRecentProjectMissing: (project: { id?: string; path?: string }) =>
     ipcRenderer.invoke("htmlslide:mark-recent-project-missing", project),
+  getPresenterPreferences: (project: { id?: string; path?: string }) =>
+    ipcRenderer.invoke("htmlslide:get-presenter-preferences", project),
+  savePresenterPreferences: (
+    project: { id?: string; path?: string },
+    preferences: { recentSlideId?: string; notesFontSizePx?: number; selectedDisplay?: unknown }
+  ) => ipcRenderer.invoke("htmlslide:save-presenter-preferences", project, preferences),
   getAiEngineSettings: () => ipcRenderer.invoke("htmlslide:get-ai-engine-settings"),
   saveAiEngineSettings: (request: { settings: unknown; apiKeyInput?: string; clearKey?: boolean }) =>
     ipcRenderer.invoke("htmlslide:save-ai-engine-settings", request),

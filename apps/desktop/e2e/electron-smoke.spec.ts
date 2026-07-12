@@ -1904,6 +1904,14 @@ fetch("${previewNetworkOrigin}/fetch");
     await page.keyboard.press("-");
     await expect(presenterNotes).toHaveCSS("font-size", initialNotesFontSize);
 
+    await presenter.getByLabel("Jump to slide").selectOption("1");
+    await expect(presenter.getByText("2 / 2")).toBeVisible();
+    const persistedNotesFontSize = await presenterNotes.evaluate((element) => window.getComputedStyle(element).fontSize);
+    await page.keyboard.press("+");
+    await expect.poll(
+      async () => presenterNotes.evaluate((element) => window.getComputedStyle(element).fontSize)
+    ).not.toBe(persistedNotesFontSize);
+
     await page.keyboard.press("B");
     await expect(screenCover).toHaveText("Black screen");
     await expect(audiencePage.getByText("Black screen")).toBeVisible();
@@ -1926,6 +1934,23 @@ fetch("${previewNetworkOrigin}/fetch");
     await page.keyboard.press("Escape");
     await expect(presenter).toBeHidden();
     await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible();
+
+    await expect.poll(async () => {
+      const library = JSON.parse(await readFile(path.join(userDataDir, "library.json"), "utf8")) as {
+        presenterPreferences?: Array<{ recentSlideId?: string; notesFontSizePx?: number }>;
+      };
+      return library.presenterPreferences ?? [];
+    }).toEqual(expect.arrayContaining([
+      expect.objectContaining({ recentSlideId: "002-structure", notesFontSizePx: 22 })
+    ]));
+
+    await page.locator(".workspace-toolbar").getByRole("button", { name: "Present", exact: true }).click();
+    await expect(presenter).toBeVisible();
+    await expect(presenter.getByText("2 / 2")).toBeVisible();
+    await expect(currentSlideHeading).toHaveText("Project structure");
+    await expect(presenterNotes).toHaveCSS("font-size", persistedNotesFontSize.replace("20", "22"));
+    await page.keyboard.press("Escape");
+    await expect(presenter).toBeHidden();
 
     await expectNoFrameworkOverlay(page);
     expect(browserErrors).toEqual([]);
@@ -2248,6 +2273,10 @@ fetch("${previewNetworkOrigin}/fetch");
     await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Linter Text Overflow" })).toBeVisible({
       timeout: 30_000
     });
+
+    await page.locator(".workspace-toolbar").getByRole("button", { name: "Export", exact: true }).click();
+    await expect(page.getByText(/export: Fix Check issues before export/)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("region", { name: "QA Panel" }).getByRole("listitem", { name: "text-overflow" })).toBeVisible();
 
     await page.locator(".workspace-toolbar").getByRole("button", { name: "Check", exact: true }).click();
     await expect(page.getByText(/check: Check found issues/)).toBeVisible({ timeout: 30_000 });

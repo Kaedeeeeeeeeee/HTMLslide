@@ -133,6 +133,20 @@ export type DesktopProjectReference = {
   path?: string;
 };
 
+export type DesktopPresenterDisplayPreference = {
+  id: number;
+  label: string;
+  internal: boolean;
+};
+
+export type DesktopPresenterPreferences = {
+  projectId: string;
+  projectPath: string;
+  recentSlideId?: string;
+  notesFontSizePx: number;
+  selectedDisplay?: DesktopPresenterDisplayPreference;
+};
+
 export type DesktopExportOptions = NewDeckExportSelection;
 
 export type DesktopSourceFileSelection = {
@@ -470,6 +484,11 @@ export type HtmlslideDesktopApi = {
   listProjects(): Promise<DesktopProjectRecord[]>;
   removeRecentProject(project: DesktopProjectReference): Promise<DesktopProjectRecord[]>;
   markRecentProjectMissing(project: DesktopProjectReference): Promise<DesktopProjectRecord[]>;
+  getPresenterPreferences(project: DesktopProjectReference): Promise<DesktopPresenterPreferences>;
+  savePresenterPreferences(
+    project: DesktopProjectReference,
+    preferences: Pick<DesktopPresenterPreferences, "recentSlideId" | "notesFontSizePx" | "selectedDisplay">
+  ): Promise<DesktopPresenterPreferences>;
   getAiEngineSettings(): Promise<AiEngineSettings>;
   saveAiEngineSettings(request: DesktopAiEngineSettingsSaveRequest): Promise<AiEngineSettings>;
   detectExternalAgents(): Promise<ExternalAgentStatus[]>;

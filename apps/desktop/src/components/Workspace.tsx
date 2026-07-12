@@ -94,6 +94,8 @@ import type {
   DesktopAudienceWindowRequest,
   DesktopAudienceWindowState,
   DesktopPresenterDisplay,
+  DesktopPresenterDisplayPreference,
+  DesktopPresenterPreferences,
   DesktopSlidePreviewDocument
 } from "../desktop-api";
 
@@ -146,8 +148,12 @@ interface WorkspaceProps {
   onViewDiff?: () => void;
   loadSlidePreview?: (projectPath: string, slideId: string) => Promise<DesktopSlidePreviewDocument>;
   loadPresenterDeck?: () => Promise<PresenterDeck | null>;
+  loadPresenterPreferences?: () => Promise<DesktopPresenterPreferences>;
   listPresenterDisplays?: () => Promise<DesktopPresenterDisplay[]>;
   openAudienceWindow?: (request: DesktopAudienceWindowRequest) => Promise<DesktopAudienceWindowState>;
+  savePresenterPreferences?: (
+    preferences: Pick<DesktopPresenterPreferences, "recentSlideId" | "notesFontSizePx" | "selectedDisplay">
+  ) => Promise<DesktopPresenterPreferences>;
   updateAudienceWindow?: (request: DesktopAudienceWindowRequest) => Promise<DesktopAudienceWindowState>;
   closeAudienceWindow?: () => Promise<DesktopAudienceWindowState>;
 }
@@ -192,6 +198,7 @@ type PresenterSource = "deckpkg" | "deckpkg-file" | "rehearsal";
 type ActivePresenterState = {
   deck: PresenterDeck;
   deckpkgPath?: string;
+  preferences: DesktopPresenterPreferences;
   session: PresenterSessionState;
   source: PresenterSource;
 };
@@ -227,6 +234,30 @@ const filterTabs: Array<{ id: QaFilter; label: string }> = [
 const qaPanelHeadingId = "qa-panel-heading";
 const qaPanelStatusId = "qa-panel-status";
 const slidePreviewCacheLimit = 8;
+
+function defaultPresenterPreferencesForProject(project: ProjectSummary): DesktopPresenterPreferences {
+  return {
+    notesFontSizePx: 20,
+    projectId: project.id,
+    projectPath: project.path
+  };
+}
+
+function createPresenterSessionFromPreferences(
+  deck: PresenterDeck,
+  preferences: DesktopPresenterPreferences,
+  selectedSlideId: string
+): PresenterSessionState {
+  const preferredSlideId = [preferences.recentSlideId, selectedSlideId].find(
+    (slideId) => typeof slideId === "string" && deck.slides.some((slide) => slide.id === slideId)
+  );
+
+  return createPresenterSession(deck, {
+    initialSlideId: preferredSlideId,
+    notesFontSizePx: preferences.notesFontSizePx,
+    nowMs: Date.now()
+  });
+}
 
 function domIdSegment(value: string): string {
   const normalized = value.trim().toLowerCase().replace(/[^a-z0-9_-]+/gu, "-").replace(/^-+|-+$/gu, "");
@@ -300,6 +331,7 @@ export function Workspace({
   onSettingsOpen,
   onToolbarAction,
   onViewDiff,
+  loadPresenterPreferences,
   operationStatus,
   notesSaveStatus,
   notesReadOnly,
@@ -309,6 +341,7 @@ export function Workspace({
   qaFilter,
   qaIssues,
   running,
+  savePresenterPreferences,
   selectedSlideId,
   slides,
   stages,
@@ -452,18 +485,28 @@ export function Workspace({
     }
 
     openedInitialPresenterIdRef.current = initialPresenterOpen.id;
-    const selectedIndex = initialPresenterOpen.deck.slides.findIndex((slide) => slide.id === selectedSlideId);
-    setPresenterState({
-      deck: initialPresenterOpen.deck,
-      deckpkgPath: initialPresenterOpen.deckpkgPath,
-      source: initialPresenterOpen.source,
-      session: createPresenterSession(initialPresenterOpen.deck, {
-        initialSlideIndex: Math.max(0, selectedIndex),
-        nowMs: Date.now()
-      })
-    });
-    onToolbarAction("present");
-  }, [initialPresenterOpen, onToolbarAction, selectedSlideId]);
+    let active = true;
+    const fallbackPreferences = defaultPresenterPreferencesForProject(project);
+    Promise.resolve(loadPresenterPreferences?.())
+      .catch(() => undefined)
+      .then((loadedPreferences) => {
+        if (!active) {
+          return;
+        }
+        const preferences = loadedPreferences ?? fallbackPreferences;
+        setPresenterState({
+          deck: initialPresenterOpen.deck,
+          deckpkgPath: initialPresenterOpen.deckpkgPath,
+          preferences,
+          source: initialPresenterOpen.source,
+          session: createPresenterSessionFromPreferences(initialPresenterOpen.deck, preferences, selectedSlideId)
+        });
+        onToolbarAction("present");
+      });
+    return () => {
+      active = false;
+    };
+  }, [initialPresenterOpen, loadPresenterPreferences, onToolbarAction, project, selectedSlideId]);
 
   useEffect(() => {
     const presenterSlideId = presenterState?.deck.slides[presenterState.session.slideIndex]?.id;
@@ -487,17 +530,17 @@ export function Workspace({
       return;
     }
 
-    const selectedIndex = nextPresenterDeck.slides.findIndex((slide) => slide.id === selectedSlideId);
+    const preferences = await Promise.resolve(loadPresenterPreferences?.())
+      .catch(() => undefined)
+      .then((loadedPreferences) => loadedPreferences ?? defaultPresenterPreferencesForProject(project));
     setPresenterState({
       deck: nextPresenterDeck,
+      preferences,
       source,
-      session: createPresenterSession(nextPresenterDeck, {
-        initialSlideIndex: Math.max(0, selectedIndex),
-        nowMs: Date.now()
-      })
+      session: createPresenterSessionFromPreferences(nextPresenterDeck, preferences, selectedSlideId)
     });
     onToolbarAction("present");
-  }, [loadPresenterDeck, onToolbarAction, rehearsalPresenterDeck, selectedSlideId]);
+  }, [loadPresenterDeck, loadPresenterPreferences, onToolbarAction, project, rehearsalPresenterDeck, selectedSlideId]);
 
   const handlePresenterExit = useCallback((): void => {
     setPresenterState(null);
@@ -599,8 +642,10 @@ export function Workspace({
         <PresenterMode
           closeAudienceWindow={closeAudienceWindow}
           deck={presenterState.deck}
+          initialPreferences={presenterState.preferences}
           onExit={handlePresenterExit}
           onSessionChange={handlePresenterSessionChange}
+          savePresenterPreferences={savePresenterPreferences}
           openAudienceWindow={openAudienceWindow}
           project={project}
           listPresenterDisplays={listPresenterDisplays}
@@ -618,6 +663,7 @@ export function Workspace({
 interface PresenterModeProps {
   closeAudienceWindow?: () => Promise<DesktopAudienceWindowState>;
   deck: PresenterDeck;
+  initialPreferences: DesktopPresenterPreferences;
   project: ProjectSummary;
   listPresenterDisplays?: () => Promise<DesktopPresenterDisplay[]>;
   onPresenterDisplaysChanged?: (handler: () => void) => () => void;
@@ -626,6 +672,9 @@ interface PresenterModeProps {
   slides: SlideSummary[];
   source: PresenterSource;
   updateAudienceWindow?: (request: DesktopAudienceWindowRequest) => Promise<DesktopAudienceWindowState>;
+  savePresenterPreferences?: (
+    preferences: Pick<DesktopPresenterPreferences, "recentSlideId" | "notesFontSizePx" | "selectedDisplay">
+  ) => Promise<DesktopPresenterPreferences>;
   onExit: () => void;
   onSessionChange: (session: PresenterSessionState) => void;
 }
@@ -633,12 +682,14 @@ interface PresenterModeProps {
 function PresenterMode({
   closeAudienceWindow,
   deck,
+  initialPreferences,
   listPresenterDisplays,
   onPresenterDisplaysChanged,
   onExit,
   onSessionChange,
   openAudienceWindow,
   project,
+  savePresenterPreferences,
   session,
   slides,
   source,
@@ -650,7 +701,9 @@ function PresenterMode({
   const [selectedDisplayId, setSelectedDisplayId] = useState<number | undefined>();
   const [displayError, setDisplayError] = useState<string | undefined>();
   const selectedDisplayIdRef = useRef<number | undefined>(undefined);
+  const initialSelectedDisplayRef = useRef<DesktopPresenterDisplayPreference | undefined>(initialPreferences.selectedDisplay);
   const displayRefreshRequestIdRef = useRef(0);
+  const [displayResolutionReady, setDisplayResolutionReady] = useState(false);
   const [audienceWindowState, setAudienceWindowState] = useState<DesktopAudienceWindowState>({ open: false });
   const [audienceWindowError, setAudienceWindowError] = useState<string | undefined>();
 
@@ -699,6 +752,7 @@ function PresenterMode({
       setPresenterDisplays([]);
       setSelectedDisplayId(undefined);
       setDisplayError(undefined);
+      setDisplayResolutionReady(true);
       return;
     }
 
@@ -710,8 +764,14 @@ function PresenterMode({
 
       const currentSelectedDisplayId = selectedDisplayIdRef.current;
       const selectedDisplay = displays.find((display) => display.id === currentSelectedDisplayId);
+      const persistedDisplay = displays.find((display) => display.id === initialSelectedDisplayRef.current?.id) ??
+        displays.find((display) =>
+          display.label === initialSelectedDisplayRef.current?.label &&
+          display.internal === initialSelectedDisplayRef.current?.internal
+        );
       const preferredDisplay =
         selectedDisplay ??
+        persistedDisplay ??
         displays.find((display) => !display.internal && !display.primary) ??
         displays.find((display) => display.primary) ??
         displays[0];
@@ -720,6 +780,7 @@ function PresenterMode({
       setPresenterDisplays(displays);
       setDisplayError(undefined);
       setSelectedDisplayId(preferredDisplay?.id);
+      setDisplayResolutionReady(true);
     } catch (error: unknown) {
       if (requestId !== displayRefreshRequestIdRef.current) {
         return;
@@ -757,6 +818,34 @@ function PresenterMode({
     () => getPresenterSessionView(deck, session, nowMs),
     [deck, nowMs, session]
   );
+  const selectedDisplay = presenterDisplays.find((display) => display.id === selectedDisplayId);
+  const persistPresenterPreferences = useCallback((): Promise<DesktopPresenterPreferences | undefined> => {
+    if (!savePresenterPreferences || !displayResolutionReady) {
+      return Promise.resolve(undefined);
+    }
+
+    const recentSlideId = deck.slides[session.slideIndex]?.id;
+    if (!recentSlideId) {
+      return Promise.resolve(undefined);
+    }
+
+    const selectedDisplayPreference = selectedDisplay
+      ? {
+          id: selectedDisplay.id,
+          internal: selectedDisplay.internal,
+          label: selectedDisplay.label
+        }
+      : initialPreferences.selectedDisplay;
+    return savePresenterPreferences({
+      ...(selectedDisplayPreference ? { selectedDisplay: selectedDisplayPreference } : {}),
+      notesFontSizePx: session.notesFontSizePx,
+      recentSlideId
+    });
+  }, [deck.slides, displayResolutionReady, initialPreferences.selectedDisplay, savePresenterPreferences, selectedDisplay, session.notesFontSizePx, session.slideIndex]);
+
+  useEffect(() => {
+    void persistPresenterPreferences().catch(() => undefined);
+  }, [persistPresenterPreferences]);
   const currentSlidePreview = findSlidePreview(slides, view.currentSlide.id);
   const nextSlidePreview = view.nextSlide ? findSlidePreview(slides, view.nextSlide.id) : undefined;
   const currentSlideDocumentHtml = view.currentSlide.htmlDocument?.trim() ? view.currentSlide.htmlDocument : undefined;
@@ -794,12 +883,13 @@ function PresenterMode({
   }, []);
 
   const handleClosePresenter = useCallback((): void => {
+    void persistPresenterPreferences().catch(() => undefined);
     if (audienceWindowState.open) {
       void closeAudienceWindow?.().catch(() => undefined);
     }
     setAudienceWindowState({ open: false });
     onExit();
-  }, [audienceWindowState.open, closeAudienceWindow, onExit]);
+  }, [audienceWindowState.open, closeAudienceWindow, onExit, persistPresenterPreferences]);
 
   useEffect(() => () => {
     void closeAudienceWindow?.().catch(() => undefined);

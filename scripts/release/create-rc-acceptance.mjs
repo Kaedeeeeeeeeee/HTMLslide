@@ -123,6 +123,7 @@ For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is 
 ### 1. Clean macOS User Account
 
 - [ ] Start from a clean macOS user account or equivalent isolated profile.
+- Status: TODO
 - Evidence:
 - Notes:
 
@@ -130,6 +131,7 @@ For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is 
 
 - [ ] Install the exact DMG listed in Metadata.
 - [ ] Confirm expected unsigned alpha Gatekeeper behavior or signed/notarized release behavior for the channel.
+- Status: TODO
 - Evidence:
 - Notes:
 
@@ -138,6 +140,7 @@ For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is 
 - [ ] Launch HTMLslide.
 - [ ] Complete first-run setup.
 - [ ] Confirm official skills and CLI integration setup finish without unexpected prompts.
+- Status: TODO
 - Evidence:
 - Notes:
 
@@ -145,6 +148,7 @@ For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is 
 
 - [ ] Create a new deck with the mock/local provider.
 - [ ] Confirm the project opens in the workspace with slide previews and notes.
+- Status: TODO
 - Evidence:
 - Notes:
 
@@ -159,6 +163,7 @@ For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is 
 - [ ] Attach the passing sanitized evidence JSON for this exact run and candidate artifact.
 - [ ] Confirm no API key appears in project files, reports, logs, or screenshots.
 - [ ] If no key is available, mark N/A and record why.
+- Status: TODO
 - Evidence:
 - Notes:
 
@@ -167,6 +172,7 @@ For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is 
 - [ ] Run a fake built-in Claude or Codex executable through the fixed adapter path.
 - [ ] Configure and run a fake Generic external agent command.
 - [ ] Confirm isolated built-in source application, Generic source-write manifest validation, sanitized logs, check/export gate, and checkpoint diff.
+- Status: TODO
 - Evidence:
 - Notes:
 
@@ -176,6 +182,7 @@ For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is 
 - [ ] If compatibility is claimed, record the real tool, version, authentication evidence, sanitized task/command, completed edit, cancellation behavior, checkpoint diff, check/export result, and revert evidence against this exact packaged artifact.
 - [ ] If compatibility is not claimed, mark N/A and confirm docs/release notes describe only the built-in adapter contract and fake automation.
 - [ ] Confirm Gemini CLI remains detection-only and no headless deck-editing claim is present.
+- Status: TODO
 - Evidence:
 - Notes:
 
@@ -183,6 +190,7 @@ For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is 
 
 - [ ] Export PDF and deckpkg from the created deck.
 - [ ] Confirm PDF page count, deckpkg openability, notes, and thumbnails.
+- Status: TODO
 - Evidence:
 - Notes:
 
@@ -190,6 +198,7 @@ For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is 
 
 - [ ] Present on HDMI, USB-C, or AirPlay external display.
 - [ ] Confirm speaker screen, audience window, next/previous navigation, overlays, timer, and screen sync.
+- Status: TODO
 - Evidence:
 - Notes:
 
@@ -198,6 +207,7 @@ For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is 
 - [ ] Quit and relaunch HTMLslide.
 - [ ] Reopen the project from Recent or Open Folder.
 - [ ] Confirm project library status and workspace preview are correct.
+- Status: TODO
 - Evidence:
 - Notes:
 
@@ -205,6 +215,7 @@ For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is 
 
 - [ ] Revert the latest mock, BYOK, or fake external-agent run.
 - [ ] Confirm changed source files return to the checkpoint state.
+- Status: TODO
 - Evidence:
 - Notes:
 
@@ -212,6 +223,7 @@ For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is 
 
 - [ ] Uninstall the HTMLslide-managed CLI shim from Settings.
 - [ ] Confirm htmlslide doctor no longer resolves through the removed shim path.
+- Status: TODO
 - Evidence:
 - Notes:
 
@@ -219,11 +231,13 @@ For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is 
 
 - [ ] Delete the app.
 - [ ] Confirm no unexpected files remain outside the expected user data, chosen workspace, and intentionally installed artifacts.
+- Status: TODO
 - Evidence:
 - Notes:
 
 ## Result
 
+- Status: TODO
 - [ ] Accepted for release candidate publication.
 - [ ] Rejected; blocking issues are filed and linked below.
 

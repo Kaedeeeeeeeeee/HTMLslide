@@ -25,7 +25,7 @@ Required root package contract:
 - `pnpm-lock.yaml` committed.
 - `docs:check`, `docs:build`, `version:check`, `lint`, `typecheck`, `test`, `perf:smoke`, `security:check`, `build`, `e2e:desktop`, and `e2e:desktop:a11y` scripts in `package.json`.
 - `test:visual:browser` for focused browser-rendered full-slide screenshot regression.
-- `package:alpha`, `smoke:package:alpha`, `package:release:macos`, `rc:checklist`, and `release:notes` scripts before macOS packaging is enabled.
+- `package:alpha`, `smoke:package:alpha`, `package:release:macos`, `rc:checklist`, `rc:checklist:verify`, and `release:notes` scripts before macOS packaging is enabled.
 
 ## Test Layers
 
@@ -155,6 +155,16 @@ pnpm rc:checklist -- --channel alpha --ci-run-url <ci-url> --package-run-url <pa
 ```
 
 The generated file lives under `dist/acceptance/` and is ignored by git. Complete it with Pass, Fail, or N/A plus evidence links before calling the build public. The required manual script is:
+
+The generated template includes an explicit `Status:` field for every manual item. Replace `Status: TODO` with exactly `Pass`, `Fail`, or `N/A`. Fill the section's `Evidence:` field for Pass; fill `Notes:` with an explanation for Fail or an explicit reason for N/A. Check every automated gate with `[x]`, replace metadata and blocking-issue placeholders, set the final `Result` status to `Accepted` or `Rejected`, and select exactly one final Result checkbox.
+
+Verify the completed checklist without provider credentials, Apple Developer credentials, or presentation hardware:
+
+```bash
+pnpm rc:checklist:verify -- --checklist /path/to/completed-rc-checklist.md --json
+```
+
+This command validates the recorded checklist only. It does not run a provider, sign or notarize an app, or claim hardware/manual behavior that was not recorded in the checklist.
 
 1. Start from a clean macOS user account.
 2. Install the DMG or unsigned alpha package.

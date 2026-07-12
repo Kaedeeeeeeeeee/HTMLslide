@@ -1,0 +1,207 @@
+import { readFile, stat } from "node:fs/promises";
+import path from "node:path";
+import process from "node:process";
+import { pathToFileURL } from "node:url";
+
+const maxChecklistBytes = 2 * 1024 * 1024;
+const expectedManualItems = 13;
+const allowedManualStatuses = new Set(["pass", "fail", "n/a"]);
+
+if (isDirectRun()) {
+  main(process.argv.slice(2)).catch((error) => {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  });
+}
+
+export async function main(args) {
+  const options = parseArgs(args);
+  const checklistPath = path.resolve(options.checklist);
+  const fileStats = await stat(checklistPath);
+  if (!fileStats.isFile()) {
+    throw new Error(`RC checklist is not a regular file: ${checklistPath}`);
+  }
+  if (fileStats.size > maxChecklistBytes) {
+    throw new Error(`RC checklist exceeds the ${maxChecklistBytes}-byte limit.`);
+  }
+
+  const markdown = await readFile(checklistPath, "utf8");
+  const result = verifyChecklist(markdown, { checklistPath });
+  process.stdout.write(options.json ? `${JSON.stringify(result)}\n` : `${formatHumanResult(result)}\n`);
+  return result;
+}
+
+export function parseArgs(args) {
+  const parsed = { json: false };
+  const allowed = new Set(["checklist", "input", "json"]);
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--") {
+      continue;
+    }
+    if (arg === "--json") {
+      parsed.json = true;
+      continue;
+    }
+    if (!arg.startsWith("--")) {
+      throw new Error(`Unexpected positional argument: ${arg}`);
+    }
+
+    const [rawKey, inlineValue] = arg.slice(2).split("=", 2);
+    const key = rawKey.replace(/-([a-z])/gu, (_match, letter) => letter.toUpperCase());
+    if (!allowed.has(key) || key === "json") {
+      throw new Error(`Unknown option: --${rawKey}`);
+    }
+    const value = inlineValue ?? args[index + 1];
+    if (value === undefined || value.startsWith("--")) {
+      throw new Error(`Missing value for --${rawKey}`);
+    }
+    parsed[key] = value;
+    if (inlineValue === undefined) {
+      index += 1;
+    }
+  }
+
+  if (typeof parsed.checklist !== "string" && typeof parsed.input === "string") {
+    parsed.checklist = parsed.input;
+  }
+  if (typeof parsed.checklist !== "string" || parsed.checklist.trim().length === 0) {
+    throw new Error("Missing required --checklist value.");
+  }
+  return parsed;
+}
+
+export function verifyChecklist(markdown, metadata = {}) {
+  if (typeof markdown !== "string" || markdown.trim().length === 0) {
+    throw new Error("RC checklist must be a non-empty Markdown document.");
+  }
+
+  const automatedSection = sectionBetween(markdown, "## Automated Gates", "## Manual Acceptance Script");
+  const automatedItems = automatedSection.split("\n").filter((line) => /^- \[[ xX]\] /u.test(line));
+  if (automatedItems.length === 0) {
+    throw new Error("RC checklist has no automated gate entries.");
+  }
+  const uncheckedAutomated = automatedItems.filter((line) => /^- \[ \] /u.test(line));
+  if (uncheckedAutomated.length > 0) {
+    throw new Error(`Automated gates are incomplete: ${uncheckedAutomated.map((line) => line.slice(6)).join("; ")}`);
+  }
+
+  const manualSection = sectionBetween(markdown, "## Manual Acceptance Script", "## Result");
+  const headings = [...manualSection.matchAll(/^### (\d+)\. (.+)$/gmu)];
+  if (headings.length !== expectedManualItems) {
+    throw new Error(`Expected ${expectedManualItems} manual acceptance items, found ${headings.length}.`);
+  }
+
+  const items = headings.map((heading, index) => {
+    const start = heading.index + heading[0].length;
+    const end = headings[index + 1]?.index ?? manualSection.length;
+    const section = manualSection.slice(start, end);
+    const number = Number(heading[1]);
+    if (number !== index + 1) {
+      throw new Error(`Manual acceptance items must be numbered sequentially; found ${number}.`);
+    }
+
+    const status = fieldValue(section, "Status");
+    const normalizedStatus = status.toLowerCase();
+    if (!allowedManualStatuses.has(normalizedStatus)) {
+      throw new Error(`Manual item ${number} has invalid Status: ${status || "empty"}.`);
+    }
+
+    const evidence = fieldValue(section, "Evidence");
+    const notes = fieldValue(section, "Notes");
+    if (normalizedStatus === "pass" && isEmptyEvidence(evidence)) {
+      throw new Error(`Manual item ${number} is Pass but has no Evidence.`);
+    }
+    if (normalizedStatus === "fail" && isEmptyEvidence(notes)) {
+      throw new Error(`Manual item ${number} is Fail but has no Notes explanation.`);
+    }
+    if (normalizedStatus === "n/a" && isEmptyEvidence(notes)) {
+      throw new Error(`Manual item ${number} is N/A but has no Notes rationale.`);
+    }
+
+    return {
+      number,
+      title: heading[2].trim(),
+      status: normalizedStatus === "n/a" ? "N/A" : normalizedStatus[0].toUpperCase() + normalizedStatus.slice(1),
+      hasEvidence: !isEmptyEvidence(evidence),
+      hasNotes: !isEmptyEvidence(notes)
+    };
+  });
+
+  const resultSection = sectionAfter(markdown, "## Result");
+  const resultStatus = fieldValue(resultSection, "Status");
+  if (resultStatus !== "Accepted" && resultStatus !== "Rejected") {
+    throw new Error(`Result has invalid Status: ${resultStatus || "empty"}.`);
+  }
+  const acceptedChecked = /^- \[[xX]\] Accepted for release candidate publication\./mu.test(resultSection);
+  const rejectedChecked = /^- \[[xX]\] Rejected; blocking issues are filed and linked below\./mu.test(resultSection);
+  if (acceptedChecked === rejectedChecked) {
+    throw new Error("Result must check exactly one of Accepted or Rejected.");
+  }
+
+  const hasFailure = items.some((item) => item.status === "Fail");
+  const expectedResult = hasFailure ? "Rejected" : "Accepted";
+  if (resultStatus !== expectedResult || (hasFailure ? !rejectedChecked : !acceptedChecked)) {
+    throw new Error(`Result Status ${resultStatus} does not match manual acceptance outcome ${expectedResult}.`);
+  }
+
+  if (/\bTODO\b/gu.test(markdown)) {
+    throw new Error("RC checklist still contains unresolved TODO placeholders.");
+  }
+
+  const statusCounts = Object.fromEntries(["Pass", "Fail", "N/A"].map((status) => [
+    status,
+    items.filter((item) => item.status === status).length
+  ]));
+  return {
+    status: "passed",
+    command: "rc:checklist:verify",
+    checklistPath: metadata.checklistPath ?? "<inline>",
+    automatedGates: automatedItems.length,
+    manualItems: items.length,
+    manualSectionCount: items.length,
+    manualItemCount: items.length,
+    manualStatuses: statusCounts,
+    statusCounts,
+    result: resultStatus
+  };
+}
+
+function sectionBetween(markdown, startHeading, endHeading) {
+  const start = markdown.indexOf(startHeading);
+  if (start < 0) {
+    throw new Error(`RC checklist is missing ${startHeading}.`);
+  }
+  const contentStart = start + startHeading.length;
+  const end = markdown.indexOf(endHeading, contentStart);
+  if (end < 0) {
+    throw new Error(`RC checklist is missing ${endHeading}.`);
+  }
+  return markdown.slice(contentStart, end);
+}
+
+function sectionAfter(markdown, startHeading) {
+  const start = markdown.indexOf(startHeading);
+  if (start < 0) {
+    throw new Error(`RC checklist is missing ${startHeading}.`);
+  }
+  return markdown.slice(start + startHeading.length);
+}
+
+function fieldValue(section, field) {
+  const match = section.match(new RegExp(`^- ${field}:[ \\t]*(.*)$`, "mu"));
+  return match?.[1]?.trim() ?? "";
+}
+
+function isEmptyEvidence(value) {
+  return value.length === 0 || /^(?:TODO|TBD|none|n\/a)$/iu.test(value);
+}
+
+function formatHumanResult(result) {
+  return `RC checklist passed: ${result.manualItems} manual items, ${result.automatedGates} automated gates, result ${result.result}.`;
+}
+
+function isDirectRun() {
+  return process.argv[1] !== undefined && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
+}

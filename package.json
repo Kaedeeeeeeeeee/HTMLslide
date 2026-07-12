@@ -33,6 +33,7 @@
     "smoke:package:alpha": "node scripts/release/smoke-alpha-package.mjs",
     "verify:package:alpha": "pnpm package:alpha && pnpm smoke:package:alpha",
     "rc:checklist": "node scripts/release/create-rc-acceptance.mjs",
+    "rc:checklist:verify": "node scripts/release/verify-rc-checklist.mjs",
     "rc:byok-evidence": "node scripts/release/verify-byok-acceptance.mjs",
     "rc:external-agent-evidence": "node scripts/release/verify-external-agent-acceptance.mjs",
     "release:notes": "node scripts/release/create-release-notes.mjs",

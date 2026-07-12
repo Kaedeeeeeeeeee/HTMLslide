@@ -10,6 +10,7 @@ import { buildArtifactMetadata } from "./artifact-metadata.mjs";
 import { renderChecklist } from "./create-rc-acceptance.mjs";
 import { renderReleaseNotes } from "./create-release-notes.mjs";
 import { main as verifyByokEvidence } from "./verify-byok-acceptance.mjs";
+import { main as verifyChecklist } from "./verify-rc-checklist.mjs";
 import { main as verifyExternalAgentEvidence } from "./verify-external-agent-acceptance.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -197,6 +198,86 @@ describe("release evidence scripts", () => {
     expect(stdout).toContain("| Channel | alpha |");
     expect(stdout).toContain("| CI run | https://github.test/ci |");
     expect(stdout).toContain("Delete App And Check System Files");
+  });
+
+  it("verifies a completed RC checklist with explicit manual statuses", async () => {
+    const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-rc-checklist-"));
+    const inputPath = path.join(fixtureRoot, "completed.md");
+    try {
+      await writeFile(inputPath, completeChecklist(), "utf8");
+
+      const result = await verifyChecklist(["--checklist", inputPath]);
+
+      expect(result.status).toBe("passed");
+      expect(result.manualSectionCount).toBe(13);
+      expect(result.manualItemCount).toBeGreaterThan(0);
+      expect(result.statusCounts).toEqual({
+        Pass: result.manualItemCount,
+        Fail: 0,
+        "N/A": 0
+      });
+    } finally {
+      await rm(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("exposes rc:checklist:verify as a JSON-producing command", async () => {
+    const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-rc-checklist-cli-"));
+    const inputPath = path.join(fixtureRoot, "completed.md");
+    try {
+      await writeFile(inputPath, completeChecklist(), "utf8");
+
+      const { stdout } = await execFileAsync(process.execPath, [
+        path.join(root, "scripts", "release", "verify-rc-checklist.mjs"),
+        "--checklist", inputPath,
+        "--json"
+      ]);
+
+      expect(JSON.parse(stdout)).toMatchObject({
+        command: "rc:checklist:verify",
+        status: "passed",
+        manualSectionCount: 13
+      });
+    } finally {
+      await rm(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    [
+      "unknown manual status",
+      (text: string) => text.replace("- Status: Pass", "- Status: Unknown"),
+      /invalid Status/
+    ],
+    [
+      "Pass without evidence",
+      (text: string) => text.replace("- Evidence: https://example.test/evidence", "- Evidence:"),
+      /Pass but has no Evidence/
+    ],
+    [
+      "Fail without explanation",
+      (text: string) => text.replace("- Status: Pass", "- Status: Fail").replace("- Notes: Manual acceptance record.", "- Notes:"),
+      /Fail but has no Notes explanation/
+    ],
+    [
+      "N/A without reason",
+      (text: string) => text.replace("- Status: Pass", "- Status: N/A").replace("- Notes: Manual acceptance record.", "- Notes:"),
+      /N\/A but has no Notes rationale/
+    ],
+    [
+      "unfinished placeholder",
+      (text: string) => text.replace("- Evidence: https://example.test/evidence", "- Evidence: TODO"),
+      /no Evidence/
+    ]
+  ])("rejects %s in an RC checklist", async (_name, mutate, expected) => {
+    const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-rc-checklist-invalid-"));
+    const inputPath = path.join(fixtureRoot, "invalid.md");
+    try {
+      await writeFile(inputPath, mutate(completeChecklist()), "utf8");
+      await expect(verifyChecklist(["--checklist", inputPath])).rejects.toThrow(expected);
+    } finally {
+      await rm(fixtureRoot, { recursive: true, force: true });
+    }
   });
 
   it("writes sanitized run-bound evidence for a valid 8-slide BYOK deck", async () => {
@@ -480,6 +561,34 @@ describe("release evidence scripts", () => {
     expect(notes).toContain("Verify checkout fetch depth and tag history.");
   });
 });
+
+function completeChecklist() {
+  const rendered = renderChecklist({
+    artifactUrl: "https://example.test/htmlslide-alpha.dmg",
+    channel: "alpha",
+    ciRunUrl: "https://github.test/ci",
+    packageRunUrl: "https://github.test/package",
+    version: "0.1.0"
+  }).replace(/<[^>\n]+>/gu, "filled-value");
+  const manualStart = rendered.indexOf("## Manual Acceptance Script");
+  const resultStart = rendered.indexOf("## Result", manualStart);
+  const automated = rendered
+    .slice(0, manualStart)
+    .replace(/\bTODO\b/gu, "Recorded in release tracker")
+    .replace(/^- \[ \] /gmu, "- [x] ");
+  const manual = rendered
+    .slice(manualStart, resultStart)
+    .replace(/^- Status: TODO$/gmu, "- Status: Pass")
+    .replace(/^- Evidence:\s*$/gmu, "- Evidence: https://example.test/evidence")
+    .replace(/^- Notes:\s*$/gmu, "- Notes: Manual acceptance record.");
+  const result = rendered
+    .slice(resultStart)
+    .replace("- Status: TODO", "- Status: Accepted")
+    .replace("- [ ] Accepted for release candidate publication.", "- [x] Accepted for release candidate publication.")
+    .replace(/\bTODO\b/gu, "None");
+
+  return `${automated}${manual}${result}`;
+}
 
 async function createByokEvidenceFixture() {
   const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-byok-evidence-"));

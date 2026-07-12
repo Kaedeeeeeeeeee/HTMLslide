@@ -44,7 +44,8 @@ import {
   type FetchLike,
   type JsonObject,
   type JsonValue,
-  type ModelProvider
+  type ModelProvider,
+  type VisualDirection
 } from "@htmlslide/agent";
 import { buildSlidePreviewDocument } from "@htmlslide/compiler";
 import { ExportManifestSchema, parseDeck, type Deck } from "@htmlslide/core";
@@ -535,6 +536,7 @@ export type DesktopMockAgentRunnerOptions = {
   signal?: AbortSignal;
   onEvent?: (event: AgentRunEvent) => void | Promise<void>;
   onLog?: (log: AgentRunLog) => void | Promise<void>;
+  chooseVisualDirection?: (directions: VisualDirection[]) => Promise<string> | string;
 };
 
 export type DesktopByokAgentProviderFactory = (input: {
@@ -565,6 +567,7 @@ export type DesktopExternalAgentRunnerOptions = {
   signal?: AbortSignal;
   onEvent?: (event: AgentRunEvent) => void | Promise<void>;
   onLog?: (log: AgentRunLog) => void | Promise<void>;
+  chooseVisualDirection?: (directions: VisualDirection[]) => Promise<string> | string;
 };
 
 export type DesktopAiEngineMode = "no-ai" | "htmlslide-agent" | "external-agent";
@@ -1728,6 +1731,7 @@ export async function runDesktopMockAgent(
     metadata: {
       mode: "desktop-mock-agent"
     },
+    chooseVisualDirection: options.chooseVisualDirection,
     createCheckpoint: createFileCopyCheckpoint
   }, {
     onEvent: observers.event,
@@ -2139,6 +2143,7 @@ export async function runDesktopByokAgent(
       model,
       provider
     },
+    chooseVisualDirection: options.chooseVisualDirection,
     createCheckpoint: createFileCopyCheckpoint
   }, {
     onEvent: observers.event,

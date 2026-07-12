@@ -1,4 +1,5 @@
 import path from "node:path";
+import { lstat, realpath } from "node:fs/promises";
 
 const WINDOWS_ABSOLUTE_PATH_PATTERN = /^[A-Za-z]:[\\/]/;
 const URL_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:/;
@@ -65,6 +66,48 @@ export function resolveProjectRelativePath(projectRoot: string, projectPath: str
   }
 
   return resolvedPath;
+}
+
+/**
+ * Resolve a source path while refusing symlink traversal through the project.
+ * The target may not exist yet because callers use this helper before writes.
+ */
+export async function resolveProjectRelativePathInsideRealProject(
+  projectRoot: string,
+  projectPath: string
+): Promise<string> {
+  const resolvedPath = resolveProjectRelativePath(projectRoot, projectPath);
+  const absoluteRoot = path.resolve(projectRoot);
+  const realRoot = await realpath(absoluteRoot);
+  let cursor = resolvedPath;
+
+  while (cursor !== absoluteRoot) {
+    const entry = await lstat(cursor).catch((error: unknown) => {
+      if (isNodeError(error) && error.code === "ENOENT") {
+        return undefined;
+      }
+      throw error;
+    });
+
+    if (entry?.isSymbolicLink()) {
+      throw new ProjectPathError("Project source paths must not traverse symbolic links.", projectPath);
+    }
+
+    if (entry) {
+      const realEntry = await realpath(cursor);
+      if (!isPathInside(realRoot, realEntry)) {
+        throw new ProjectPathError("Resolved path escapes the real project root.", projectPath);
+      }
+    }
+
+    cursor = path.dirname(cursor);
+  }
+
+  return resolvedPath;
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }
 
 export function isPathInside(rootPath: string, candidatePath: string): boolean {

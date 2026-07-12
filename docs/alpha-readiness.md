@@ -41,13 +41,13 @@ These gates are expected before each alpha candidate:
 | `htmlslide doctor` passes | CLI tests and package smoke cover doctor through the packaged CLI shim. |
 | CLI project/package/presenter surface works | CLI tests cover project discovery, portable package intent, package validation, launch error contracts, and argument-safe macOS App invocation; Electron E2E covers initial and second-instance project opens; package smoke generates its deckpkg with the packaged `htmlslide package` command. |
 | Managed skill lifecycle works | Shared skills tests cover local/official/HTTPS resolution, DNS and source limits, warning confirmation, ownership hashes, atomic update, legacy official adoption, and safe removal. CLI E2E and package smoke cover list/add/inspect/remove, while first-run package smoke verifies official ownership records. |
-| Packaged MCP diagnostics work | CLI/MCP tests cover source runtime behavior; package smoke runs packaged `htmlslide mcp --list-tools --json` and project-scoped `htmlslide mcp --status --json`. |
+| Packaged MCP diagnostics and source boundaries work | CLI/MCP tests cover source runtime behavior, including directory and file symlink escape rejection; package smoke runs packaged `htmlslide mcp --list-tools --json` and project-scoped `htmlslide mcp --status --json`. |
 | New Deck creates a project | CLI tests and Electron E2E cover source project creation. |
 | Open Folder opens a project | Electron E2E covers opening fixture and created projects. |
 | Project Library shows recent projects | Electron E2E covers recent project management. |
 | Local Mock provider completes the flow | Agent tests, CLI tests, and Electron E2E cover deterministic mock generation. |
 | BYOK source writes/check/export path | Provider adapters use fake fetch tests; Electron E2E covers a local OpenAI-compatible fake provider through AI Engines, New Deck, source writes, check, export, and sanitized run reports without real credentials. |
-| Generate outline, visual direction, and full deck | Agent orchestrator tests and desktop mock generation cover the staged flow. |
+| Generate outline, choose visual direction, and build full deck | Core orchestrator tests cover the selection state; desktop Local Mock and BYOK E2E pause before Build, expose direction cards, and verify the selected direction is used in the final report. External-agent commands keep their command-owned flow. |
 | Check finds overflow | Linter fixtures and Electron QA panel E2E cover text overflow issues. |
 | Check finds missing asset | Linter fixtures and Electron QA panel E2E cover missing asset issues. |
 | Check finds missing notes | Linter fixtures and Electron QA panel E2E cover missing notes issues. |

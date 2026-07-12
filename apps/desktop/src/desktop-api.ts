@@ -10,7 +10,8 @@ import type {
   AgentRunStatus,
   ApplyMockAgentProjectResult,
   FileCopyCheckpointDiff,
-  FileCopyCheckpointRevertResult
+  FileCopyCheckpointRevertResult,
+  VisualDirection
 } from "@htmlslide/agent";
 
 export type DesktopSetupState = {
@@ -320,6 +321,7 @@ export type DesktopAgentRunResult =
 export type DesktopAgentRunStatus =
   | "queued"
   | "running"
+  | "awaiting-user-choice"
   | "cancelling"
   | "succeeded"
   | "failed"
@@ -339,6 +341,7 @@ export type DesktopAgentRunSnapshot = {
   canPause: false;
   events: AgentRunEvent[];
   logs: AgentRunLog[];
+  pendingVisualDirections?: VisualDirection[];
   result?: DesktopAgentRunResult;
   error?: string;
 };
@@ -467,6 +470,7 @@ export type HtmlslideDesktopApi = {
   getAgentRun(runId: string): Promise<DesktopAgentRunSnapshot | undefined>;
   getActiveAgentRun(projectPath: string): Promise<DesktopAgentRunSnapshot | undefined>;
   cancelAgentRun(runId: string): Promise<DesktopAgentRunSnapshot>;
+  chooseVisualDirection(runId: string, directionId: string): Promise<DesktopAgentRunSnapshot>;
   retryAgentRun(runId: string): Promise<DesktopAgentRunSnapshot>;
   onAgentRunUpdate(handler: (snapshot: DesktopAgentRunSnapshot) => void): () => void;
   diffCheckpoint(request: DesktopCheckpointRequest): Promise<FileCopyCheckpointDiff>;

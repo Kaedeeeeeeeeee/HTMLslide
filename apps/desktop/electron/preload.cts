@@ -65,6 +65,8 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
   getAgentRun: (runId: string) => ipcRenderer.invoke("htmlslide:get-agent-run", runId),
   getActiveAgentRun: (projectPath: string) => ipcRenderer.invoke("htmlslide:get-active-agent-run", projectPath),
   cancelAgentRun: (runId: string) => ipcRenderer.invoke("htmlslide:cancel-agent-run", runId),
+  chooseVisualDirection: (runId: string, directionId: string) =>
+    ipcRenderer.invoke("htmlslide:choose-visual-direction", runId, directionId),
   retryAgentRun: (runId: string) => ipcRenderer.invoke("htmlslide:retry-agent-run", runId),
   onAgentRunUpdate: (handler: (snapshot: unknown) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: unknown) => handler(snapshot);

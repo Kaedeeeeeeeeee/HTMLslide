@@ -56,7 +56,7 @@ completed
 cancelled
 ```
 
-`visual_direction` can auto-select a direction or enter `awaiting_user_choice` when a caller provides a selection callback. Cancellation can happen from any non-terminal state.
+`visual_direction` can auto-select a direction or enter `awaiting_user_choice` when a caller provides a selection callback. The desktop Local Mock and BYOK paths provide that callback through the Electron run registry, expose pending directions to the renderer, and do not start Build until the user selects one. External-agent commands retain their existing command-owned flow because they do not expose structured visual-direction responses. Cancellation can happen from any non-terminal state.
 
 ## Events and Logs
 
@@ -122,7 +122,7 @@ The mock provider is deterministic and performs no network calls. By default it:
 
 1. normalizes a brief,
 2. returns a three-slide outline,
-3. returns two visual directions and auto-selects `direction-editorial`,
+3. returns two visual directions and auto-selects `direction-editorial` for core-only callers without a selection callback,
 4. reports deterministic source files for build,
 5. fails the first check with one error and one warning,
 6. repairs slide and notes files,

@@ -269,6 +269,7 @@ describe("macOS alpha packaging contract", () => {
     expect(workflow).toContain("*.dmg");
     expect(workflow).toContain("*.zip");
     expect(workflow).toContain("*.json");
+    expect(workflow).toContain("find \"$manifest_dir\" -maxdepth 1 -type f -name 'HTMLslide-*.json'");
     expect(workflow).toContain("name: htmlslide-unsigned-alpha-${{ github.run_number }}");
   });
 
@@ -317,6 +318,8 @@ describe("macOS alpha packaging contract", () => {
     expect(workflow).toContain("manifest.notarized !== true");
     expect(workflow).toContain("manifest.stapled !== true");
     expect(workflow).toContain("manifest.artifactMetadata");
+    expect(workflow).toContain("find dist/release -maxdepth 1 -type f -name 'HTMLslide-*.json'");
+    expect(workflow).not.toContain("find dist/release -name '*.json' -type f");
     expect(workflow).toContain("crypto.createHash('sha256')");
     expect(workflow).toContain("release DMG metadata sha256 mismatch");
     expect(workflow).toContain("pnpm rc:checklist --");

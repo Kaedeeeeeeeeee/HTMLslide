@@ -1,4 +1,4 @@
-import { cp, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { cp, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -219,6 +219,31 @@ describe("HTMLslide MCP in-process server", () => {
         content,
         path: "exports/001-clean.html"
       })).rejects.toThrow("Invalid project path");
+    });
+  });
+
+  it("rejects source paths that traverse a directory symlink", async () => {
+    await withTempFixture("linter-valid-clean", async (projectPath) => {
+      const outsideRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-mcp-outside-"));
+      try {
+        const outsidePath = path.join(outsideRoot, "outside.html");
+        const slidesPath = path.join(projectPath, "slides");
+        await writeFile(outsidePath, "must remain unchanged\n", "utf8");
+        await rm(slidesPath, { recursive: true, force: true });
+        await symlink(outsideRoot, slidesPath, "dir");
+
+        const server = createHtmlslideMcpServer({ projectRoot: projectPath });
+        await expect(server.callTool("slide_read", { path: "slides/outside.html" })).rejects.toThrow(
+          "Invalid project path"
+        );
+        await expect(server.callTool("slide_write", {
+          content: "must not be written\n",
+          path: "slides/outside.html"
+        })).rejects.toThrow("Invalid project path");
+        await expect(readFile(outsidePath, "utf8")).resolves.toBe("must remain unchanged\n");
+      } finally {
+        await rm(outsideRoot, { recursive: true, force: true });
+      }
     });
   });
 

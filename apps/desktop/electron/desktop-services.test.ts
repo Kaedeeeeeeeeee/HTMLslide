@@ -982,7 +982,8 @@ describe("desktop services", () => {
           mode: "development",
           rootPath: "/fake"
         },
-        cliRunner: runner
+        cliRunner: runner,
+        chooseVisualDirection: (directions) => directions[1]?.id ?? ""
       }
     );
 
@@ -1054,7 +1055,7 @@ describe("desktop services", () => {
       "direction-editorial",
       "direction-systems"
     ]);
-    expect(report.outputs.selectedVisualDirectionId).toBe("direction-editorial");
+    expect(report.outputs.selectedVisualDirectionId).toBe("direction-systems");
     expect(report.outputs.build).toMatchObject({
       slidesChanged: ["001-title", "002-workflow", "003-review"],
       sourceWriteCount: 0,
@@ -1062,7 +1063,7 @@ describe("desktop services", () => {
     });
     expect(report.applied).toMatchObject({
       source: "mock-project-writer",
-      selectedVisualDirectionId: "direction-editorial",
+      selectedVisualDirectionId: "direction-systems",
       slideIds: ["001-title", "002-workflow", "003-review"]
     });
     expect(report.checkpointDiff?.summary).toMatchObject({
@@ -2040,6 +2041,7 @@ describe("desktop services", () => {
     });
     const providerInputs: Array<{ apiKey: string; baseUrl?: string; model: string; provider: string }> = [];
     let credentialValidationCalls = 0;
+    let chosenDirections = 0;
 
     const result = await runDesktopByokAgent(
       {
@@ -2068,6 +2070,10 @@ describe("desktop services", () => {
             }
           };
         },
+        chooseVisualDirection: (directions) => {
+          chosenDirections = directions.length;
+          return directions[0]?.id ?? "";
+        },
         settings: byokSettings("openai")
       }
     );
@@ -2087,6 +2093,7 @@ describe("desktop services", () => {
       }
     ]);
     expect(credentialValidationCalls).toBe(1);
+    expect(chosenDirections).toBe(2);
     expect(result.agent?.ok).toBe(true);
     expect(result.summary).toMatchObject({
       checkStatus: "passed",

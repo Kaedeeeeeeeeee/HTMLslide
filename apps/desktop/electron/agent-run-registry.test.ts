@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { AgentRunEvent, AgentRunLog } from "@htmlslide/agent";
+import type { AgentRunEvent, AgentRunLog, VisualDirection } from "@htmlslide/agent";
 import { describe, expect, it, vi } from "vitest";
 import {
   DesktopAgentRunRegistry,
@@ -69,6 +69,85 @@ const result = (
 } as DesktopAgentRunResult);
 
 describe("DesktopAgentRunRegistry", () => {
+  const visualDirections: VisualDirection[] = [
+    {
+      id: "direction-editorial",
+      label: "Editorial",
+      rationale: "A restrained editorial layout.",
+      sampleSlideIds: ["001-title", "002-content"],
+      tokens: {
+        accent: "#2457d6",
+        background: "#ffffff",
+        text: "#111827"
+      }
+    },
+    {
+      id: "direction-systems",
+      label: "Systems",
+      rationale: "A structured systems layout.",
+      sampleSlideIds: ["001-title", "002-content"],
+      tokens: {
+        accent: "#00a896",
+        background: "#0b1220",
+        text: "#f8fafc"
+      }
+    }
+  ];
+
+  it("pauses with compact pending directions and resumes only after a valid selection", async () => {
+    let selectedDirectionId: string | undefined;
+    const updates: Array<{ status: string; pending?: VisualDirection[] }> = [];
+    const execute: DesktopAgentRunExecutor = async (request, control) => {
+      selectedDirectionId = await control.chooseVisualDirection(visualDirections);
+      return result(request.runId);
+    };
+    const registry = new DesktopAgentRunRegistry({
+      execute,
+      onUpdate: (snapshot) => updates.push({ status: snapshot.status, pending: snapshot.pendingVisualDirections }),
+      runIdFactory: () => "run-visual-choice"
+    });
+
+    registry.start({ engine: "mock-agent", projectPath: "/tmp/visual-choice", brief: "Build" });
+    await vi.waitFor(() => expect(registry.get("run-visual-choice")?.status).toBe("awaiting-user-choice"));
+
+    expect(registry.get("run-visual-choice")).toMatchObject({
+      status: "awaiting-user-choice",
+      canCancel: true,
+      pendingVisualDirections: visualDirections
+    });
+    expect(updates.some((snapshot) => snapshot.status === "awaiting-user-choice")).toBe(true);
+    expect(() => registry.chooseVisualDirection("run-visual-choice", "direction-missing")).toThrow(
+      /Unknown visual direction id/
+    );
+    expect(registry.get("run-visual-choice")?.status).toBe("awaiting-user-choice");
+
+    const selectedSnapshot = registry.chooseVisualDirection("run-visual-choice", "direction-systems");
+    expect(selectedSnapshot.status).toBe("running");
+    expect(selectedSnapshot.pendingVisualDirections).toBeUndefined();
+    await vi.waitFor(() => expect(registry.get("run-visual-choice")?.status).toBe("succeeded"));
+    expect(selectedDirectionId).toBe("direction-systems");
+  });
+
+  it("rejects and clears a pending choice when the run is cancelled", async () => {
+    const execute: DesktopAgentRunExecutor = async (request, control) => {
+      await control.chooseVisualDirection(visualDirections);
+      return result(request.runId);
+    };
+    const registry = new DesktopAgentRunRegistry({ execute, runIdFactory: () => "run-visual-cancel" });
+
+    registry.start({ engine: "mock-agent", projectPath: "/tmp/visual-cancel", brief: "Build" });
+    await vi.waitFor(() => expect(registry.get("run-visual-cancel")?.status).toBe("awaiting-user-choice"));
+
+    const cancellingSnapshot = registry.cancel("run-visual-cancel", "Stop waiting.");
+    expect(cancellingSnapshot.status).toBe("cancelling");
+    expect(cancellingSnapshot.pendingVisualDirections).toBeUndefined();
+    await vi.waitFor(() => expect(registry.get("run-visual-cancel")?.status).toBe("cancelled"));
+    expect(registry.get("run-visual-cancel")?.pendingVisualDirections).toBeUndefined();
+    expect(() => registry.chooseVisualDirection("run-visual-cancel", "direction-editorial")).toThrow(
+      /not awaiting/
+    );
+  });
+
   it("returns immediately and publishes live snapshots before completion", async () => {
     let finish: ((value: DesktopAgentRunResult) => void) | undefined;
     const updates: number[] = [];

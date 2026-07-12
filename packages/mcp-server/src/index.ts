@@ -15,7 +15,11 @@ import {
   type ExportOptions,
   type ExportResult
 } from "@htmlslide/compiler";
-import { loadDeckProject, type LoadedDeckProject } from "@htmlslide/core";
+import {
+  loadDeckProject,
+  resolveProjectRelativePathInsideRealProject,
+  type LoadedDeckProject
+} from "@htmlslide/core";
 import { HTMLSLIDE_APP_VERSION } from "@htmlslide/core/version";
 import { checkProject, type CheckReport } from "@htmlslide/linter";
 import { buildDeckHtml, type RenderDeck, type RenderMode } from "@htmlslide/renderer";
@@ -760,7 +764,7 @@ const readProjectTextFile = async (
   relativePath: string,
   requiredPrefix: string
 ): Promise<TextFileResult> => {
-  const filePath = resolveToolProjectPath(projectRoot, relativePath, requiredPrefix);
+  const filePath = await resolveToolProjectPath(projectRoot, relativePath, requiredPrefix);
   return {
     path: relativePath,
     content: await readFile(filePath, "utf8")
@@ -882,7 +886,7 @@ const writeProjectTextFile = async (
   requiredPrefix: string,
   tool: HtmlslideMcpTool
 ): Promise<WriteFileResult> => {
-  const filePath = resolveToolProjectPath(projectRoot, relativePath, requiredPrefix);
+  const filePath = await resolveToolProjectPath(projectRoot, relativePath, requiredPrefix);
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, content, "utf8");
   const audit = await writeMcpAuditEntry(createAuditEntry({
@@ -899,19 +903,23 @@ const writeProjectTextFile = async (
   };
 };
 
-const resolveToolProjectPath = (projectRoot: string, relativePath: string, requiredPrefix: string): string => {
+const resolveToolProjectPath = async (
+  projectRoot: string,
+  relativePath: string,
+  requiredPrefix: string
+): Promise<string> => {
   if (!isProjectRelativePathSafe(relativePath) || !relativePath.startsWith(requiredPrefix)) {
     throw new Error(`Invalid project path for MCP tool: ${relativePath}`);
   }
 
-  const resolved = path.resolve(projectRoot, ...relativePath.split("/"));
-  const root = path.resolve(projectRoot);
-  const relative = path.relative(root, resolved);
-  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new Error(`MCP tool path escapes the project root: ${relativePath}`);
+  try {
+    return await resolveProjectRelativePathInsideRealProject(projectRoot, relativePath);
+  } catch (error) {
+    if (error instanceof Error && error.name === "ProjectPathError") {
+      throw new Error(`Invalid project path for MCP tool: ${relativePath}`);
+    }
+    throw error;
   }
-
-  return resolved;
 };
 
 const readPathInput = (input: Record<string, unknown>, key: string): string => {

@@ -1992,6 +1992,123 @@ svg {
   overflow-x: auto;
 }
 
+.visual-direction-choice {
+  background: #ffffff;
+  border: 1px solid var(--hs-line-strong);
+  border-radius: var(--hs-radius-md);
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  overflow: auto;
+  padding: 10px;
+}
+
+.visual-direction-choice > p {
+  color: var(--hs-text-muted);
+  font-size: 11px;
+  margin: 0;
+}
+
+.visual-direction-choice__grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  min-width: 0;
+}
+
+.visual-direction-card {
+  background: #ffffff;
+  border: 1px solid var(--hs-line);
+  border-radius: var(--hs-radius-sm);
+  color: var(--hs-text);
+  cursor: pointer;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  text-align: left;
+  transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+}
+
+.visual-direction-card:hover:not(:disabled),
+.visual-direction-card:focus-visible {
+  border-color: var(--direction-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--direction-accent) 16%, transparent);
+  outline: 0;
+  transform: translateY(-1px);
+}
+
+.visual-direction-card.is-selected {
+  border-color: var(--direction-accent);
+  box-shadow: inset 0 0 0 1px var(--direction-accent);
+}
+
+.visual-direction-card:disabled:not(.is-selected) {
+  cursor: default;
+  opacity: 0.58;
+}
+
+.visual-direction-card__preview {
+  background: var(--direction-background);
+  border: 1px solid color-mix(in srgb, var(--direction-text) 16%, transparent);
+  border-radius: 4px;
+  display: grid;
+  gap: 5px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  min-height: 82px;
+  padding: 7px;
+}
+
+.visual-direction-card__sample {
+  align-content: end;
+  background: color-mix(in srgb, var(--direction-text) 5%, var(--direction-background));
+  border: 1px solid color-mix(in srgb, var(--direction-text) 12%, transparent);
+  border-radius: 3px;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 5px;
+}
+
+.visual-direction-card__sample > span {
+  background: var(--direction-accent);
+  display: block;
+  height: 4px;
+  max-width: 100%;
+}
+
+.visual-direction-card__sample small {
+  color: var(--direction-text);
+  font-size: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visual-direction-card__content {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.visual-direction-card__content strong,
+.visual-direction-card__content span,
+.visual-direction-card__content small {
+  display: block;
+  margin: 0;
+}
+
+.visual-direction-card__content strong {
+  font-size: 12px;
+}
+
+.visual-direction-card__content span,
+.visual-direction-card__content small {
+  color: var(--hs-text-muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
 .agent-stage {
   background: var(--hs-surface-muted);
   border: 1px solid var(--hs-line);

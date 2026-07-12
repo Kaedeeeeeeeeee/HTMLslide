@@ -7,7 +7,8 @@ import {
   type AgentRunLog,
   type AgentRunResult,
   type CheckpointMetadata,
-  type FileCopyCheckpointDiff
+  type FileCopyCheckpointDiff,
+  type VisualDirection
 } from "@htmlslide/agent";
 import type { AgentAdapterRunResult } from "@htmlslide/agent-adapters";
 import type {
@@ -36,6 +37,7 @@ export type DesktopAgentRunResult =
 export type DesktopAgentRunStatus =
   | "queued"
   | "running"
+  | "awaiting-user-choice"
   | "cancelling"
   | "succeeded"
   | "failed"
@@ -55,6 +57,7 @@ export type DesktopAgentRunSnapshot = {
   canPause: false;
   events: AgentRunEvent[];
   logs: AgentRunLog[];
+  pendingVisualDirections?: VisualDirection[];
   result?: DesktopAgentRunResult;
   error?: string;
 };
@@ -63,6 +66,7 @@ export type DesktopAgentRunExecutionControl = {
   signal: AbortSignal;
   onEvent: (event: AgentRunEvent) => void;
   onLog: (log: AgentRunLog) => void;
+  chooseVisualDirection: (directions: VisualDirection[]) => Promise<string>;
 };
 
 export type DesktopAgentRunExecutor = (
@@ -74,8 +78,17 @@ type StoredRun = {
   abortController: AbortController;
   done?: Promise<void>;
   logLimitReached: boolean;
+  pendingVisualDirectionChoice?: PendingVisualDirectionChoice;
   request: DesktopAgentRunRequest;
   snapshot: DesktopAgentRunSnapshot;
+};
+
+type PendingVisualDirectionChoice = {
+  directions: VisualDirection[];
+  resolve: (directionId: string) => void;
+  reject: (reason?: unknown) => void;
+  cleanup: () => void;
+  settled: boolean;
 };
 
 type DesktopAgentRunRegistryOptions = {
@@ -87,7 +100,7 @@ type DesktopAgentRunRegistryOptions = {
   runIdFactory?: () => string;
 };
 
-const activeStatuses = new Set<DesktopAgentRunStatus>(["queued", "running", "cancelling"]);
+const activeStatuses = new Set<DesktopAgentRunStatus>(["queued", "running", "awaiting-user-choice", "cancelling"]);
 const MAX_DESKTOP_LOG_MESSAGE_CHARS = 8_192;
 const MAX_DESKTOP_LOG_RECORDS = 100;
 const MAX_DESKTOP_EVENT_RECORDS = 200;
@@ -292,10 +305,32 @@ export class DesktopAgentRunRegistry {
       record.snapshot.status = "cancelling";
       record.snapshot.canCancel = false;
       record.snapshot.error = sanitizeProviderText(reason);
+      this.#rejectPendingVisualDirection(record, reason);
       record.abortController.abort(reason);
       this.#changed(record);
     }
 
+    return this.#clone(record.snapshot);
+  }
+
+  chooseVisualDirection(runId: string, directionId: string): DesktopAgentRunSnapshot {
+    const record = this.#require(runId);
+    const pending = record.pendingVisualDirectionChoice;
+    if (record.snapshot.status !== "awaiting-user-choice" || pending === undefined) {
+      throw new Error(`Agent run is not awaiting a visual direction choice: ${runId}`);
+    }
+    if (typeof directionId !== "string" || directionId.trim().length === 0) {
+      throw new Error("A visual direction id is required.");
+    }
+
+    const selected = pending.directions.find((direction) => direction.id === directionId);
+    if (selected === undefined) {
+      throw new Error(`Unknown visual direction id: ${directionId}`);
+    }
+
+    this.#resolvePendingVisualDirection(record, selected.id);
+    record.snapshot.status = "running";
+    this.#changed(record);
     return this.#clone(record.snapshot);
   }
 
@@ -339,9 +374,11 @@ export class DesktopAgentRunRegistry {
         {
           signal: record.abortController.signal,
           onEvent: (event) => this.#recordEvent(record, event),
-          onLog: (log) => this.#recordLog(record, log)
+          onLog: (log) => this.#recordLog(record, log),
+          chooseVisualDirection: (directions) => this.#requestVisualDirection(record, directions)
         }
       );
+      this.#rejectPendingVisualDirection(record, "Agent run ended before visual direction selection.");
       const compactResult = this.#compactResult(result);
       record.snapshot.result = compactResult;
       record.snapshot.providerId = result.providerId;
@@ -355,6 +392,7 @@ export class DesktopAgentRunRegistry {
           ? sanitizeProviderText(record.snapshot.error ?? resultError ?? "Run cancelled by user.")
           : undefined;
     } catch (error) {
+      this.#rejectPendingVisualDirection(record, error instanceof Error ? error.message : String(error));
       record.snapshot.status = record.abortController.signal.aborted ? "cancelled" : "failed";
       record.snapshot.error = sanitizeProviderText(error instanceof Error ? error.message : String(error));
     }
@@ -466,6 +504,9 @@ export class DesktopAgentRunRegistry {
       projectPath: truncateSanitizedText(snapshot.projectPath, MAX_DESKTOP_IPC_TEXT_CHARS),
       events: this.#boundedEvents(snapshot.events),
       logs: this.#boundedFinalLogs(snapshot.logs, snapshot.runId),
+      ...(snapshot.pendingVisualDirections
+        ? { pendingVisualDirections: compactIpcValue(snapshot.pendingVisualDirections) }
+        : {}),
       ...(snapshot.result ? { result: structuredClone(snapshot.result) } : {}),
       ...(snapshot.error
         ? { error: truncateSanitizedText(snapshot.error, MAX_DESKTOP_IPC_TEXT_CHARS) }
@@ -529,6 +570,75 @@ export class DesktopAgentRunRegistry {
       ...(result.project ? { project: compactIpcValue(result.project) } : {}),
       ...(result.error ? { error: truncateSanitizedText(result.error, MAX_DESKTOP_IPC_TEXT_CHARS) } : {})
     };
+  }
+
+  #requestVisualDirection(record: StoredRun, directions: VisualDirection[]): Promise<string> {
+    if (!Array.isArray(directions) || directions.length === 0) {
+      return Promise.reject(new Error("Visual direction choice requires at least one direction."));
+    }
+    if (record.pendingVisualDirectionChoice !== undefined) {
+      return Promise.reject(new Error("An agent run already has a pending visual direction choice."));
+    }
+    if (record.abortController.signal.aborted) {
+      return Promise.reject(new Error("Agent run was cancelled before visual direction selection."));
+    }
+
+    let pending!: PendingVisualDirectionChoice;
+    const promise = new Promise<string>((resolve, reject) => {
+      const onAbort = (): void => {
+        this.#rejectPendingVisualDirection(record, this.#abortReason(record.abortController.signal));
+      };
+      record.abortController.signal.addEventListener("abort", onAbort, { once: true });
+      pending = {
+        directions,
+        resolve,
+        reject,
+        cleanup: () => record.abortController.signal.removeEventListener("abort", onAbort),
+        settled: false
+      };
+    });
+
+    record.pendingVisualDirectionChoice = pending;
+    record.snapshot.pendingVisualDirections = compactIpcValue(directions);
+    record.snapshot.status = "awaiting-user-choice";
+    this.#changed(record);
+    return promise;
+  }
+
+  #resolvePendingVisualDirection(record: StoredRun, directionId: string): void {
+    const pending = record.pendingVisualDirectionChoice;
+    if (pending === undefined || pending.settled) {
+      return;
+    }
+    pending.settled = true;
+    record.pendingVisualDirectionChoice = undefined;
+    delete record.snapshot.pendingVisualDirections;
+    pending.cleanup();
+    pending.resolve(directionId);
+  }
+
+  #rejectPendingVisualDirection(record: StoredRun, reason: string): void {
+    const pending = record.pendingVisualDirectionChoice;
+    if (pending === undefined || pending.settled) {
+      if (record.snapshot.pendingVisualDirections !== undefined) {
+        delete record.snapshot.pendingVisualDirections;
+      }
+      return;
+    }
+    pending.settled = true;
+    record.pendingVisualDirectionChoice = undefined;
+    delete record.snapshot.pendingVisualDirections;
+    pending.cleanup();
+    pending.reject(new Error(sanitizeProviderText(reason)));
+  }
+
+  #abortReason(signal: AbortSignal): string {
+    const reason = signal.reason;
+    return reason instanceof Error
+      ? reason.message
+      : typeof reason === "string" && reason.length > 0
+        ? reason
+        : "Run cancelled by user.";
   }
 
   #compactAgentResult(agent: AgentRunResult): AgentRunResult {

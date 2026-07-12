@@ -439,7 +439,9 @@ export function buildAgentRunStages(
         logs: stageLogs.length > 0 ? stageLogs : fallback?.logs ?? [],
         nextAction: latest?.nextAction ?? fallback?.nextAction ?? "Await event",
         runId: latest?.runId,
-        status: mapEventStatusToStageStatus(latest?.status ?? "queued"),
+        status: latest?.type === "user-choice-requested"
+          ? "paused"
+          : mapEventStatusToStageStatus(latest?.status ?? "queued"),
         summary: latest?.summary ?? fallback?.summary ?? "Waiting for agent event.",
         eventCount: stageEvents.length
       };

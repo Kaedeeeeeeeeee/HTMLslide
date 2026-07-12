@@ -227,6 +227,37 @@ test.describe("HTMLslide desktop accessibility smoke", () => {
     expect(browserErrors).toEqual([]);
   });
 
+  test("covers visual direction choice semantics before build", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-a11y-"));
+    electronApp = await launchDesktopApp(tempRoot);
+
+    const page = await electronApp.firstWindow();
+    const browserErrors = collectBrowserErrors(page);
+    await page.waitForLoadState("domcontentloaded");
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+
+    await page.locator(".library-main").getByRole("button", { name: "New Deck", exact: true }).first().click();
+    const newDeckPanel = page.locator(".new-deck-panel");
+    await newDeckPanel.getByLabel("Deck title").fill("Choice Semantics");
+    await newDeckPanel.getByLabel("Brief").fill("Create a deterministic deck for accessibility validation.");
+    await newDeckPanel.getByRole("button", { name: /Local Mock/ }).click();
+    await newDeckPanel.getByRole("button", { name: "Create & Generate", exact: true }).click();
+
+    const choicePanel = page.getByRole("region", { name: "Visual direction choices" });
+    await expect(choicePanel).toBeVisible({ timeout: 30_000 });
+    const choices = choicePanel.getByRole("button", { name: /Choose .* visual direction/ });
+    await expect(choices).toHaveCount(2);
+    await choices.nth(1).focus();
+    await expect(choices.nth(1)).toBeFocused();
+    await expectNoAccessibilityViolations(page, "visual direction choices");
+    await choices.nth(1).press("Enter");
+    await expect(choicePanel).toBeHidden({ timeout: 30_000 });
+
+    await expectNoFrameworkOverlay(page);
+    expect(browserErrors).toEqual([]);
+  });
+
   test("keeps the workspace inspector reachable at narrow width", async () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-a11y-"));
     const projectPath = path.join(tempRoot, "valid-full");

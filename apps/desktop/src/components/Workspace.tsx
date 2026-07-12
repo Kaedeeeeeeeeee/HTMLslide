@@ -11,6 +11,7 @@ import {
   type PresenterSessionState,
   type PresenterSessionView
 } from "@htmlslide/presenter/session";
+import type { VisualDirection } from "@htmlslide/agent";
 import {
   Button,
   IconButton,
@@ -110,6 +111,7 @@ interface WorkspaceProps {
   selectedSlideId: string;
   slides: SlideSummary[];
   stages: AgentStage[];
+  pendingVisualDirections: readonly VisualDirection[];
   agentRunEvents: AgentRunEventLike[];
   agentRunLogs: AgentRunLogLike[];
   commandActionStatuses: CommandActionStatuses;
@@ -126,6 +128,7 @@ interface WorkspaceProps {
   onQaFilterChange: (filter: QaFilter) => void;
   onRevertDiff?: () => void;
   onRunAction: (action: "start" | "pause" | "cancel" | "retry") => void;
+  onSelectVisualDirection: (directionId: string) => void;
   onSelectSlide: (slideId: string) => void;
   onSettingsOpen: () => void;
   onToolbarAction: (action: "generate" | "check" | "export" | "present") => void;
@@ -277,11 +280,13 @@ export function Workspace({
   onQaFilterChange,
   onRevertDiff,
   onRunAction,
+  onSelectVisualDirection,
   onSelectSlide,
   onSettingsOpen,
   onToolbarAction,
   onViewDiff,
   operationStatus,
+  pendingVisualDirections,
   project,
   previewRevision,
   qaFilter,
@@ -539,10 +544,12 @@ export function Workspace({
         onCopyRepairPrompt={onCopyRepairPrompt}
         onRevertDiff={onRevertDiff}
         onRunAction={onRunAction}
+        onSelectVisualDirection={onSelectVisualDirection}
         onViewDiff={onViewDiff}
         engine={agentEngine}
         runId={agentRunId}
         runStatus={agentRunStatus}
+        pendingVisualDirections={pendingVisualDirections}
         running={running}
         statuses={commandActionStatuses}
         stages={runtimeStages}
@@ -1959,6 +1966,7 @@ interface AgentRunConsoleProps {
   runStatus?: DesktopAgentRunStatus;
   stages: ReturnType<typeof buildRuntimeStages>;
   statuses: CommandActionStatuses;
+  pendingVisualDirections: readonly VisualDirection[];
   onAcceptDiff?: () => void;
   onCloseDiff?: () => void;
   onCommandChange: (value: string) => void;
@@ -1966,6 +1974,7 @@ interface AgentRunConsoleProps {
   onCopyRepairPrompt?: () => void;
   onRevertDiff?: () => void;
   onRunAction: (action: "start" | "pause" | "cancel" | "retry") => void;
+  onSelectVisualDirection: (directionId: string) => void;
   onViewDiff?: () => void;
 }
 
@@ -1983,21 +1992,40 @@ function AgentRunConsole({
   onCopyRepairPrompt,
   onRevertDiff,
   onRunAction,
+  onSelectVisualDirection,
   onViewDiff,
   engine,
   runId,
   runStatus,
   running,
   statuses,
-  stages
+  stages,
+  pendingVisualDirections
 }: AgentRunConsoleProps): ReactNode {
   const logDetailsRefs = useRef(new Map<string, HTMLDetailsElement>());
+  const [selectedDirectionId, setSelectedDirectionId] = useState<string>();
   const hasLogs = stages.some((stage) => Boolean(stage.runId) && stage.logs.length > 0);
+  const awaitingVisualDirection =
+    String(runStatus) === "awaiting-user-choice" && pendingVisualDirections.length > 0;
   const canCopyRepairPrompt = Boolean(
     onCopyRepairPrompt && (runStatus === "failed" || runStatus === "cancelled" || statuses.check.kind === "failed")
   );
   const engineLabel = agentEngineLabels[engine];
   const pauseUnavailableLabel = `${engineLabel} does not support pause.`;
+
+  useEffect(() => {
+    if (!awaitingVisualDirection) {
+      setSelectedDirectionId(undefined);
+    }
+  }, [awaitingVisualDirection]);
+
+  const handleVisualDirectionSelect = (directionId: string): void => {
+    if (!awaitingVisualDirection || selectedDirectionId) {
+      return;
+    }
+    setSelectedDirectionId(directionId);
+    onSelectVisualDirection(directionId);
+  };
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
     if (running) {
@@ -2064,6 +2092,14 @@ function AgentRunConsole({
           </article>
         ))}
       </section>
+
+      {awaitingVisualDirection ? (
+        <VisualDirectionChoicePanel
+          directions={pendingVisualDirections}
+          onSelect={handleVisualDirectionSelect}
+          selectedDirectionId={selectedDirectionId}
+        />
+      ) : null}
 
       {diffReview?.open ? (
         <DiffReviewPanel
@@ -2172,6 +2208,72 @@ const agentEngineLabels: Record<DesktopAgentEngine, string> = {
   "htmlslide-agent": "HTMLslide Agent",
   "mock-agent": "Local Mock"
 };
+
+function VisualDirectionChoicePanel({
+  directions,
+  onSelect,
+  selectedDirectionId
+}: {
+  directions: readonly VisualDirection[];
+  onSelect: (directionId: string) => void;
+  selectedDirectionId?: string;
+}): ReactNode {
+  return (
+    <section aria-describedby="visual-direction-choice-description" aria-label="Visual direction choices" className="visual-direction-choice">
+      <PanelHeader
+        actions={<StatusPill tone="warning">Waiting for choice</StatusPill>}
+        eyebrow="Visual direction"
+        title="Choose a direction before build"
+      />
+      <p id="visual-direction-choice-description">
+        Review the generated directions, then choose one to continue building the deck source.
+      </p>
+      <div className="visual-direction-choice__grid">
+        {directions.map((direction) => {
+          const background = visualDirectionToken(direction.tokens, "background", "#f5f7fb");
+          const text = visualDirectionToken(direction.tokens, "text", "#172033");
+          const accent = visualDirectionToken(direction.tokens, "accent", "#315fcb");
+          const selected = selectedDirectionId === direction.id;
+          return (
+            <button
+              aria-label={`Choose ${direction.label} visual direction`}
+              aria-pressed={selected}
+              className={selected ? "visual-direction-card is-selected" : "visual-direction-card"}
+              disabled={Boolean(selectedDirectionId)}
+              key={direction.id}
+              onClick={() => onSelect(direction.id)}
+              style={{
+                "--direction-accent": accent,
+                "--direction-background": background,
+                "--direction-text": text
+              } as CSSProperties}
+              type="button"
+            >
+              <span className="visual-direction-card__preview" aria-hidden="true">
+                {(direction.sampleSlideIds.length > 0 ? direction.sampleSlideIds : ["sample"]).slice(0, 3).map((sampleId, index) => (
+                  <span className="visual-direction-card__sample" key={`${direction.id}-${sampleId}`}>
+                    <span style={{ width: `${42 + index * 18}%` }} />
+                    <small>{sampleId}</small>
+                  </span>
+                ))}
+              </span>
+              <span className="visual-direction-card__content">
+                <strong>{direction.label}</strong>
+                <span>{direction.rationale}</span>
+                <small>{direction.sampleSlideIds.length || 0} sample slides · {selected ? "Selected" : "Choose direction"}</small>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function visualDirectionToken(tokens: Record<string, unknown>, key: string, fallback: string): string {
+  const value = tokens[key];
+  return typeof value === "string" && /^#[0-9a-f]{3,8}$/iu.test(value) ? value : fallback;
+}
 
 function DiffReviewPanel({
   onAccept,

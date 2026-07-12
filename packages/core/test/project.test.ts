@@ -8,6 +8,7 @@ import {
   normalizeDeckPath,
   ProjectLoadError,
   resolveProjectRelativePath,
+  resolveProjectRelativePathInsideRealProject,
   resolveProjectRoot,
   tryLoadDeckProject
 } from "../src/index.js";
@@ -173,6 +174,32 @@ describe("project path helpers", () => {
     expect(resolveProjectRelativePath(fixturePath("valid-minimal"), "slides/001-title.html")).toBe(
       path.join(fixturePath("valid-minimal"), "slides", "001-title.html")
     );
+  });
+
+  it("rejects symlink traversal while allowing a new file under real source directories", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "htmlslide-core-paths-"));
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "htmlslide-core-outside-"));
+    try {
+      await fs.mkdir(path.join(root, "slides"));
+      await expect(
+        resolveProjectRelativePathInsideRealProject(root, "slides/new-slide.html")
+      ).resolves.toBe(path.join(root, "slides", "new-slide.html"));
+
+      await fs.symlink(outside, path.join(root, "notes"), "dir");
+      await expect(
+        resolveProjectRelativePathInsideRealProject(root, "notes/outside.md")
+      ).rejects.toThrow("symbolic links");
+
+      await fs.mkdir(path.join(root, "assets"));
+      await fs.writeFile(path.join(outside, "linked.txt"), "outside");
+      await fs.symlink(path.join(outside, "linked.txt"), path.join(root, "assets", "linked.txt"));
+      await expect(
+        resolveProjectRelativePathInsideRealProject(root, "assets/linked.txt")
+      ).rejects.toThrow("symbolic links");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+      await fs.rm(outside, { recursive: true, force: true });
+    }
   });
 
   it.each(["/tmp/slide.html", "slides/../secret.html", "slides//001-title.html", "https://example.com/a.html"])(

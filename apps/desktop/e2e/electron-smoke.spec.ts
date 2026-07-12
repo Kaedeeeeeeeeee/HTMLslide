@@ -47,6 +47,15 @@ async function expectNoFrameworkOverlay(page: Page): Promise<void> {
   ).toHaveCount(0);
 }
 
+async function chooseVisualDirection(page: Page, index = 0): Promise<void> {
+  const choicePanel = page.getByRole("region", { name: "Visual direction choices" });
+  await expect(choicePanel).toBeVisible({ timeout: 30_000 });
+  const choices = choicePanel.getByRole("button", { name: /Choose .* visual direction/ });
+  await expect.poll(() => choices.count()).toBeGreaterThan(index);
+  await choices.nth(index).click();
+  await expect(choicePanel).toBeHidden({ timeout: 30_000 });
+}
+
 function collectBrowserErrors(page: Page): string[] {
   const browserErrors: string[] = [];
   page.on("console", (message) => {
@@ -878,6 +887,7 @@ test.describe("HTMLslide desktop smoke", () => {
     await newDeckPanel.getByLabel("Design").selectOption("consulting-clean");
     await newDeckPanel.getByLabel("Speaker notes").selectOption("full-script");
     await newDeckPanel.getByRole("button", { name: "Create & Generate", exact: true }).click();
+    await chooseVisualDirection(page, 1);
 
     await expect(page.getByText("Mock agent completed check and export")).toBeVisible({ timeout: 30_000 });
     await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Mock HTMLslide Deck" })).toBeVisible();
@@ -911,6 +921,7 @@ test.describe("HTMLslide desktop smoke", () => {
       outputs?: {
         build?: { slidesChanged?: string[] };
         outline?: { slides?: unknown[] };
+        selectedVisualDirectionId?: string;
         visualDirection?: { directions?: Array<{ id?: string }> };
       };
       providerId?: string;
@@ -927,6 +938,7 @@ test.describe("HTMLslide desktop smoke", () => {
       "direction-editorial",
       "direction-systems"
     ]);
+    expect(agentReport.outputs?.selectedVisualDirectionId).toBe("direction-systems");
     const expectedSlideIds = [
       "001-title",
       "002-workflow",
@@ -997,6 +1009,7 @@ test.describe("HTMLslide desktop smoke", () => {
       await newDeckPanel.getByRole("button", { name: /HTMLslide Agent/ }).click();
       await expect(newDeckPanel.getByText("Key ready")).toBeVisible();
       await newDeckPanel.getByRole("button", { name: "Create & Generate", exact: true }).click();
+      await chooseVisualDirection(page);
 
       await expect(page.getByText("HTMLslide Agent completed check and export")).toBeVisible({ timeout: 60_000 });
       await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: fakeProviderTitle })).toBeVisible();
@@ -1535,6 +1548,7 @@ test.describe("HTMLslide desktop smoke", () => {
     await expectNoFrameworkOverlay(page);
 
     await page.getByRole("button", { name: "Generate", exact: true }).click();
+    await chooseVisualDirection(page);
 
     await expect(page.getByText("Mock agent completed check and export")).toBeVisible({ timeout: 30_000 });
     await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Mock HTMLslide Deck" })).toBeVisible();

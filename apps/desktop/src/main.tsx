@@ -79,7 +79,7 @@ type DirectPresenterOpen = {
 };
 
 const presenterDeckAccents = ["#315fcb", "#267a4f", "#9a6410", "#286a8d", "#7b4ab8", "#bc3a3a"];
-const activeAgentRunStatuses = new Set<DesktopAgentRunStatus>(["queued", "running", "cancelling"]);
+const activeAgentRunStatuses = new Set<string>(["queued", "running", "awaiting-user-choice", "cancelling"]);
 
 type AgentCancelE2EWindow = Window & {
   __HTMLSLIDE_E2E_BEFORE_AGENT_CANCEL__?: (runId: string) => void | Promise<void>;
@@ -988,6 +988,23 @@ function App(): React.ReactNode {
       });
   }, [agentCancelPendingRunId, applyAgentRunSnapshot, desktopApi, updateCommandActionStatus]);
 
+  const chooseVisualDirection = useCallback((directionId: string): void => {
+    const snapshot = agentRunSnapshotRef.current;
+    if (!desktopApi || !snapshot || String(snapshot.status) !== "awaiting-user-choice") {
+      return;
+    }
+
+    setOperationStatus({ kind: "running", message: "Selecting visual direction" });
+    desktopApi.chooseVisualDirection(snapshot.runId, directionId)
+      .then((nextSnapshot) => applyAgentRunSnapshot(nextSnapshot))
+      .catch((error: unknown) => {
+        setOperationStatus({
+          kind: "failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
+  }, [applyAgentRunSnapshot, desktopApi]);
+
   const retryAgentGeneration = useCallback((): void => {
     const snapshot = agentRunSnapshotRef.current;
     if (
@@ -1849,8 +1866,10 @@ function App(): React.ReactNode {
       agentRunLogs={agentRunLogs}
       commandActionStatuses={commandActionStatuses}
       operationStatus={operationStatus}
+      onSelectVisualDirection={chooseVisualDirection}
       project={activeProject}
       previewRevision={previewRevision}
+      pendingVisualDirections={agentRunSnapshot?.pendingVisualDirections ?? []}
       qaFilter={qaFilter}
       qaIssues={qaIssues}
       running={running}

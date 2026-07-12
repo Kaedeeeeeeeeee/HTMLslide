@@ -195,7 +195,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          manifest="$(find dist/release -name '*.json' -type f -print | sort | tail -n 1)"
+          manifest="$(find dist/release -maxdepth 1 -type f -name 'HTMLslide-*.json' -print | sort | tail -n 1)"
           if [[ -z "$manifest" ]]; then
             echo "::error title=Missing release manifest::package:release:macos must write a JSON manifest to dist/release."
             exit 1

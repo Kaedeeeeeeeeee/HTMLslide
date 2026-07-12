@@ -151,7 +151,8 @@ const agentRunRegistry = new DesktopAgentRunRegistry({
       cliRuntime,
       signal: control.signal,
       onEvent: control.onEvent,
-      onLog: control.onLog
+      onLog: control.onLog,
+      chooseVisualDirection: control.chooseVisualDirection
     };
 
     if (request.engine === "mock-agent") {
@@ -984,6 +985,16 @@ function registerIpcHandlers(): void {
   ipcMain.handle("htmlslide:cancel-agent-run", (_event, runId: string) =>
     agentRunRegistry.cancel(runId)
   );
+
+  ipcMain.handle("htmlslide:choose-visual-direction", (_event, runId: unknown, directionId: unknown) => {
+    if (typeof runId !== "string" || runId.trim().length === 0) {
+      throw new Error("A valid agent run id is required.");
+    }
+    if (typeof directionId !== "string" || directionId.trim().length === 0) {
+      throw new Error("A valid visual direction id is required.");
+    }
+    return agentRunRegistry.chooseVisualDirection(runId, directionId);
+  });
 
   ipcMain.handle("htmlslide:retry-agent-run", (_event, runId: string) =>
     agentRunRegistry.retry(runId)

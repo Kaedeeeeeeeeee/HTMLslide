@@ -194,6 +194,26 @@ describe("desktop model helpers", () => {
     expect(runtimeStages.find((stage) => stage.id === "check")?.status).toBe("cancelled");
   });
 
+  it("marks a visual direction stage as paused while waiting for user choice", () => {
+    const runtimeStages = buildAgentRunStages([
+      {
+        createdAt: "2026-07-11T00:00:00.000Z",
+        nextAction: "Choose a visual direction",
+        runId: "run-choice",
+        sequence: 1,
+        stage: "visual-direction",
+        status: "running",
+        summary: "Waiting for visual direction choice.",
+        type: "user-choice-requested"
+      }
+    ], []);
+
+    expect(runtimeStages.find((stage) => stage.id === "visual-direction")).toMatchObject({
+      nextAction: "Choose a visual direction",
+      status: "paused"
+    });
+  });
+
   it("creates explicit default command action statuses", () => {
     expect(defaultCommandActionStatuses()).toMatchObject({
       check: { kind: "idle", message: "Not checked" },

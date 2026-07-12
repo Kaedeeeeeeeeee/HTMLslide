@@ -145,6 +145,39 @@ jobs:
           HTMLSLIDE_RELEASE_CHANNEL: alpha
         run: pnpm package:alpha
 
+      - name: Contract-only external-agent verifier smoke (fixture only; no real compatibility evidence)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          manifest_dir="dist/alpha"
+          evidence_input="docs/examples/external-agent-rc-evidence-input.json"
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          output_path="$RUNNER_TEMP/htmlslide-alpha-external-agent-contract-smoke.json"
+
+          if [[ ! -f "$evidence_input" ]]; then
+            echo "::error title=Missing external-agent contract fixture::The fixed external-agent RC evidence input is missing: $evidence_input"
+            exit 1
+          fi
+
+          if [[ ! -d "$manifest_dir" ]]; then
+            echo "::error title=Missing alpha manifest directory::The preceding package step did not create $manifest_dir."
+            exit 1
+          fi
+
+          manifest="$(find "$manifest_dir" -type f -name '*.json' -print | sort | tail -n 1)"
+          if [[ -z "$manifest" || ! -f "$manifest" ]]; then
+            echo "::error title=Missing alpha package manifest::The preceding package step did not write a JSON manifest under $manifest_dir."
+            exit 1
+          fi
+
+          pnpm rc:external-agent-evidence -- \
+            --evidence "$evidence_input" \
+            --package-manifest "$manifest" \
+            --commit "$GITHUB_SHA" \
+            --artifact-url "$run_url" \
+            --output "$output_path"
+
       - name: Smoke unsigned alpha package
         run: pnpm smoke:package:alpha
 

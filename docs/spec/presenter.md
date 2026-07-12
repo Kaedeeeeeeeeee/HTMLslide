@@ -85,8 +85,9 @@ The runtime package only supplies data and state transitions. Rendering, focus h
 
 The desktop app now prepares compiler-generated `.deckpkg` input when Present is opened. It runs the shared export path
 from the Electron main process, validates the returned package through `@htmlslide/presenter`, then passes package slide
-order, timing, and notes into the renderer session. If package preparation fails, the app keeps the source-preview
-rehearsal fallback so authors can still rehearse while fixing export issues.
+order, timing, and notes into the renderer session. A source project never falls back to an older package found in
+`exports/`; if the CLI runtime or the current export is unavailable, the app reports the preparation failure and may
+keep the source-preview rehearsal fallback. Direct `.deckpkg` opens remain independent of project export.
 
 The desktop shell also has a read-only direct package path for `.deckpkg` files opened at startup or through the macOS
 `open-file` document event. In that flow the main process validates the file without running project export or reading

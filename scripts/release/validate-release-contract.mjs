@@ -15,14 +15,18 @@ export const REQUIRED_RELEASE_SCRIPTS = Object.freeze([
   "lint",
   "typecheck",
   "test",
+  "test:visual:browser",
   "perf:smoke",
   "security:check",
   "build",
   "e2e:desktop",
   "e2e:desktop:a11y",
   "package:release:macos",
+  "smoke:package:alpha",
   "release:contract:check",
   "rc:checklist",
+  "rc:checklist:verify",
+  "rc:byok-evidence",
   "rc:external-agent-evidence",
   "release:notes"
 ]);

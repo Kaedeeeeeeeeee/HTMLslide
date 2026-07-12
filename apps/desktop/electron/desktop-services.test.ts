@@ -814,7 +814,27 @@ describe("desktop services", () => {
       })}\n`
     );
 
-    await expect(loadProjectPreview(projectPath)).rejects.toThrow("Unsafe project path");
+    await expect(loadProjectPreview(projectPath)).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      message: "deck.json failed schema validation.",
+      name: "ProjectLoadError"
+    });
+  });
+
+  it("uses the core loader error contract for malformed and schema-invalid manifests", async () => {
+    const projectPath = await tempDir();
+    await writeFile(path.join(projectPath, "deck.json"), "{\"schemaVersion\":", "utf8");
+
+    await expect(loadProjectPreview(projectPath)).rejects.toMatchObject({
+      code: "INVALID_JSON",
+      name: "ProjectLoadError"
+    });
+
+    await writeFile(path.join(projectPath, "deck.json"), "{}\n", "utf8");
+    await expect(summarizeDeckProject(projectPath)).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      name: "ProjectLoadError"
+    });
   });
 
   it("finds a packaged CLI runtime under Electron resources", async () => {
@@ -3506,6 +3526,25 @@ function requireArg(args, name) {
     expect(calls).toEqual([
       ["export", projectPath, "--no-pdf", "--no-html", "--deckpkg", "--no-thumbnails", "--json"]
     ]);
+  });
+
+  it("does not fall back to a stale deckpkg when the project CLI runtime is unavailable", async () => {
+    const projectPath = await tempDir();
+    await writeExportedDeckPackage(projectPath);
+
+    const result = await loadDesktopPresenterDeck(projectPath, {
+      cliRunner: async () => {
+        throw new Error("The runner must not be called without a CLI runtime.");
+      }
+    });
+
+    expect(result).toMatchObject({
+      error: "HTMLslide CLI runtime is not available. Rebuild the app or reinstall HTMLslide.",
+      ok: false,
+      origin: "project-export",
+      projectPath,
+      source: "invalid"
+    });
   });
 
   it("reads a standalone deck package without running a project export", async () => {

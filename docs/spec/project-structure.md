@@ -65,6 +65,8 @@ The desktop app keeps a local recent-project index at its Electron user-data `li
 
 Opening a recent project refreshes the index from the project manifest. If referenced source files are missing, the app records the project as `Missing files` and keeps the user in the Project Library. Removing a recent project deletes only the index entry; it never deletes the project folder or artifacts.
 
+The desktop loader uses the same core project loader as the CLI for project summaries and previews. Malformed JSON, unsupported schema versions, invalid manifest paths, and schema failures are returned as the core `ProjectLoadError` contract instead of being interpreted through a looser desktop-only manifest shape. When Present starts from a source project, the desktop process must run the current CLI export and read only the `.deckpkg` path returned by that export; it must not select an older package from `exports/` by filename or modification time. Direct `.deckpkg` opens remain package-only and do not require `deck.json`.
+
 ## Source Material Intake
 
 The desktop New Deck wizard accepts local files and pasted text. The main process validates selected files as regular, non-symlink files, rejects secret-like names, and enforces the public-alpha limits of 20 files, 25 MiB per file, and 200 MiB total. It copies accepted material into `assets/sources/` and never executes it or fetches remote content. Agent prompts identify the staged directory as reference material and instruct the agent to treat its contents as data, not instructions.

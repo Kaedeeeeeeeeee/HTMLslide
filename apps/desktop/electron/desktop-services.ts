@@ -54,6 +54,7 @@ import {
   MAX_SOURCE_MATERIAL_COUNT,
   addQaIgnoreRule,
   isSpeakerNotesMode,
+  loadDeckProject,
   normalizeSpeakerNotesMode,
   normalizeDeckExportOptions,
   parseDeck,
@@ -65,6 +66,7 @@ import {
   type SourceMaterialRecord,
   type Deck,
   type DeckExportOptions,
+  type LoadedDeckProject,
   type SpeakerNotesMode
 } from "@htmlslide/core";
 import { AGENT_RUN_REPORT_SCHEMA_VERSION } from "@htmlslide/core/version";
@@ -1392,12 +1394,11 @@ function matchesProjectReference(project: DesktopProjectRecord, reference: Deskt
 
 export async function summarizeDeckProject(projectPath: string): Promise<DesktopProjectRecord> {
   const root = path.resolve(projectPath);
-  const manifest = await readDeckManifest(root);
-  const title = typeof manifest.title === "string" && manifest.title.length > 0
-    ? manifest.title
+  const loadedProject = await loadDeckProject(root, { verifyFiles: false });
+  const title = loadedProject.deck.title.length > 0
+    ? loadedProject.deck.title
     : path.basename(root);
-  const slides = Array.isArray(manifest.slides) ? manifest.slides : [];
-  const missingFiles = await hasMissingSlideFiles(root, manifest);
+  const missingFiles = await hasMissingSlideFiles(loadedProject);
 
   return {
     id: `proj_${stableId(root)}`,
@@ -1405,48 +1406,57 @@ export async function summarizeDeckProject(projectPath: string): Promise<Desktop
     path: root,
     lastOpenedAt: new Date().toISOString(),
     status: missingFiles ? "Missing files" : "Needs check",
-    slideCount: slides.length,
-    ...(isSpeakerNotesMode(manifest.speakerNotesMode) ? { speakerNotesMode: manifest.speakerNotesMode } : {})
+    slideCount: loadedProject.slides.length,
+    ...(isSpeakerNotesMode(loadedProject.deck.speakerNotesMode)
+      ? { speakerNotesMode: loadedProject.deck.speakerNotesMode }
+      : {})
   };
 }
 
 export async function loadProjectPreview(projectPath: string): Promise<DesktopProjectPreview> {
-  const project = await summarizeDeckProject(projectPath);
-  const manifest = await readDeckManifest(project.path);
+  const loadedProject = await loadDeckProject(path.resolve(projectPath));
+  const project: DesktopProjectRecord = {
+    id: `proj_${stableId(loadedProject.projectRoot)}`,
+    title: loadedProject.deck.title,
+    path: loadedProject.projectRoot,
+    lastOpenedAt: new Date().toISOString(),
+    status: "Needs check",
+    slideCount: loadedProject.slides.length,
+    ...(isSpeakerNotesMode(loadedProject.deck.speakerNotesMode)
+      ? { speakerNotesMode: loadedProject.deck.speakerNotesMode }
+      : {})
+  };
   const slides = await Promise.all(
-    (manifest.slides ?? []).map(async (slide, index): Promise<DesktopSlidePreview> => {
-      const slideId = typeof slide.id === "string" && slide.id.length > 0 ? slide.id : `slide-${index + 1}`;
-      const sourcePath = typeof slide.source === "string" ? slide.source : "";
-      const notesPath = typeof slide.notes === "string" ? slide.notes : undefined;
-      const html = await readProjectText(project.path, sourcePath);
-      const notes = notesPath ? await readProjectText(project.path, notesPath) : "";
-      const title = typeof slide.title === "string" && slide.title.length > 0 ? slide.title : slideId;
-      const durationSec = typeof slide.durationSec === "number" && Number.isFinite(slide.durationSec)
-        ? slide.durationSec
-        : 60;
+    loadedProject.slides.map(async ({ slide, sourcePath, notesPath }, index): Promise<DesktopSlidePreview> => {
+      const html = await fs.readFile(sourcePath, "utf8");
+      const notes = notesPath ? await fs.readFile(notesPath, "utf8") : "";
 
       return {
-        id: slideId,
+        id: slide.id,
         number: String(index + 1).padStart(2, "0"),
-        title,
-        section: typeof slide.kind === "string" ? titleCase(slide.kind) : "Content",
+        title: slide.title,
+        section: titleCase(slide.kind),
         status: slide.status === "ready" || slide.status === "final" ? "ready" : "needs-check",
-        duration: formatDuration(durationSec),
+        duration: formatDuration(slide.durationSec ?? 60),
         accent: DEFAULT_ACCENTS[index % DEFAULT_ACCENTS.length] ?? DEFAULT_ACCENT,
         speakerNotes: notes.trim(),
-        bullets: extractBullets(html, title),
-        sourcePath,
-        notesPath,
-        ...(isSpeakerNotesMode(manifest.speakerNotesMode) ? { speakerNotesMode: manifest.speakerNotesMode } : {})
+        bullets: extractBullets(html, slide.title),
+        sourcePath: slide.source,
+        ...(slide.notes ? { notesPath: slide.notes } : {}),
+        ...(isSpeakerNotesMode(loadedProject.deck.speakerNotesMode)
+          ? { speakerNotesMode: loadedProject.deck.speakerNotesMode }
+          : {})
       };
     })
   );
 
   return {
-    exportOptions: desktopExportOptionsFromManifest(manifest.export),
+    exportOptions: desktopExportOptionsFromManifest(loadedProject.deck.export),
     project,
     slides,
-    ...(isSpeakerNotesMode(manifest.speakerNotesMode) ? { speakerNotesMode: manifest.speakerNotesMode } : {})
+    ...(isSpeakerNotesMode(loadedProject.deck.speakerNotesMode)
+      ? { speakerNotesMode: loadedProject.deck.speakerNotesMode }
+      : {})
   };
 }
 
@@ -1523,13 +1533,11 @@ export async function loadDesktopPresenterDeck(
 ): Promise<DesktopPresenterDeckResult> {
   const root = path.resolve(projectPath);
   const cliRunner = options.cliRunner ?? runHtmlslideCli;
-  const exportResult = options.cliRuntime
-    ? await runDesktopAgentCliStep(
-        ["export", root, "--no-pdf", "--no-html", "--deckpkg", "--no-thumbnails", "--json"],
-        options.cliRuntime,
-        cliRunner
-      )
-    : undefined;
+  const exportResult = await runDesktopAgentCliStep(
+    ["export", root, "--no-pdf", "--no-html", "--deckpkg", "--no-thumbnails", "--json"],
+    options.cliRuntime,
+    cliRunner
+  );
 
   if (exportResult && !exportResult.ok) {
     return {
@@ -1541,7 +1549,7 @@ export async function loadDesktopPresenterDeck(
     };
   }
 
-  const deckpkgPath = deckpkgPathFromExportResult(exportResult) ?? await findProjectDeckPackage(root);
+  const deckpkgPath = deckpkgPathFromExportResult(exportResult);
   if (!deckpkgPath) {
     return {
       ok: false,
@@ -3577,39 +3585,6 @@ function desktopExportOptionsFromManifest(value: unknown): DesktopExportOptions 
   };
 }
 
-async function findProjectDeckPackage(projectPath: string): Promise<string | undefined> {
-  const manifest = await readDeckManifest(projectPath);
-  const title = typeof manifest.title === "string" && manifest.title.trim().length > 0
-    ? manifest.title
-    : path.basename(projectPath);
-  const exportsPath = path.join(projectPath, "exports");
-  const expectedPath = path.join(exportsPath, `${slugFileName(title)}.deckpkg`);
-  if (await pathExists(expectedPath)) {
-    return expectedPath;
-  }
-
-  let entries: string[];
-  try {
-    entries = await fs.readdir(exportsPath);
-  } catch {
-    return undefined;
-  }
-
-  const candidates = await Promise.all(
-    entries
-      .filter((entry) => entry.endsWith(".deckpkg"))
-      .map(async (entry) => {
-        const filePath = path.join(exportsPath, entry);
-        const stat = await fs.stat(filePath).catch(() => undefined);
-        return stat?.isFile() ? { filePath, mtimeMs: stat.mtimeMs } : undefined;
-      })
-  );
-
-  return candidates
-    .filter(isPresent)
-    .sort((left, right) => right.mtimeMs - left.mtimeMs || left.filePath.localeCompare(right.filePath))[0]?.filePath;
-}
-
 async function readDesktopPresenterDeckPackage(
   deckpkgPath: string,
   context: { origin: DesktopPresenterDeckOrigin; projectPath?: string }
@@ -3692,39 +3667,16 @@ function presenterThumbnailDataUrl(bytes: Uint8Array): string | undefined {
   return `data:image/png;base64,${Buffer.from(bytes).toString("base64")}`;
 }
 
-async function hasMissingSlideFiles(projectPath: string, manifest: DeckManifest): Promise<boolean> {
-  for (const slide of manifest.slides ?? []) {
-    const source = typeof slide.source === "string" ? slide.source : undefined;
-    if (!source || !(await pathExists(resolveProjectPath(projectPath, source)))) {
+async function hasMissingSlideFiles(project: LoadedDeckProject): Promise<boolean> {
+  for (const slide of project.slides) {
+    if (!(await pathExists(slide.sourcePath))) {
       return true;
     }
-    const notes = typeof slide.notes === "string" ? slide.notes : undefined;
-    if (notes && !(await pathExists(resolveProjectPath(projectPath, notes)))) {
+    if (slide.notesPath && !(await pathExists(slide.notesPath))) {
       return true;
     }
   }
   return false;
-}
-
-async function readProjectText(projectPath: string, relativePath: string): Promise<string> {
-  if (relativePath.length === 0) {
-    return "";
-  }
-  return fs.readFile(resolveProjectPath(projectPath, relativePath), "utf8");
-}
-
-function resolveProjectPath(projectPath: string, relativePath: string): string {
-  if (path.isAbsolute(relativePath) || relativePath.includes("\\")) {
-    throw new Error(`Unsafe project path: ${relativePath}`);
-  }
-
-  const resolved = path.resolve(projectPath, relativePath);
-  const root = path.resolve(projectPath);
-  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
-    throw new Error(`Unsafe project path: ${relativePath}`);
-  }
-
-  return resolved;
 }
 
 function extractBullets(html: string, fallbackTitle: string): string[] {
@@ -3771,13 +3723,6 @@ function titleCase(value: string): string {
   return value
     .replace(/[-_]+/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-function slugFileName(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "") || "deck";
 }
 
 function parseJsonOutput(stdout: string): unknown {

@@ -10,6 +10,7 @@ import { buildArtifactMetadata } from "./artifact-metadata.mjs";
 import { renderChecklist } from "./create-rc-acceptance.mjs";
 import { renderReleaseNotes } from "./create-release-notes.mjs";
 import {
+  REQUIRED_RELEASE_SCRIPTS,
   REQUIRED_RELEASE_SECRETS,
   validateReleaseEnvironment,
   validateReleaseManifest,
@@ -63,6 +64,7 @@ describe("release evidence scripts", () => {
     });
     expect(validateReleaseEnvironment({ packageJson, config, env })).toMatchObject({
       channel: "release",
+      requiredScriptCount: REQUIRED_RELEASE_SCRIPTS.length,
       requiredSecretCount: REQUIRED_RELEASE_SECRETS.length
     });
     expect(() => validateReleasePackageConfig({ ...config, notarize: false })).toThrow(/notarize must be true/iu);
@@ -71,6 +73,25 @@ describe("release evidence scripts", () => {
       config,
       env: { ...env, APPLE_DEVELOPER_ID_CERTIFICATE_BASE64: "not-base64" }
     })).toThrow(/base64-encoded DER/iu);
+  });
+
+  it("fails before signing when a workflow-critical release script is missing", async () => {
+    const [packageJson, config] = await Promise.all([
+      readFile(path.join(root, "package.json"), "utf8").then(JSON.parse),
+      readFile(path.join(root, "build", "package", "release-macos.json"), "utf8").then(JSON.parse)
+    ]);
+    const fakeDerPayload = Buffer.from([0x30, 0x03, 0x02, 0x01, 0x00]).toString("base64");
+    const env = Object.fromEntries(REQUIRED_RELEASE_SECRETS.map((name) => [name, `${name}-fixture`])) as Record<string, string>;
+    env.APPLE_DEVELOPER_ID_APPLICATION = "Developer ID Application: HTMLslide (TEAM123456)";
+    env.APPLE_DEVELOPER_ID_CERTIFICATE_BASE64 = fakeDerPayload;
+    const scriptsWithoutSmoke = { ...packageJson.scripts };
+    delete scriptsWithoutSmoke["smoke:package:alpha"];
+
+    expect(() => validateReleaseEnvironment({
+      packageJson: { ...packageJson, scripts: scriptsWithoutSmoke },
+      config,
+      env
+    })).toThrow(/smoke:package:alpha/iu);
   });
 
   it("keeps the signed release workflow wired to the shared release contract", async () => {

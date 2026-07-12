@@ -34,8 +34,10 @@ import {
   loadProjectPreview,
   loadSlidePreview,
   markRecentProjectMissing,
+  persistDesktopExportOptions,
   readDesktopLibrary,
   readDesktopPresenterPreferences,
+  removeDesktopOfficialSkill,
   removeRecentProject,
   resolveDesktopCliIntegrationTarget,
   resolveCreateProjectRequest,
@@ -660,6 +662,33 @@ describe("desktop services", () => {
     expect(preview.slides[0]).not.toHaveProperty("html");
   });
 
+  it("persists export choices and exposes them through project previews", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+
+    await expect(persistDesktopExportOptions(projectPath, {
+      deckpkg: true,
+      html: false,
+      pdf: true,
+      thumbnails: false
+    })).resolves.toMatchObject({
+      deckpkg: true,
+      html: false,
+      pdf: true,
+      speakerNotes: false,
+      thumbnails: false
+    });
+
+    await expect(loadProjectPreview(projectPath)).resolves.toMatchObject({
+      exportOptions: {
+        deckpkg: true,
+        html: false,
+        pdf: true,
+        thumbnails: false
+      }
+    });
+  });
+
   it("saves speaker notes through the manifest-declared notes path", async () => {
     const projectPath = await tempDir();
     await writeDeck(projectPath);
@@ -1062,6 +1091,80 @@ describe("desktop services", () => {
     ).resolves.toContain('"manager": "htmlslide"');
   });
 
+  it("removes only verified managed official skills after explicit confirmation", async () => {
+    const homeDir = await tempDir();
+    const options = {
+      env: {
+        HTMLSLIDE_HOME: homeDir
+      },
+      now: "2026-07-08T00:00:00.000Z"
+    };
+
+    await installDesktopOfficialSkills(options);
+    await expect(removeDesktopOfficialSkill({ name: "deck-architect" }, options)).rejects.toThrow(
+      "explicit confirmation"
+    );
+
+    const before = await getDesktopOfficialSkills(options);
+    expect(before.skills.find((skill) => skill.name === "deck-architect")).toMatchObject({
+      integrity: "verified",
+      removeEnabled: true,
+      status: "installed"
+    });
+
+    const removed = await removeDesktopOfficialSkill(
+      { name: "deck-architect", confirmed: true },
+      options
+    );
+    expect(removed).toMatchObject({
+      action: "removed",
+      message: "deck-architect removed.",
+      status: "warning"
+    });
+    expect(removed.missing).toContain("deck-architect");
+    await expect(
+      readFile(path.join(homeDir, "skills", "deck-architect", "SKILL.md"), "utf8")
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.each([
+    ["modified", "modified"],
+    ["unmanaged", "unmanaged"],
+    ["invalid", "invalid"]
+  ] as const)("disables removal for %s official skill installs", async (fixture, integrity) => {
+    const homeDir = await tempDir();
+    const skill = OFFICIAL_SKILLS.find((candidate) => candidate.metadata.name === "deck-architect")!;
+    const skillDir = path.join(homeDir, "skills", "deck-architect");
+
+    if (fixture === "modified") {
+      await installDesktopOfficialSkills({ env: { HTMLSLIDE_HOME: homeDir } });
+      await writeFile(path.join(skillDir, "SKILL.md"), `${skill.markdown}\nchanged\n`, "utf8");
+    } else if (fixture === "unmanaged") {
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(path.join(skillDir, "SKILL.md"), skill.markdown, "utf8");
+    } else {
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(path.join(skillDir, "SKILL.md"), "# invalid skill\n", "utf8");
+    }
+
+    const options = { env: { HTMLSLIDE_HOME: homeDir } };
+    const state = await getDesktopOfficialSkills(options);
+    const summary = state.skills.find((candidate) => candidate.name === "deck-architect");
+    expect(summary).toMatchObject({
+      integrity,
+      removeEnabled: false,
+      status: "stale"
+    });
+    expect(summary?.removeDisabledReason).toMatch(/Remove unavailable/);
+
+    const result = await removeDesktopOfficialSkill(
+      { name: "deck-architect", confirmed: true },
+      options
+    );
+    expect(result).toMatchObject({ status: "failed" });
+    await expect(readFile(path.join(skillDir, "SKILL.md"), "utf8")).resolves.toBeTruthy();
+  });
+
   it("runs the mock agent and then real project check/export through the CLI runner", async () => {
     const projectPath = await tempDir();
     await writeDeck(projectPath);
@@ -1118,7 +1221,8 @@ describe("desktop services", () => {
           thumbnails: true
         },
         projectPath,
-        runId: "run-desktop-test"
+        runId: "run-desktop-test",
+        speakerNotesMode: "rehearsal-cues"
       },
       {
         cliRuntime: {
@@ -1135,6 +1239,7 @@ describe("desktop services", () => {
     expect(result.ok).toBe(true);
     expect(result.providerId).toBe("htmlslide-mock");
     expect(result.agent.ok).toBe(true);
+    expect(result.agent.outputs.speakerNotesMode).toBe("rehearsal-cues");
     expect(result.agent.checkpoint).toMatchObject({
       id: "checkpoint-run-desktop-test",
       strategy: "file-copy",
@@ -1157,7 +1262,8 @@ describe("desktop services", () => {
     expect(result.project?.project).toMatchObject({
       path: projectPath,
       title: "Mock HTMLslide Deck",
-      slideCount: 3
+      slideCount: 3,
+      speakerNotesMode: "rehearsal-cues"
     });
     expect(result.project?.slides.map((slide) => slide.id)).toEqual(["001-title", "002-workflow", "003-review"]);
     expect(result.project?.slides[2]).toMatchObject({
@@ -1248,7 +1354,9 @@ describe("desktop services", () => {
 
     const deck = JSON.parse(await readFile(path.join(projectPath, "deck.json"), "utf8"));
     expect(deck.agent.lastRunId).toBe("run-desktop-test");
+    expect(deck.speakerNotesMode).toBe("rehearsal-cues");
     expect(deck.slides).toHaveLength(3);
+    await expect(readFile(path.join(projectPath, "notes", "001-title.md"), "utf8")).resolves.toContain("Cue:");
 
     const diff = await diffDesktopCheckpoint({
       projectPath,
@@ -3395,7 +3503,9 @@ function requireArg(args, name) {
       projectPath,
       source: "invalid"
     });
-    expect(calls).toEqual([["export", projectPath, "--json"]]);
+    expect(calls).toEqual([
+      ["export", projectPath, "--no-pdf", "--no-html", "--deckpkg", "--no-thumbnails", "--json"]
+    ]);
   });
 
   it("reads a standalone deck package without running a project export", async () => {

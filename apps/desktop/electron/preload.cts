@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
   getCliIntegration: () => ipcRenderer.invoke("htmlslide:get-cli-integration"),
   installCliIntegration: () => ipcRenderer.invoke("htmlslide:install-cli-integration"),
   installOfficialSkills: () => ipcRenderer.invoke("htmlslide:install-official-skills"),
+  removeOfficialSkill: (request: { name: string; confirmed?: boolean }) =>
+    ipcRenderer.invoke("htmlslide:remove-official-skill", request),
   uninstallCliIntegration: () => ipcRenderer.invoke("htmlslide:uninstall-cli-integration"),
   copyCliManualInstallCommand: () => ipcRenderer.invoke("htmlslide:copy-cli-manual-install-command"),
   copyAgentRepairPrompt: (prompt: string) => ipcRenderer.invoke("htmlslide:copy-agent-repair-prompt", prompt),
@@ -40,8 +42,7 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
     ipcRenderer.invoke("htmlslide:save-slide-notes", projectPath, slideId, content),
   addQaIgnoreRule: (projectPath: string, issueType: string) =>
     ipcRenderer.invoke("htmlslide:add-qa-ignore-rule", projectPath, issueType),
-  createProject: (request: { title: string; folderName: string; templateId?: string; workspacePath?: string }) =>
-    ipcRenderer.invoke("htmlslide:create-project", request),
+  createProject: (request: unknown) => ipcRenderer.invoke("htmlslide:create-project", request),
   checkProject: (projectPath: string) => ipcRenderer.invoke("htmlslide:check-project", projectPath),
   exportProject: (projectPath: string, options?: unknown) => ipcRenderer.invoke("htmlslide:export-project", projectPath, options),
   loadPresenterDeck: (projectPath: string) => ipcRenderer.invoke("htmlslide:load-presenter-deck", projectPath),
@@ -73,6 +74,7 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
     targetSlideCount?: number;
     runExport?: boolean;
     maxRepairRounds?: number;
+    speakerNotesMode?: "none" | "bullet-notes" | "full-script" | "rehearsal-cues";
   }) => ipcRenderer.invoke("htmlslide:start-agent-run", request),
   getAgentRun: (runId: string) => ipcRenderer.invoke("htmlslide:get-agent-run", runId),
   getActiveAgentRun: (projectPath: string) => ipcRenderer.invoke("htmlslide:get-active-agent-run", projectPath),

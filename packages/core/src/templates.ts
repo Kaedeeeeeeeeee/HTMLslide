@@ -1,4 +1,5 @@
 import type { Deck } from "./deck-schema.js";
+import { normalizeSpeakerNotesMode, speakerNotesModeHasFiles, type SpeakerNotesMode } from "./speaker-notes.js";
 import { DECK_SCHEMA_VERSION, HTMLSLIDE_APP_VERSION } from "./version.js";
 
 export type DeckTemplateId =
@@ -25,6 +26,7 @@ export type DeckTemplateFile = {
 
 export type RenderDeckTemplateInput = {
   name: string;
+  speakerNotesMode?: SpeakerNotesMode;
   templateId?: string;
 };
 
@@ -325,7 +327,7 @@ function summaryForTemplate(template: DeckTemplateDefinition): DeckTemplateSumma
 export function renderBuiltInDeckTemplate(input: RenderDeckTemplateInput): RenderedDeckTemplate {
   const definition = definitionForTemplate(input.templateId ?? DEFAULT_DECK_TEMPLATE_ID);
   const template = summaryForTemplate(definition);
-  const manifest = buildManifest(input.name, definition);
+  const manifest = buildManifest(input.name, definition, normalizeSpeakerNotesMode(input.speakerNotesMode));
   return {
     files: buildTemplateFiles(manifest, definition),
     manifest,
@@ -333,7 +335,8 @@ export function renderBuiltInDeckTemplate(input: RenderDeckTemplateInput): Rende
   };
 }
 
-const buildManifest = (name: string, template: DeckTemplateDefinition): Deck => {
+const buildManifest = (name: string, template: DeckTemplateDefinition, speakerNotesMode: SpeakerNotesMode): Deck => {
+  const hasNotes = speakerNotesModeHasFiles(speakerNotesMode);
   const deckId = `deck_${slug(name).replaceAll("-", "_")}`;
   const manifest = {
     schemaVersion: DECK_SCHEMA_VERSION,
@@ -361,7 +364,7 @@ const buildManifest = (name: string, template: DeckTemplateDefinition): Deck => 
         id: "001-title",
         title: titleFromName(name),
         source: "slides/001-title.html",
-        notes: "notes/001-title.md",
+        ...(hasNotes ? { notes: "notes/001-title.md" } : {}),
         durationSec: 60,
         kind: "title",
         status: "draft"
@@ -370,18 +373,19 @@ const buildManifest = (name: string, template: DeckTemplateDefinition): Deck => 
         id: "002-workflow",
         title: template.secondTitle,
         source: "slides/002-workflow.html",
-        notes: "notes/002-workflow.md",
+        ...(hasNotes ? { notes: "notes/002-workflow.md" } : {}),
         durationSec: 90,
         kind: "content",
         status: "draft"
       }
     ],
+    speakerNotesMode,
     export: {
       pdf: true,
       html: true,
       deckpkg: true,
       thumbnails: true,
-      speakerNotes: true
+      speakerNotes: hasNotes
     },
     agent: {
       preferredEngine: "htmlslide-mock",

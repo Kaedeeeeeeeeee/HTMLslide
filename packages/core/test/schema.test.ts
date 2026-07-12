@@ -49,6 +49,20 @@ describe("DeckSchema v0.1", () => {
     expect(deck.slides[0].status).toBe("draft");
   });
 
+  it("normalizes partial export profiles with deterministic field defaults", () => {
+    const deck = readFixtureDeck("valid-minimal") as Record<string, unknown>;
+    expect(parseDeck({
+      ...deck,
+      export: { html: true }
+    }).export).toEqual({
+      deckpkg: false,
+      html: true,
+      pdf: false,
+      speakerNotes: false,
+      thumbnails: false
+    });
+  });
+
   it.each([
     ["invalid-duplicate-slide-id", "slides.1.id"],
     ["invalid-viewport", "viewport.width"],
@@ -69,6 +83,15 @@ describe("DeckSchema v0.1", () => {
     const result = validateDeck(readFixtureDeck("invalid-missing-slide-source"));
 
     expect(result.ok).toBe(true);
+  });
+
+  it("accepts and preserves the recorded speaker notes mode", () => {
+    const deck = readFixtureDeck("valid-minimal") as Record<string, unknown>;
+    deck.speakerNotesMode = "none";
+
+    const result = parseDeck(deck);
+
+    expect(result.speakerNotesMode).toBe("none");
   });
 
   it.each([

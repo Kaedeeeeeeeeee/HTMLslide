@@ -1,5 +1,11 @@
 import path from "node:path";
+import { promises as fs } from "node:fs";
 import { DECK_SCHEMA_VERSION, HTMLSLIDE_APP_VERSION } from "@htmlslide/core/version";
+import {
+  normalizeSpeakerNotesMode,
+  speakerNotesModeHasFiles,
+  type SpeakerNotesMode
+} from "@htmlslide/core";
 import { applyAgentSourceWrites } from "./source-writes.js";
 import type {
   AgentBuildResult,
@@ -40,21 +46,28 @@ export const applyMockAgentProject = async (
   const outline = input.result.outputs.outline;
   const visualDirection = input.result.outputs.visualDirection;
   const selectedDirection = selectedVisualDirection(visualDirection);
+  const speakerNotesMode = normalizeSpeakerNotesMode(input.result.outputs.speakerNotesMode);
   const title = brief?.title ?? outline.title;
   const language = brief?.language ?? outline.language;
   const briefText = cleanInlineText(input.brief ?? brief?.brief ?? "Create a short mock HTMLslide deck.");
   const slides = outline.slides.map((slide) => ({
     ...slide,
     source: `slides/${slide.id}.html`,
-    notes: `notes/${slide.id}.md`
+    ...(speakerNotesModeHasFiles(speakerNotesMode) ? { notes: `notes/${slide.id}.md` } : {})
   }));
   const slidePaths = slides.map((slide) => slide.source);
-  const notePaths = slides.map((slide) => slide.notes);
+  const notePaths = slides.flatMap((slide) => (slide.notes ? [slide.notes] : []));
 
   const writes: AgentSourceWrite[] = [
     {
       path: deckPath,
-      content: `${stableJson(buildDeckJson({ title, language, runId: input.result.runId, slides }))}\n`
+      content: `${stableJson(buildDeckJson({
+        language,
+        runId: input.result.runId,
+        slides,
+        speakerNotesMode,
+        title
+      }))}\n`
     },
     ...slides.map((slide, index) => ({
       path: slide.source,
@@ -67,10 +80,12 @@ export const applyMockAgentProject = async (
         title
       })
     })),
-    ...slides.map((slide, index) => ({
-      path: slide.notes,
-      content: buildMockNotes({ briefText, index, slide, slideCount: slides.length, title })
-    })),
+    ...slides.flatMap((slide, index) => slide.notes
+      ? [{
+          path: slide.notes,
+          content: buildMockNotes({ briefText, index, mode: speakerNotesMode, slide, slideCount: slides.length, title })
+        }]
+      : []),
     {
       path: "theme/theme.css",
       content: buildThemeCss(selectedDirection)
@@ -82,12 +97,13 @@ export const applyMockAgentProject = async (
   ];
 
   await applyAgentSourceWrites({ projectPath, writes });
+  const removedNotePaths = speakerNotesMode === "none" ? await removeMockNoteFiles(projectPath) : [];
 
   const appliedSlides: AppliedMockAgentProjectSlide[] = slides.map((slide) => ({
     id: slide.id,
     title: slide.title,
     source: slide.source,
-    notes: slide.notes
+    ...(slide.notes ? { notes: slide.notes } : {})
   }));
 
   return {
@@ -95,7 +111,7 @@ export const applyMockAgentProject = async (
     title,
     language,
     selectedVisualDirectionId: selectedDirection.id,
-    filesChanged: [deckPath, ...slidePaths, ...notePaths, ...themePaths],
+    filesChanged: [deckPath, ...slidePaths, ...notePaths, ...removedNotePaths, ...themePaths],
     slideIds: slides.map((slide) => slide.id),
     slides: appliedSlides,
     paths: {
@@ -106,6 +122,25 @@ export const applyMockAgentProject = async (
     }
   };
 };
+
+async function removeMockNoteFiles(projectPath: string): Promise<string[]> {
+  const notesRoot = path.join(projectPath, "notes");
+  const notesStat = await fs.lstat(notesRoot).catch(() => undefined);
+  if (notesStat === undefined) {
+    return [];
+  }
+  if (!notesStat.isDirectory() || notesStat.isSymbolicLink()) {
+    throw new Error("Mock project notes directory must be a real project directory.");
+  }
+
+  const entries = await fs.readdir(notesRoot, { withFileTypes: true });
+  const noteEntries = entries.filter((entry) => entry.name.endsWith(".md"));
+  if (noteEntries.some((entry) => entry.isSymbolicLink() || !entry.isFile())) {
+    throw new Error("Mock project notes must contain only regular Markdown files.");
+  }
+  await Promise.all(noteEntries.map((entry) => fs.rm(path.join(notesRoot, entry.name))));
+  return noteEntries.map((entry) => `notes/${entry.name}`);
+}
 
 function assertSuccessfulMockResult(
   result: ApplyMockAgentProjectInput["result"]
@@ -154,7 +189,8 @@ const buildDeckJson = (input: {
   title: string;
   language: string;
   runId: string;
-  slides: Array<AgentOutlineSlide & { source: string; notes: string }>;
+  speakerNotesMode: SpeakerNotesMode;
+  slides: Array<AgentOutlineSlide & { source: string; notes?: string }>;
 }): JsonObject => ({
   schemaVersion: DECK_SCHEMA_VERSION,
   appVersion: HTMLSLIDE_APP_VERSION,
@@ -180,17 +216,18 @@ const buildDeckJson = (input: {
     id: slide.id,
     title: slide.title,
     source: slide.source,
-    notes: slide.notes,
+    ...(slide.notes ? { notes: slide.notes } : {}),
     durationSec: index === 1 ? 120 : 75,
     kind: slide.kind,
     status: "ready"
   })),
+  speakerNotesMode: input.speakerNotesMode,
   export: {
     pdf: true,
     html: true,
     deckpkg: true,
     thumbnails: true,
-    speakerNotes: true
+    speakerNotes: speakerNotesModeHasFiles(input.speakerNotesMode)
   },
   agent: {
     preferredEngine: "htmlslide-mock",
@@ -219,7 +256,7 @@ const buildTitleSlide = (input: {
 ].join("\n")}\n`;
 
 const buildWorkflowSlide = (input: {
-  slides: Array<AgentOutlineSlide & { source: string; notes: string }>;
+  slides: Array<AgentOutlineSlide & { source: string; notes?: string }>;
   direction: VisualDirection;
   slide: AgentOutlineSlide;
 }): string => `${[
@@ -331,7 +368,7 @@ const buildMockSlide = (input: {
   direction: VisualDirection;
   index: number;
   slide: AgentOutlineSlide;
-  slides: Array<AgentOutlineSlide & { source: string; notes: string }>;
+  slides: Array<AgentOutlineSlide & { source: string; notes?: string }>;
   title: string;
 }): string => {
   if (input.index === 0) {
@@ -359,10 +396,17 @@ const buildMockSlide = (input: {
 const buildMockNotes = (input: {
   briefText: string;
   index: number;
+  mode: SpeakerNotesMode;
   slide: AgentOutlineSlide;
   slideCount: number;
   title: string;
 }): string => {
+  if (input.mode === "bullet-notes") {
+    return buildBulletNotes(input);
+  }
+  if (input.mode === "rehearsal-cues") {
+    return buildRehearsalNotes(input);
+  }
   if (input.index === 0) {
     return buildTitleNotes({ title: input.title, briefText: input.briefText, slide: input.slide });
   }
@@ -374,6 +418,22 @@ const buildMockNotes = (input: {
   }
   return buildDetailNotes({ briefText: input.briefText, slide: input.slide });
 };
+
+const buildBulletNotes = (input: { briefText: string; slide: AgentOutlineSlide }): string => `${[
+  `# ${markdownInline(input.slide.id)}`,
+  "",
+  `- Goal: ${markdownInline(input.slide.goal)}`,
+  `- Context: ${markdownInline(input.briefText)}`,
+  `- Cue: ${markdownInline(input.slide.title)}`
+].join("\n")}\n`;
+
+const buildRehearsalNotes = (input: { slide: AgentOutlineSlide; index: number; slideCount: number }): string => `${[
+  `# ${markdownInline(input.slide.id)}`,
+  "",
+  `Cue: ${markdownInline(input.slide.goal)}`,
+  `Pause after this slide and bridge to ${input.index === input.slideCount - 1 ? "the close" : "the next point"}.`,
+  `Timing: ${input.index === 1 ? 120 : 75}s`
+].join("\n")}\n`;
 
 const buildThemeCss = (direction: VisualDirection): string => {
   const background = tokenString(direction.tokens, "background", "#fbfbfd");

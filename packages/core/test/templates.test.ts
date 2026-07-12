@@ -66,4 +66,18 @@ describe("built-in deck templates", () => {
   it("rejects unknown built-in template ids", () => {
     expect(() => renderBuiltInDeckTemplate({ name: "Demo", templateId: "missing" })).toThrow("Unknown deck template");
   });
+
+  it("omits notes source files when the template is created with none", () => {
+    const rendered = renderBuiltInDeckTemplate({ name: "No Notes", speakerNotesMode: "none" });
+
+    expect(rendered.manifest).toMatchObject({
+      speakerNotesMode: "none",
+      export: { speakerNotes: false }
+    });
+    expect(rendered.manifest.slides.every((slide) => slide.notes === undefined)).toBe(true);
+    expect(rendered.files.map((file) => file.path)).not.toEqual(expect.arrayContaining([
+      "notes/001-title.md",
+      "notes/002-workflow.md"
+    ]));
+  });
 });

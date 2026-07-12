@@ -53,12 +53,19 @@ import {
   MAX_SOURCE_MATERIAL_BYTES_PER_FILE,
   MAX_SOURCE_MATERIAL_COUNT,
   addQaIgnoreRule,
+  isSpeakerNotesMode,
+  normalizeSpeakerNotesMode,
+  normalizeDeckExportOptions,
   parseDeck,
+  parseDeckExportOptions,
   resolveProjectRelativePathInsideRealProject,
   stageSourceMaterials,
+  writeDeckExportOptions as writeCoreDeckExportOptions,
   type SourceMaterialInput,
   type SourceMaterialRecord,
-  type Deck
+  type Deck,
+  type DeckExportOptions,
+  type SpeakerNotesMode
 } from "@htmlslide/core";
 import { AGENT_RUN_REPORT_SCHEMA_VERSION } from "@htmlslide/core/version";
 import {
@@ -76,7 +83,9 @@ import {
   inspectInstalledSkill,
   installSkill,
   OFFICIAL_SKILLS,
+  removeSkill,
   SkillStoreError,
+  type SkillStoreIntegrity,
   type SkillInstallResult,
   validateOfficialSkillRegistry
 } from "@htmlslide/skills";
@@ -102,6 +111,7 @@ export type DesktopProjectRecord = {
   lastOpenedAt: string;
   status: DesktopProjectStatus;
   slideCount: number;
+  speakerNotesMode?: SpeakerNotesMode;
   thumbnail?: string;
 };
 
@@ -144,16 +154,21 @@ export type DesktopSlidePreview = {
   bullets: string[];
   sourcePath: string;
   notesPath?: string;
+  speakerNotesMode?: SpeakerNotesMode;
 };
 
 export type DesktopProjectPreview = {
+  exportOptions: DesktopExportOptions;
   project: DesktopProjectRecord;
   slides: DesktopSlidePreview[];
+  speakerNotesMode?: SpeakerNotesMode;
 };
 
 export type DesktopSlidePreviewDocument = Awaited<ReturnType<typeof buildSlidePreviewDocument>>;
 
 export type DesktopCreateProjectRequest = {
+  exportOptions?: DeckExportOptions;
+  speakerNotesMode?: SpeakerNotesMode;
   title: string;
   folderName: string;
   templateId?: string;
@@ -250,7 +265,7 @@ export type DesktopOfficialSkillsState = {
   status: "passed" | "info" | "warning" | "failed";
   installed: boolean;
   managed: true;
-  action?: "installed" | "updated" | "unchanged";
+  action?: "installed" | "updated" | "removed" | "unchanged";
   htmlslideHomeDir: string;
   skillsDir: string;
   skillCount: number;
@@ -291,11 +306,19 @@ export type DesktopOfficialSkillSummary = {
   installed: boolean;
   stale: boolean;
   status: "installed" | "missing" | "stale";
+  integrity: SkillStoreIntegrity | "missing";
+  removeEnabled: boolean;
+  removeDisabledReason?: string;
 };
 
 export type DesktopOfficialSkillsOptions = {
   env?: NodeJS.ProcessEnv;
   now?: string;
+};
+
+export type DesktopOfficialSkillRemoveRequest = {
+  name: string;
+  confirmed?: boolean;
 };
 
 export type DesktopMockAgentRunRequest = {
@@ -306,6 +329,7 @@ export type DesktopMockAgentRunRequest = {
   runExport?: boolean;
   maxRepairRounds?: number;
   runId?: string;
+  speakerNotesMode?: SpeakerNotesMode;
 };
 
 export type DesktopMockAgentStageSummary = {
@@ -353,6 +377,7 @@ export type DesktopAgentRunReport = {
   status: AgentRunResult["status"];
   stages: DesktopMockAgentStageSummary[];
   outputs: {
+    speakerNotesMode?: SpeakerNotesMode;
     brief?: AgentRunResult["outputs"]["brief"];
     outline?: AgentRunResult["outputs"]["outline"];
     visualDirection?: AgentRunResult["outputs"]["visualDirection"];
@@ -474,6 +499,7 @@ export type DesktopExternalAgentRunRequest = {
   brief: string;
   runExport?: boolean;
   runId?: string;
+  speakerNotesMode?: SpeakerNotesMode;
 };
 
 export type DesktopExternalAgentRunSummary = {
@@ -698,6 +724,8 @@ export type ExternalAgentDetectorRunner = (invocation: {
 }>;
 
 type DeckManifest = {
+  export?: unknown;
+  speakerNotesMode?: unknown;
   title?: unknown;
   slides?: Array<{
     id?: unknown;
@@ -828,6 +856,10 @@ export function resolveCreateProjectRequest(
 
   if (request.templateId !== undefined && typeof request.templateId !== "string") {
     throw new Error("Template id must be a string.");
+  }
+
+  if (request.speakerNotesMode !== undefined) {
+    normalizeSpeakerNotesMode(request.speakerNotesMode);
   }
 
   const title = request.title.trim().replace(/\s+/g, " ");
@@ -1373,7 +1405,8 @@ export async function summarizeDeckProject(projectPath: string): Promise<Desktop
     path: root,
     lastOpenedAt: new Date().toISOString(),
     status: missingFiles ? "Missing files" : "Needs check",
-    slideCount: slides.length
+    slideCount: slides.length,
+    ...(isSpeakerNotesMode(manifest.speakerNotesMode) ? { speakerNotesMode: manifest.speakerNotesMode } : {})
   };
 }
 
@@ -1403,15 +1436,32 @@ export async function loadProjectPreview(projectPath: string): Promise<DesktopPr
         speakerNotes: notes.trim(),
         bullets: extractBullets(html, title),
         sourcePath,
-        notesPath
+        notesPath,
+        ...(isSpeakerNotesMode(manifest.speakerNotesMode) ? { speakerNotesMode: manifest.speakerNotesMode } : {})
       };
     })
   );
 
   return {
+    exportOptions: desktopExportOptionsFromManifest(manifest.export),
     project,
-    slides
+    slides,
+    ...(isSpeakerNotesMode(manifest.speakerNotesMode) ? { speakerNotesMode: manifest.speakerNotesMode } : {})
   };
+}
+
+export async function persistDesktopExportOptions(
+  projectPath: string,
+  options: Partial<DeckExportOptions>
+): Promise<DeckExportOptions> {
+  const root = path.resolve(projectPath);
+  const manifest = await readDeckManifest(root);
+  const nextOptions = parseDeckExportOptions({
+    ...normalizeDeckExportOptions(manifest.export),
+    ...options
+  });
+  const deck = await writeCoreDeckExportOptions(root, nextOptions);
+  return deck.export;
 }
 
 export async function loadSlidePreview(
@@ -1474,7 +1524,11 @@ export async function loadDesktopPresenterDeck(
   const root = path.resolve(projectPath);
   const cliRunner = options.cliRunner ?? runHtmlslideCli;
   const exportResult = options.cliRuntime
-    ? await runDesktopAgentCliStep(["export", root, "--json"], options.cliRuntime, cliRunner)
+    ? await runDesktopAgentCliStep(
+        ["export", root, "--no-pdf", "--no-html", "--deckpkg", "--no-thumbnails", "--json"],
+        options.cliRuntime,
+        cliRunner
+      )
     : undefined;
 
   if (exportResult && !exportResult.ok) {
@@ -1697,10 +1751,34 @@ function officialSkillEntryPath(htmlslideHomeDir: string, skillName: string): st
   return path.join(htmlslideHomeDir, "skills", skillName, "SKILL.md");
 }
 
+function officialSkillRemovalReason(integrity: DesktopOfficialSkillSummary["integrity"]): string | undefined {
+  if (integrity === "modified") {
+    return "Remove unavailable: HTMLslide-managed files were modified.";
+  }
+  if (integrity === "unmanaged") {
+    return "Remove unavailable: this skill is not managed by HTMLslide.";
+  }
+  if (integrity === "invalid") {
+    return "Remove unavailable: this skill installation is invalid or unsafe.";
+  }
+  return undefined;
+}
+
+function officialSkillIntegrityFromError(error: unknown): DesktopOfficialSkillSummary["integrity"] {
+  if (error instanceof SkillStoreError && error.code === "SKILL_TARGET_UNMANAGED") {
+    return "unmanaged";
+  }
+  if (error instanceof SkillStoreError && error.code === "SKILL_TARGET_MODIFIED") {
+    return "modified";
+  }
+  return "invalid";
+}
+
 function officialSkillSummary(
   htmlslideHomeDir: string,
   skill: (typeof OFFICIAL_SKILLS)[number],
-  status: DesktopOfficialSkillSummary["status"]
+  status: DesktopOfficialSkillSummary["status"],
+  integrity: DesktopOfficialSkillSummary["integrity"] = "missing"
 ): DesktopOfficialSkillSummary {
   return {
     name: skill.metadata.name,
@@ -1727,6 +1805,9 @@ function officialSkillSummary(
     installPath: officialSkillEntryPath(htmlslideHomeDir, skill.metadata.name),
     markdownPreview: skill.markdown.slice(0, 900).trim(),
     installed: status === "installed",
+    integrity,
+    removeEnabled: integrity === "verified",
+    removeDisabledReason: officialSkillRemovalReason(integrity),
     stale: status === "stale",
     status
   };
@@ -1747,39 +1828,51 @@ export async function getDesktopOfficialSkills(
     };
   }
 
-  const missing: string[] = [];
-  const stale: string[] = [];
-  const states = new Map<string, DesktopOfficialSkillSummary["status"]>();
-  let installedCount = 0;
   const target = { kind: "global" as const, htmlslideHomeDir: base.htmlslideHomeDir };
-
-  await Promise.all(OFFICIAL_SKILLS.map(async (skill) => {
+  const states = await Promise.all(OFFICIAL_SKILLS.map(async (skill) => {
     try {
       const [inspection] = await inspectInstalledSkill({ target, name: skill.metadata.name });
-      if (
-        inspection?.managed !== true ||
-        inspection.integrity !== "verified" ||
-        inspection.markdown !== skill.markdown
-      ) {
-        stale.push(skill.metadata.name);
-        states.set(skill.metadata.name, "stale");
-        return;
+      if (!inspection) {
+        return {
+          name: skill.metadata.name,
+          summary: officialSkillSummary(base.htmlslideHomeDir, skill, "missing"),
+          status: "missing" as const
+        };
       }
-      states.set(skill.metadata.name, "installed");
-      installedCount += 1;
+      const installed =
+        inspection.managed === true &&
+        inspection.integrity === "verified" &&
+        inspection.markdown === skill.markdown;
+      return {
+        name: skill.metadata.name,
+        summary: officialSkillSummary(
+          base.htmlslideHomeDir,
+          skill,
+          installed ? "installed" : "stale",
+          inspection.integrity
+        ),
+        status: installed ? ("installed" as const) : ("stale" as const)
+      };
     } catch (error) {
       if (error instanceof SkillStoreError && error.code === "SKILL_NOT_FOUND") {
-        missing.push(skill.metadata.name);
-        states.set(skill.metadata.name, "missing");
-        return;
+        return {
+          name: skill.metadata.name,
+          summary: officialSkillSummary(base.htmlslideHomeDir, skill, "missing"),
+          status: "missing" as const
+        };
       }
-      stale.push(skill.metadata.name);
-      states.set(skill.metadata.name, "stale");
+      const integrity = officialSkillIntegrityFromError(error);
+      return {
+        name: skill.metadata.name,
+        summary: officialSkillSummary(base.htmlslideHomeDir, skill, "stale", integrity),
+        status: "stale" as const
+      };
     }
   }));
 
-  missing.sort();
-  stale.sort();
+  const missing = states.filter((state) => state.status === "missing").map((state) => state.name).sort();
+  const stale = states.filter((state) => state.status === "stale").map((state) => state.name).sort();
+  const installedCount = states.filter((state) => state.status === "installed").length;
   const installed = missing.length === 0 && stale.length === 0 && installedCount === OFFICIAL_SKILLS.length;
   const pendingCount = missing.length + stale.length;
 
@@ -1791,10 +1884,7 @@ export async function getDesktopOfficialSkills(
       ? `${installedCount} official skills installed.`
       : `${pendingCount} official skill${pendingCount === 1 ? "" : "s"} need installation or update.`,
     missing,
-    skills: OFFICIAL_SKILLS.map((skill) => {
-      const status = states.get(skill.metadata.name) ?? "missing";
-      return officialSkillSummary(base.htmlslideHomeDir, skill, status);
-    }),
+    skills: states.map((state) => state.summary),
     stale,
     status: installed ? "passed" : "warning",
     suggestedFix: installed ? undefined : "Install official skills from onboarding or Settings."
@@ -1849,6 +1939,59 @@ export async function installDesktopOfficialSkills(
       action === "unchanged"
         ? `${after.installedCount} official skills already installed.`
         : `${after.installedCount} official skills ${action}.`
+  };
+}
+
+export async function removeDesktopOfficialSkill(
+  request: DesktopOfficialSkillRemoveRequest,
+  options: DesktopOfficialSkillsOptions = {}
+): Promise<DesktopOfficialSkillsState> {
+  if (request.confirmed !== true) {
+    throw new Error("Official skill removal requires explicit confirmation.");
+  }
+
+  const before = await getDesktopOfficialSkills(options);
+  if (!before.available) {
+    return before;
+  }
+  const skill = before.skills.find((candidate) => candidate.name === request.name);
+  if (!skill) {
+    return {
+      ...before,
+      status: "failed",
+      message: `Official skill is not in the registry: ${request.name}.`
+    };
+  }
+  if (!skill.removeEnabled) {
+    return {
+      ...before,
+      status: "failed",
+      message: skill.removeDisabledReason ?? `Official skill cannot be removed: ${request.name}.`
+    };
+  }
+
+  try {
+    await removeSkill({
+      name: request.name,
+      target: { kind: "global", htmlslideHomeDir: before.htmlslideHomeDir }
+    });
+  } catch (error) {
+    return {
+      ...before,
+      status: "failed",
+      message: error instanceof Error ? error.message : String(error),
+      suggestedFix: `Check the integrity and permissions for ${before.skillsDir}.`
+    };
+  }
+
+  const after = await getDesktopOfficialSkills({
+    ...options,
+    now: before.updatedAt
+  });
+  return {
+    ...after,
+    action: "removed",
+    message: `${request.name} removed.`
   };
 }
 
@@ -1967,6 +2110,7 @@ export async function runDesktopMockAgent(
     projectRoot: projectPath,
     provider: createMockProvider(),
     runId: request.runId,
+    speakerNotesMode: request.speakerNotesMode,
     targetSlideCount: request.targetSlideCount,
     metadata: {
       mode: "desktop-mock-agent"
@@ -2010,6 +2154,9 @@ export async function runDesktopMockAgent(
       projectPath,
       result: agent
     });
+    if (request.exportOptions) {
+      await persistDesktopExportOptions(projectPath, request.exportOptions);
+    }
     notifyDesktopAgentEvent(observers, agent.runId, "build", "succeeded", "Applied mock agent source files.", "stage-completed", {
       filesChanged: applied.filesChanged,
       nextAction: "Record checkpoint changes"
@@ -2380,6 +2527,7 @@ export async function runDesktopByokAgent(
     projectRoot: projectPath,
     provider: modelProvider,
     runId,
+    speakerNotesMode: request.speakerNotesMode,
     targetSlideCount: request.targetSlideCount,
     metadata: {
       credentialAccount,
@@ -2427,6 +2575,9 @@ export async function runDesktopByokAgent(
       projectPath,
       result: agent
     });
+    if (request.exportOptions) {
+      await persistDesktopExportOptions(projectPath, request.exportOptions);
+    }
     notifyDesktopAgentEvent(observers, agent.runId, "build", "succeeded", "Applied HTMLslide Agent source writes.", "stage-completed", {
       filesChanged: applied.filesChanged,
       metadata: settingsMetadata,
@@ -2722,6 +2873,7 @@ export async function runDesktopExternalAgent(
     await fs.writeFile(promptFile, externalAgentPrompt({
       brief: brief.length > 0 ? brief : "Create or revise this HTMLslide deck.",
       projectPath: agentProjectPath,
+      speakerNotesMode: request.speakerNotesMode,
       writeManifest: selectedAgentId === "generic" ? writeManifest : undefined
     }), "utf8");
     if (!builtIn) {
@@ -2920,6 +3072,9 @@ export async function runDesktopExternalAgent(
     }
   }
 
+  if (request.exportOptions) {
+    await persistDesktopExportOptions(projectPath, request.exportOptions);
+  }
   const initialCheckpointDiff = await diffFileCopyCheckpoint({ projectRoot: projectPath, runId });
   const filesChanged = checkpointChangedPaths(initialCheckpointDiff);
   await recordCheckpointChanges({
@@ -3410,6 +3565,16 @@ async function readDeckManifest(projectPath: string): Promise<DeckManifest> {
   const deckPath = path.join(projectPath, "deck.json");
   const contents = await fs.readFile(deckPath, "utf8");
   return JSON.parse(contents) as DeckManifest;
+}
+
+function desktopExportOptionsFromManifest(value: unknown): DesktopExportOptions {
+  const exportOptions = normalizeDeckExportOptions(value);
+  return {
+    deckpkg: exportOptions.deckpkg,
+    html: exportOptions.html,
+    pdf: exportOptions.pdf,
+    thumbnails: exportOptions.thumbnails
+  };
 }
 
 async function findProjectDeckPackage(projectPath: string): Promise<string | undefined> {
@@ -5005,6 +5170,10 @@ function sanitizeAgentOutputsForReport(outputs: AgentRunResult["outputs"]): Desk
     }))
   };
 
+  if (outputs.speakerNotesMode) {
+    reportOutputs.speakerNotesMode = outputs.speakerNotesMode;
+  }
+
   if (outputs.brief) {
     reportOutputs.brief = outputs.brief;
   }
@@ -5122,10 +5291,12 @@ function providerLabel(provider: DesktopApiKeyProvider): string {
 function externalAgentPrompt({
   brief,
   projectPath,
+  speakerNotesMode,
   writeManifest
 }: {
   brief: string;
   projectPath: string;
+  speakerNotesMode?: SpeakerNotesMode;
   writeManifest?: string;
 }): string {
   const lines = [
@@ -5135,6 +5306,8 @@ function externalAgentPrompt({
     "",
     "## User request",
     brief,
+    "",
+    `Speaker notes mode: ${speakerNotesMode ?? "bullet-notes"}. Preserve this mode in deck.json and ${speakerNotesMode === "none" ? "omit slide notes paths and files." : "generate the requested notes style."}`,
     "",
     "## Required boundaries",
     "- Edit only deck source files: deck.json, slides/, notes/, theme/, or assets/.",

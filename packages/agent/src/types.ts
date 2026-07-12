@@ -1,4 +1,5 @@
 import type { CHECKPOINT_SCHEMA_VERSION } from "@htmlslide/core/version";
+import type { SpeakerNotesMode } from "@htmlslide/core";
 
 export type AgentRunStage =
   | "brief"
@@ -283,7 +284,17 @@ export type VisualDirection = {
   label: string;
   rationale: string;
   sampleSlideIds: string[];
+  sampleSlides?: VisualDirectionSample[];
   tokens: JsonObject;
+};
+
+export type VisualDirectionSample = {
+  id: string;
+  kind: "title" | "content" | "data";
+  title: string;
+  body: string;
+  metric: string;
+  chartValues: number[];
 };
 
 export type VisualDirectionSet = {
@@ -366,6 +377,7 @@ export type AgentRunOutputs = {
   repairs: AgentRepairResult[];
   export?: AgentExportResult;
   review?: AgentReviewResult;
+  speakerNotesMode?: SpeakerNotesMode;
 };
 
 export type AgentRunErrorInfo = {
@@ -421,7 +433,7 @@ export type AppliedMockAgentProjectSlide = {
   id: string;
   title: string;
   source: string;
-  notes: string;
+  notes?: string;
 };
 
 export type ApplyMockAgentProjectInput = {
@@ -454,6 +466,7 @@ export type AgentRunInput = {
   runId?: string;
   maxRepairRounds?: number;
   metadata?: JsonObject;
+  speakerNotesMode?: SpeakerNotesMode;
   chooseVisualDirection?: (directions: VisualDirection[]) => Promise<string> | string;
   createCheckpoint?: (input: {
     runId: string;

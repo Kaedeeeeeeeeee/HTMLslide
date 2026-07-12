@@ -1,7 +1,8 @@
 import { promises as fs } from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
-import type { Deck, DeckSlide } from "./deck-schema.js";
-import { validateDeck } from "./deck-schema.js";
+import type { Deck, DeckExportOptions, DeckSlide } from "./deck-schema.js";
+import { parseDeck, parseDeckExportOptions, validateDeck } from "./deck-schema.js";
 import type { HtmlslideIssue } from "./issues.js";
 import { resolveProjectRelativePath } from "./paths.js";
 import { DECK_SCHEMA_VERSION } from "./version.js";
@@ -95,6 +96,29 @@ export async function loadDeckProject(inputPath = ".", options: LoadDeckProjectO
   }
 
   return project;
+}
+
+export async function writeDeckExportOptions(
+  inputPath: string,
+  exportOptions: DeckExportOptions
+): Promise<Deck> {
+  const project = await loadDeckProject(inputPath, { verifyFiles: false });
+  const rawDeck = JSON.parse(await fs.readFile(project.deckPath, "utf8")) as Record<string, unknown>;
+  const nextDeck = {
+    ...rawDeck,
+    export: parseDeckExportOptions(exportOptions)
+  };
+  const temporaryPath = `${project.deckPath}.tmp-${process.pid}-${randomUUID()}`;
+
+  try {
+    await fs.writeFile(temporaryPath, `${JSON.stringify(nextDeck, null, 2)}\n`, "utf8");
+    await fs.rename(temporaryPath, project.deckPath);
+  } catch (error) {
+    await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+
+  return parseDeck(nextDeck);
 }
 
 function hasIncompatibleSchemaVersion(value: unknown): boolean {

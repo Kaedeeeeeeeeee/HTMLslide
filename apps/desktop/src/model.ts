@@ -1,4 +1,10 @@
+import {
+  speakerNotesModeDescription,
+  speakerNotesModeLabel,
+  type SpeakerNotesMode
+} from "@htmlslide/core/speaker-notes";
 import { DEFAULT_DECK_TEMPLATE_ID } from "@htmlslide/core/templates";
+import type { DeckExportOptions } from "@htmlslide/core";
 import type { InspectorTabId, QaSeverityId } from "@htmlslide/shared-ui";
 
 export type AppView = "onboarding" | "library" | "workspace";
@@ -47,7 +53,7 @@ export interface NewDeckDraft {
   slideCount: string;
   tone: string;
   designDirection: string;
-  speakerNotes: string;
+  speakerNotes: SpeakerNotesMode;
   outputs: NewDeckOutputFormat[];
   generationMode: NewDeckGenerationMode;
   sources: NewDeckSource[];
@@ -72,6 +78,8 @@ export interface ProjectSummary {
     | "Missing files"
     | "External changes detected";
   slideCount: number;
+  exportOptions?: NewDeckExportSelection;
+  speakerNotesMode?: SpeakerNotesMode;
 }
 
 export interface SlideSummary {
@@ -86,6 +94,7 @@ export interface SlideSummary {
   bullets: string[];
   sourcePath?: string;
   notesPath?: string;
+  speakerNotesMode?: SpeakerNotesMode;
 }
 
 export interface QaIssue {
@@ -244,6 +253,19 @@ export function newDeckExportSelectionFromOutputs(
   };
 }
 
+export function newDeckManifestExportOptionsFromOutputs(
+  outputs: readonly NewDeckOutputFormat[]
+): DeckExportOptions {
+  const selected = new Set(outputs);
+  return {
+    deckpkg: selected.has("deckpkg"),
+    html: selected.has("html"),
+    pdf: selected.has("pdf"),
+    speakerNotes: selected.has("speakerNotes"),
+    thumbnails: selected.has("thumbnails")
+  };
+}
+
 export function createDefaultNewDeckDraft(): NewDeckDraft {
   return {
     audience: "general",
@@ -285,12 +307,6 @@ const newDeckLabelMaps = {
     "ja-JP": "Japanese",
     "zh-CN": "Chinese"
   },
-  speakerNotes: {
-    "bullet-notes": "bullet speaker notes",
-    "full-script": "full speaker script",
-    none: "no speaker notes",
-    "rehearsal-cues": "rehearsal cues"
-  },
   tone: {
     academic: "academic",
     concise: "concise",
@@ -329,7 +345,7 @@ export function buildNewDeckAgentBrief(draft: NewDeckDraft): string {
     `Slide count: ${slideCount}`,
     `Tone: ${labelFromMap(newDeckLabelMaps.tone, draft.tone)}`,
     `Design direction: ${labelFromMap(newDeckLabelMaps.designDirection, draft.designDirection)}`,
-    `Speaker notes: ${labelFromMap(newDeckLabelMaps.speakerNotes, draft.speakerNotes)}`,
+    `Speaker notes: ${speakerNotesModeDescription(draft.speakerNotes)} (${speakerNotesModeLabel(draft.speakerNotes)})`,
     `Requested outputs: ${outputs}`,
     `AI engine: ${labelFromMap(newDeckLabelMaps.engine, draft.generationMode)}`,
     `Source materials: ${sourceSummary}`,

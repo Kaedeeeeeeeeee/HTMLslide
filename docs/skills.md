@@ -14,6 +14,8 @@ Settings and the Skills library show the official pack as an inspectable skill l
 
 Use Inspect on a skill row to review the official metadata before writing files: author, entrypoint, supported deck schema, output type, viewport, supported capabilities, install targets, resolved install path, risk flags, and the beginning of the generated `SKILL.md`.
 
+Verified skills managed by HTMLslide can be removed from the Settings library. Removal requires confirmation and uses the shared store safety checks. Modified, unmanaged, invalid, or unsafe installations keep removal disabled with their integrity state shown; HTMLslide never removes those directories through the desktop UI.
+
 ## Safety
 
 Official skills must not write generated exports or secrets. Third-party skills with scripts, network access, remote assets, or incompatible licenses require explicit user review before installation.

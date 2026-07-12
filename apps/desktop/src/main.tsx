@@ -34,6 +34,7 @@ import {
   formatProjectOpenedAt,
   getNextStageIndex,
   newDeckExportSelectionFromOutputs,
+  newDeckManifestExportOptionsFromOutputs,
   newDeckTargetSlideCount,
   type AgentRunEventLike,
   type AgentRunLogLike,
@@ -191,7 +192,9 @@ function projectRecordToSummary(project: DesktopProjectRecord): ProjectSummary {
     path: project.path,
     lastOpened: formatProjectOpenedAt(project.lastOpenedAt),
     status: project.status,
-    slideCount: project.slideCount
+    slideCount: project.slideCount,
+    exportOptions: project.exportOptions,
+    speakerNotesMode: project.speakerNotesMode
   };
 }
 
@@ -230,7 +233,10 @@ function projectPreviewToState(preview: DesktopProjectPreview): {
   slides: SlideSummary[];
 } {
   return {
-    project: projectRecordToSummary(preview.project),
+    project: {
+      ...projectRecordToSummary(preview.project),
+      exportOptions: preview.exportOptions
+    },
     slides: preview.slides
   };
 }
@@ -900,6 +906,7 @@ function App(): React.ReactNode {
       exportSelection?: NewDeckExportSelection;
       forceMock?: boolean;
       projectPath?: string;
+      speakerNotesMode?: NewDeckDraft["speakerNotes"];
       targetSlideCount?: number;
     } = {}): void => {
       const currentSnapshot = agentRunSnapshotRef.current;
@@ -960,6 +967,7 @@ function App(): React.ReactNode {
         engine: selectedEngine,
         exportOptions: options.exportSelection,
         projectPath: options.projectPath,
+        speakerNotesMode: options.speakerNotesMode,
         targetSlideCount: options.targetSlideCount,
         runExport: true
       })
@@ -1315,7 +1323,12 @@ function App(): React.ReactNode {
     }
 
     setOperationStatus({ kind: "running", message: "Creating deck" });
-    desktopApi.createProject({ ...draft, workspacePath })
+    desktopApi.createProject({
+      ...draft,
+      exportOptions: newDeckManifestExportOptionsFromOutputs(draft.outputs),
+      speakerNotesMode: draft.speakerNotes,
+      workspacePath
+    })
       .then((result) => {
         if (!result.ok || !result.project) {
           setOperationStatus({
@@ -1331,6 +1344,7 @@ function App(): React.ReactNode {
             exportSelection: newDeckExportSelectionFromOutputs(draft.outputs),
             forceMock: draft.generationMode === "mock-agent",
             projectPath: result.project.project.path,
+            speakerNotesMode: draft.speakerNotes,
             targetSlideCount: newDeckTargetSlideCount(draft)
           });
         }
@@ -1520,6 +1534,40 @@ function App(): React.ReactNode {
         });
       });
   }, [desktopApi]);
+
+  const handleRemoveOfficialSkill = useCallback((skillName: string): void => {
+    if (!desktopApi) {
+      setOfficialSkillsStatus({ kind: "failed", message: "Desktop API unavailable" });
+      return;
+    }
+    const skill = officialSkills?.skills.find((candidate) => candidate.name === skillName);
+    if (!skill?.removeEnabled) {
+      setOfficialSkillsStatus({
+        kind: "failed",
+        message: skill?.removeDisabledReason ?? `Skill ${skillName} cannot be removed`
+      });
+      return;
+    }
+    if (!window.confirm(`Remove the HTMLslide-managed skill ${skillName}?`)) {
+      return;
+    }
+
+    setOfficialSkillsStatus({ kind: "running", message: `Removing ${skillName}` });
+    desktopApi.removeOfficialSkill({ name: skillName, confirmed: true })
+      .then((status) => {
+        setOfficialSkills(status);
+        setOfficialSkillsStatus({
+          kind: status.status === "failed" ? "failed" : "success",
+          message: status.message
+        });
+      })
+      .catch((error: unknown) => {
+        setOfficialSkillsStatus({
+          kind: "failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
+  }, [desktopApi, officialSkills]);
 
   const handleUninstallCliIntegration = useCallback((): void => {
     if (!desktopApi) {
@@ -1976,6 +2024,7 @@ function App(): React.ReactNode {
         officialSkillsStatus={officialSkillsStatus}
         projects={projects}
         onInstallOfficialSkills={handleInstallOfficialSkills}
+        onRemoveOfficialSkill={handleRemoveOfficialSkill}
         workspacePath={workspacePath}
       />
     );

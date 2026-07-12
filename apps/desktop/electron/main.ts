@@ -27,6 +27,8 @@ import {
   readDesktopLibrary,
   readDesktopPresenterPreferences,
   removeRecentProject,
+  removeDesktopOfficialSkill,
+  persistDesktopExportOptions,
   resolveCreateProjectRequest,
   revertDesktopCheckpoint,
   runDesktopByokAgent,
@@ -173,7 +175,8 @@ const agentRunRegistry = new DesktopAgentRunRegistry({
           projectPath: request.projectPath,
           runExport: request.runExport,
           runId: request.runId,
-          targetSlideCount: request.targetSlideCount
+          targetSlideCount: request.targetSlideCount,
+          speakerNotesMode: request.speakerNotesMode
         },
         sharedOptions
       );
@@ -188,7 +191,8 @@ const agentRunRegistry = new DesktopAgentRunRegistry({
           projectPath: request.projectPath,
           runExport: request.runExport,
           runId: request.runId,
-          targetSlideCount: request.targetSlideCount
+          targetSlideCount: request.targetSlideCount,
+          speakerNotesMode: request.speakerNotesMode
         },
         {
           ...sharedOptions,
@@ -208,7 +212,8 @@ const agentRunRegistry = new DesktopAgentRunRegistry({
         exportOptions: request.exportOptions,
         projectPath: request.projectPath,
         runExport: request.runExport,
-        runId: request.runId
+        runId: request.runId,
+        speakerNotesMode: request.speakerNotesMode
       },
       {
         ...sharedOptions,
@@ -771,6 +776,10 @@ function registerIpcHandlers(): void {
     installDesktopOfficialSkills(officialSkillsOptions())
   );
 
+  ipcMain.handle("htmlslide:remove-official-skill", async (_event, request: { name: string; confirmed?: boolean }) =>
+    removeDesktopOfficialSkill(request, officialSkillsOptions())
+  );
+
   ipcMain.handle("htmlslide:uninstall-cli-integration", async () =>
     uninstallDesktopCliIntegration(cliIntegrationOptions())
   );
@@ -963,6 +972,7 @@ function registerIpcHandlers(): void {
       resolved.title,
       "--template",
       resolved.templateId,
+      ...(request.speakerNotesMode ? ["--speaker-notes", request.speakerNotesMode] : []),
       "--json"
     ]);
 
@@ -971,6 +981,9 @@ function registerIpcHandlers(): void {
     }
 
     try {
+      if (request.exportOptions !== undefined) {
+        await persistDesktopExportOptions(resolved.projectPath, request.exportOptions);
+      }
       if (request.sources && request.sources.length > 0) {
         await stageDesktopNewDeckSources(resolved.projectPath, request.sources);
       }
@@ -1010,10 +1023,14 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle("htmlslide:export-project", async (_event, projectPath: string, options?: DesktopExportOptions) => {
+    const normalizedOptions = normalizeDesktopExportOptions(options);
+    if (normalizedOptions) {
+      await persistDesktopExportOptions(projectPath, normalizedOptions);
+    }
     const result = await invokeCli([
       "export",
       projectPath,
-      ...exportOptionsToCliArgs(normalizeDesktopExportOptions(options)),
+      ...exportOptionsToCliArgs(normalizedOptions),
       "--json"
     ]);
     const project = await summarizeDeckProject(projectPath).catch((): DesktopProjectRecord | undefined => undefined);

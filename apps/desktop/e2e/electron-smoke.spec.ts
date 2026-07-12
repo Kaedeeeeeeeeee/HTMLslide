@@ -50,6 +50,8 @@ async function expectNoFrameworkOverlay(page: Page): Promise<void> {
 async function chooseVisualDirection(page: Page, index = 0): Promise<void> {
   const choicePanel = page.getByRole("region", { name: "Visual direction choices" });
   await expect(choicePanel).toBeVisible({ timeout: 30_000 });
+  await expect(choicePanel.locator(".visual-direction-card__sample").first()).toBeVisible();
+  await expect(choicePanel.locator(".visual-direction-card__sample-title strong").first()).toBeVisible();
   const choices = choicePanel.getByRole("button", { name: /Choose .* visual direction/ });
   await expect.poll(() => choices.count()).toBeGreaterThan(index);
   await choices.nth(index).click();
@@ -936,10 +938,26 @@ test.describe("HTMLslide desktop smoke", () => {
     expect(exportEntries).not.toContain("thumbnails");
     const manifest = JSON.parse(await readFile(path.join(projectDir, "deck.json"), "utf8")) as {
       agent?: { lastRunId?: string };
+      export?: {
+        deckpkg?: boolean;
+        html?: boolean;
+        pdf?: boolean;
+        speakerNotes?: boolean;
+        thumbnails?: boolean;
+      };
+      speakerNotesMode?: string;
       slides?: unknown[];
       title?: string;
     };
     expect(manifest.title).toBe("Mock HTMLslide Deck");
+    expect(manifest.speakerNotesMode).toBe("full-script");
+    expect(manifest.export).toEqual({
+      deckpkg: false,
+      html: false,
+      pdf: true,
+      speakerNotes: true,
+      thumbnails: false
+    });
     expect(manifest.agent?.lastRunId).toMatch(/^run-/);
     expect(manifest.slides).toHaveLength(8);
     const agentReportText = await readFile(
@@ -952,6 +970,7 @@ test.describe("HTMLslide desktop smoke", () => {
       outputs?: {
         build?: { slidesChanged?: string[] };
         outline?: { slides?: unknown[] };
+        speakerNotesMode?: string;
         selectedVisualDirectionId?: string;
         visualDirection?: { directions?: Array<{ id?: string }> };
       };
@@ -965,6 +984,7 @@ test.describe("HTMLslide desktop smoke", () => {
     expect(agentReport.exportManifest?.sourceDigest).toMatch(/^[a-f0-9]{64}$/u);
     expect(agentReport.exportManifest?.artifactCount).toBeGreaterThan(0);
     expect(agentReport.outputs?.outline?.slides).toHaveLength(8);
+    expect(agentReport.outputs?.speakerNotesMode).toBe("full-script");
     expect(agentReport.outputs?.visualDirection?.directions?.map((direction) => direction.id)).toEqual([
       "direction-editorial",
       "direction-systems"
@@ -989,6 +1009,7 @@ test.describe("HTMLslide desktop smoke", () => {
 
     const inspector = page.locator(".inspector");
     await inspector.getByRole("tab", { name: "Notes", exact: true }).click();
+    await expect(inspector.getByText("Full script", { exact: true })).toBeVisible();
     const notesEditor = inspector.getByRole("textbox", { name: "Presenter notes" });
     await notesEditor.fill("# Draft survives navigation");
     const filmstripSlides = page.locator(".filmstrip-list .filmstrip-item");
@@ -2471,6 +2492,18 @@ fetch("${previewNetworkOrigin}/fetch");
     await expect(deckArchitectSkill).toContainText("installed");
     await expect(readFile(path.join(htmlslideHomeDir, "skills", "deck-architect", "SKILL.md"), "utf8"))
       .resolves.toContain("name: deck-architect");
+
+    page.once("dialog", async (dialog) => {
+      await dialog.accept();
+    });
+    await deckArchitectSkill.getByRole("button", { name: "Remove deck-architect", exact: true }).click();
+    await expect(page.getByRole("status", { name: "Official skills operation status" })).toContainText(
+      "deck-architect removed."
+    );
+    await expect(readFile(path.join(htmlslideHomeDir, "skills", "deck-architect", "SKILL.md"))).rejects.toMatchObject({
+      code: "ENOENT"
+    });
+    await expect(deckArchitectSkill.getByRole("button", { name: "Remove deck-architect", exact: true })).toHaveCount(0);
 
     await page.getByRole("button", { name: "Copy Manual Install", exact: true }).click();
     await expect(page.getByText("Manual install command copied")).toBeVisible();

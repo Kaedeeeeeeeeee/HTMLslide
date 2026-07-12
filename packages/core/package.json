@@ -22,6 +22,10 @@
     "./source-material-limits": {
       "types": "./dist/source-material-limits.d.ts",
       "import": "./dist/source-material-limits.js"
+    },
+    "./speaker-notes": {
+      "types": "./dist/speaker-notes.d.ts",
+      "import": "./dist/speaker-notes.js"
     }
   },
   "files": [

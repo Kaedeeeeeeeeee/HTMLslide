@@ -7,6 +7,7 @@ import {
   buildRuntimeStages,
   countIssuesBySeverity,
   createDefaultNewDeckDraft,
+  newDeckManifestExportOptionsFromOutputs,
   newDeckExportSelectionFromOutputs,
   defaultCommandActionStatuses,
   filterQaIssues,
@@ -249,6 +250,16 @@ describe("desktop model helpers", () => {
     });
   });
 
+  it("maps New Deck output choices to the manifest export profile", () => {
+    expect(newDeckManifestExportOptionsFromOutputs(["pdf", "deckpkg", "speakerNotes"])).toEqual({
+      deckpkg: true,
+      html: false,
+      pdf: true,
+      speakerNotes: true,
+      thumbnails: false
+    });
+  });
+
   it("builds a structured agent brief from a new deck draft", () => {
     const draft = {
       ...createDefaultNewDeckDraft(),
@@ -259,7 +270,7 @@ describe("desktop model helpers", () => {
       generationMode: "mock-agent" as const,
       language: "en-US",
       slideCount: "8",
-      speakerNotes: "full-script",
+      speakerNotes: "full-script" as const,
       sources: [
         { id: "file-1", kind: "file" as const, name: "research.csv", path: "/tmp/research.csv", size: 42 },
         { content: "Ship the beta", id: "text-1", kind: "text" as const, name: "Meeting transcript" }

@@ -11,6 +11,7 @@ import {
   type VisualDirection
 } from "@htmlslide/agent";
 import type { AgentAdapterRunResult } from "@htmlslide/agent-adapters";
+import { normalizeSpeakerNotesMode, type SpeakerNotesMode } from "@htmlslide/core";
 import { normalizeDesktopExportOptions } from "./desktop-services.js";
 import type {
   CliRunResult,
@@ -30,6 +31,7 @@ export type DesktopAgentRunRequest = {
   targetSlideCount?: number;
   runExport?: boolean;
   maxRepairRounds?: number;
+  speakerNotesMode?: SpeakerNotesMode;
 };
 
 export type DesktopAgentRunResult =
@@ -469,7 +471,8 @@ export class DesktopAgentRunRegistry {
       ...request,
       exportOptions: normalizeDesktopExportOptions(request.exportOptions),
       projectPath,
-      brief
+      brief,
+      speakerNotesMode: normalizeSpeakerNotesMode(request.speakerNotesMode)
     };
   }
 

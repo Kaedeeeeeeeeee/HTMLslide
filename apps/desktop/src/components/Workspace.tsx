@@ -11,7 +11,8 @@ import {
   type PresenterSessionState,
   type PresenterSessionView
 } from "@htmlslide/presenter/session";
-import type { VisualDirection } from "@htmlslide/agent";
+import type { VisualDirection, VisualDirectionSample } from "@htmlslide/agent";
+import { speakerNotesModeLabel } from "@htmlslide/core/speaker-notes";
 import {
   Button,
   IconButton,
@@ -476,8 +477,8 @@ export function Workspace({
   }, [project.id, slides]);
 
   useEffect(() => {
-    setExportOptions(defaultNewDeckExportSelection());
-  }, [project.id]);
+    setExportOptions(project.exportOptions ?? defaultNewDeckExportSelection());
+  }, [project.exportOptions, project.id]);
 
   useEffect(() => {
     if (!initialPresenterOpen || openedInitialPresenterIdRef.current === initialPresenterOpen.id) {
@@ -2010,6 +2011,7 @@ function NotesPanel({
       />
       <div className="notes-meta">
         <StatusPill tone="info">{slide.duration}</StatusPill>
+        <StatusPill tone="info">{slide.speakerNotesMode ? speakerNotesModeLabel(slide.speakerNotesMode) : "Mode not recorded"}</StatusPill>
         <span>{readOnly ? "Deck package notes are read-only" : dirty ? "Unsaved changes" : slide.notesPath ? "Saved to project notes" : "No notes file for this slide"}</span>
       </div>
       {saveStatus.kind !== "idle" ? (
@@ -2556,12 +2558,16 @@ function VisualDirectionChoicePanel({
               type="button"
             >
               <span className="visual-direction-card__preview" aria-hidden="true">
-                {(direction.sampleSlideIds.length > 0 ? direction.sampleSlideIds : ["sample"]).slice(0, 3).map((sampleId, index) => (
-                  <span className="visual-direction-card__sample" key={`${direction.id}-${sampleId}`}>
-                    <span style={{ width: `${42 + index * 18}%` }} />
-                    <small>{sampleId}</small>
-                  </span>
-                ))}
+                {(direction.sampleSlideIds.length > 0 ? direction.sampleSlideIds : ["sample"])
+                  .slice(0, 3)
+                  .map((sampleId, index) => (
+                    <VisualDirectionSamplePreview
+                      index={index}
+                      key={`${direction.id}-${sampleId}`}
+                      sample={direction.sampleSlides?.find((candidate) => candidate.id === sampleId)}
+                      sampleId={sampleId}
+                    />
+                  ))}
               </span>
               <span className="visual-direction-card__content">
                 <strong>{direction.label}</strong>
@@ -2573,6 +2579,65 @@ function VisualDirectionChoicePanel({
         })}
       </div>
     </section>
+  );
+}
+
+function VisualDirectionSamplePreview({
+  sampleId,
+  index,
+  sample
+}: {
+  sampleId: string;
+  index: number;
+  sample?: VisualDirectionSample;
+}): ReactNode {
+  const normalizedId = sampleId.toLowerCase();
+  const kind = sample?.kind ?? (normalizedId.includes("data") || normalizedId.includes("chart") || normalizedId.includes("metric")
+    ? "data"
+    : normalizedId.includes("content") || normalizedId.includes("body") || normalizedId.includes("detail")
+      ? "content"
+      : index === 0
+        ? "title"
+        : index === 1
+          ? "content"
+          : "data");
+  const label = kind === "data" ? "DATA" : kind === "content" ? "CONTENT" : "TITLE";
+  const chartValues = sample?.chartValues.length ? sample.chartValues.slice(0, 4) : [38, 62, 48, 86];
+
+  return (
+    <span className={`visual-direction-card__sample is-${kind}`}>
+      <span className="visual-direction-card__sample-chrome">
+        <small>{label}</small>
+        <small>{String(index + 1).padStart(2, "0")}</small>
+      </span>
+      {kind === "title" ? (
+        <span className="visual-direction-card__sample-title">
+          <strong>{sample?.title ?? "Make the idea legible"}</strong>
+          <small>{sample?.body ?? sampleId}</small>
+        </span>
+      ) : kind === "content" ? (
+        <span className="visual-direction-card__sample-content">
+          <strong>{sample?.title ?? "One clear point"}</strong>
+          <small>{sample?.body ?? "A readable supporting point."}</small>
+          <span />
+          <span />
+          <span />
+        </span>
+      ) : (
+        <span className="visual-direction-card__sample-data">
+          <strong>{sample?.metric || "+42%"}</strong>
+          <span className="visual-direction-card__sample-bars">
+            {chartValues.map((value, valueIndex) => (
+              <i
+                key={`${sampleId}-bar-${valueIndex}`}
+                style={{ height: `${Math.min(100, Math.max(20, value))}%` }}
+              />
+            ))}
+          </span>
+        </span>
+      )}
+      <small className="visual-direction-card__sample-id">{sampleId}</small>
+    </span>
   );
 }
 

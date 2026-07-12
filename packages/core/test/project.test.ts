@@ -10,7 +10,8 @@ import {
   resolveProjectRelativePath,
   resolveProjectRelativePathInsideRealProject,
   resolveProjectRoot,
-  tryLoadDeckProject
+  tryLoadDeckProject,
+  writeDeckExportOptions
 } from "../src/index.js";
 
 const FIXTURE_ROOT = fileURLToPath(new URL("../../test-fixtures/decks/", import.meta.url));
@@ -64,6 +65,56 @@ describe("project loading", () => {
           suggestedFix: "Create slides/001-missing.html or update deck.json to point at an existing project file."
         }
       ]);
+    }
+  });
+
+  it("updates only the manifest export profile", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "htmlslide-core-export-profile-"));
+    try {
+      await fs.mkdir(path.join(root, "slides"));
+      await fs.writeFile(path.join(root, "slides", "001-title.html"), "<section data-slide-id=\"001-title\"></section>\n");
+      await fs.writeFile(
+        path.join(root, "deck.json"),
+        `${JSON.stringify({
+          schemaVersion: "0.1.0",
+          id: "deck_export_profile",
+          title: "Export Profile",
+          language: "en-US",
+          aspectRatio: "16:9",
+          viewport: { width: 1920, height: 1080 },
+          slides: [{ id: "001-title", title: "Title", source: "slides/001-title.html" }]
+        }, null, 2)}\n`
+      );
+
+      await expect(writeDeckExportOptions(root, {
+        deckpkg: true,
+        html: false,
+        pdf: true,
+        speakerNotes: true,
+        thumbnails: false
+      })).resolves.toMatchObject({
+        export: {
+          deckpkg: true,
+          html: false,
+          pdf: true,
+          speakerNotes: true,
+          thumbnails: false
+        }
+      });
+      await expect(loadDeckProject(root, { verifyFiles: false })).resolves.toMatchObject({
+        deck: {
+          export: {
+            deckpkg: true,
+            html: false,
+            pdf: true,
+            speakerNotes: true,
+            thumbnails: false
+          }
+        }
+      });
+      await expect(fs.readFile(path.join(root, "deck.json"), "utf8")).resolves.toContain('"export"');
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
     }
   });
 

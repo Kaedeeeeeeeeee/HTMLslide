@@ -1,4 +1,5 @@
 import { AgentRunCancelledError } from "./errors.js";
+import { normalizeSpeakerNotesMode, type SpeakerNotesMode } from "@htmlslide/core";
 import type {
   AgentBuildResult,
   AgentCheckResult,
@@ -12,6 +13,7 @@ import type {
   ModelRequest,
   ModelResponse,
   NormalizedBrief,
+  VisualDirectionSample,
   VisualDirectionSet
 } from "./types.js";
 
@@ -140,6 +142,13 @@ const targetSlideCountFrom = (request: ModelRequest): number | undefined => {
   return typeof targetSlideCount === "number" && Number.isInteger(targetSlideCount) && targetSlideCount > 0
     ? targetSlideCount
     : undefined;
+};
+
+const speakerNotesModeFrom = (request: ModelRequest): SpeakerNotesMode => {
+  if (typeof request.input !== "object" || request.input === null || !("speakerNotesMode" in request.input)) {
+    return normalizeSpeakerNotesMode(undefined);
+  }
+  return normalizeSpeakerNotesMode((request.input as { speakerNotesMode?: unknown }).speakerNotesMode);
 };
 
 const outlineSlidesFrom = (request: ModelRequest): AgentOutlineSlide[] | undefined => {
@@ -276,14 +285,33 @@ export class MockModelProvider implements ModelProvider {
   }
 
   #visualDirectionOutput(request: ModelRequest): VisualDirectionSet {
-    const slideIds = outlineSlidesFrom(request)?.map((slide) => slide.id) ?? defaultOutlineSlides.map((slide) => slide.id);
+    const outlineSlides = outlineSlidesFrom(request) ?? defaultOutlineSlides;
+    const slideIds = outlineSlides.map((slide) => slide.id);
+    const slidesById = new Map(outlineSlides.map((slide) => [slide.id, slide]));
+    const sampleSlidesFor = (ids: string[]): VisualDirectionSample[] => ids.slice(0, 3).map((id, index, samples) => {
+      const source = slidesById.get(id);
+      const kind: VisualDirectionSample["kind"] = index === 0
+        ? "title"
+        : index === samples.length - 1
+          ? "data"
+          : "content";
+      return {
+        body: source?.goal ?? "A focused point in the story.",
+        chartValues: kind === "data" ? [38, 62, 48, 86] : [],
+        id,
+        kind,
+        metric: kind === "data" ? "+42%" : "",
+        title: source?.title ?? id
+      };
+    });
     return {
       directions: [
         {
           id: "direction-editorial",
           label: "Editorial Light",
           rationale: "High contrast typography, compact cards, and calm review surfaces.",
-          sampleSlideIds: slideIds.slice(0, 2),
+          sampleSlideIds: slideIds.slice(0, 3),
+          sampleSlides: sampleSlidesFor(slideIds.slice(0, 3)),
           tokens: {
             background: "#fbfbfd",
             text: "#171923",
@@ -294,7 +322,8 @@ export class MockModelProvider implements ModelProvider {
           id: "direction-systems",
           label: "Systems Console",
           rationale: "Dense operational layout with status rails and issue summaries.",
-          sampleSlideIds: slideIds.slice(-2),
+          sampleSlideIds: slideIds.slice(-3),
+          sampleSlides: sampleSlidesFor(slideIds.slice(-3)),
           tokens: {
             background: "#f4f6f8",
             text: "#111827",
@@ -307,9 +336,10 @@ export class MockModelProvider implements ModelProvider {
   }
 
   #buildOutput(request: ModelRequest): AgentBuildResult {
+    const speakerNotesMode = speakerNotesModeFrom(request);
     const slideIds = outlineSlidesFrom(request)?.map((slide) => slide.id) ?? defaultOutlineSlides.map((slide) => slide.id);
     const slidePaths = slideIds.map((slideId) => `slides/${slideId}.html`);
-    const notePaths = slideIds.map((slideId) => `notes/${slideId}.md`);
+    const notePaths = speakerNotesMode === "none" ? [] : slideIds.map((slideId) => `notes/${slideId}.md`);
     return {
       filesChanged: [
         "deck.json",
@@ -319,7 +349,7 @@ export class MockModelProvider implements ModelProvider {
         ...notePaths
       ],
       slidesChanged: slideIds,
-      notesChanged: slideIds,
+      notesChanged: notePaths,
       themeChanged: ["theme/theme.css", "theme/tokens.json"]
     };
   }
@@ -336,10 +366,15 @@ export class MockModelProvider implements ModelProvider {
   }
 
   #repairOutput(request: ModelRequest): AgentRepairResult {
+    const speakerNotesMode = speakerNotesModeFrom(request);
     return {
       attempt: repairAttemptFrom(request),
-      filesChanged: ["slides/002-workflow.html", "notes/002-workflow.md"],
-      issuesAddressed: ["text-overflow", "missing-speaker-note-detail"]
+      filesChanged: speakerNotesMode === "none"
+        ? ["slides/002-workflow.html"]
+        : ["slides/002-workflow.html", "notes/002-workflow.md"],
+      issuesAddressed: speakerNotesMode === "none"
+        ? ["text-overflow"]
+        : ["text-overflow", "missing-speaker-note-detail"]
     };
   }
 

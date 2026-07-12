@@ -9,8 +9,10 @@ Initial commands:
 - `htmlslide templates list --json` lists built-in deck template metadata.
 - `htmlslide open [path] --json` opens a loadable deck project or validated `.deckpkg` in the configured macOS app.
 - `htmlslide check [path] --json` discovers `deck.json` from a project root, nested source path, or direct `deck.json` path, then validates schema, files, notes, and source rules.
-- `htmlslide export [path] --pdf --html --deckpkg --thumbnails` creates export artifacts plus `exports/export-manifest.json` after a successful check.
+- `htmlslide export [path] --pdf --html --deckpkg --thumbnails` creates export artifacts plus `exports/export-manifest.json` after a successful check. When an output flag is omitted, the command uses the corresponding `deck.json` `export` value.
 - `htmlslide export [path] --no-pdf --no-deckpkg --no-thumbnails` skips selected artifacts while still writing required sidecars such as `notes.json`.
+
+Each explicit `--pdf`/`--no-pdf`, `--html`/`--no-html`, `--deckpkg`/`--no-deckpkg`, or `--thumbnails`/`--no-thumbnails` flag overrides only that manifest default for the current invocation. CLI flags do not rewrite `deck.json`; GUI export selections are persisted back to the manifest.
 - `htmlslide package [path] --json` checks a project and exports its portable `.deckpkg` plus required package sidecars.
 - `htmlslide present [file] --json` validates a `.deckpkg`, or checks and packages a project, then opens presenter mode in the configured macOS app.
 - `htmlslide skill list [--project <path>] --json` lists official skills plus installed integrity state.
@@ -25,6 +27,7 @@ Initial commands:
 - `htmlslide setup status --json` reports shim installation status.
 - `htmlslide doctor --json` reports local runtime health.
 - `htmlslide agent validate-provider --provider openai|anthropic|compatible --model <model> --api-key-env <ENV_NAME> [--base-url <url>] --json` validates BYOK credential/model reachability without printing or accepting an API key as a CLI argument.
+- `htmlslide agent run --engine htmlslide-mock --task <task> [--speaker-notes <mode>] --path <project> --json` runs the deterministic agent; `<mode>` is `none`, `bullet-notes`, `full-script`, or `rehearsal-cues`.
 - `pnpm rc:byok-evidence -- --project <path> --provider-validation <validation.json> [--run-id <id>] [--report <agent-report.json>] [--output <evidence.json>]` verifies a completed desktop BYOK run without reading provider credentials.
 
 Exit codes:

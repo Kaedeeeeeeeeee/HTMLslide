@@ -225,6 +225,38 @@ describe("agent orchestrator", () => {
     });
   });
 
+  it("passes the speaker notes mode through every model request and run output", async () => {
+    const baseProvider = createMockProvider({
+      checkResults: [createMockPassedCheck()]
+    });
+    const requests: ModelRequest[] = [];
+    const provider = {
+      ...baseProvider,
+      validateCredentials: () => baseProvider.validateCredentials(),
+      complete: async (request: ModelRequest): Promise<ModelResponse> => {
+        requests.push(request);
+        return baseProvider.complete(request);
+      }
+    };
+
+    const result = await runAgent({
+      projectRoot,
+      brief: "Rehearse this deck.",
+      provider,
+      runId: "run-notes-mode",
+      speakerNotesMode: "rehearsal-cues"
+    }, { clock: fixedClock });
+
+    expect(result.ok).toBe(true);
+    expect(result.outputs.speakerNotesMode).toBe("rehearsal-cues");
+    expect(requests.find((request) => request.stage === "build")?.input).toMatchObject({
+      speakerNotesMode: "rehearsal-cues"
+    });
+    expect(requests.find((request) => request.stage === "build")?.metadata).toMatchObject({
+      speakerNotesMode: "rehearsal-cues"
+    });
+  });
+
   it("runs the full mock build, check, repair, export, and review flow", async () => {
     const result = await runAgent(
       {

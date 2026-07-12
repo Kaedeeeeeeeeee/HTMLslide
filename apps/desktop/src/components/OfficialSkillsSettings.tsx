@@ -1,5 +1,5 @@
 import { Button, PanelHeader, StatusPill } from "@htmlslide/shared-ui";
-import { Sparkles, Wrench } from "lucide-react";
+import { Sparkles, Trash2, Wrench } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { DesktopOfficialSkillSummary, DesktopOfficialSkillsState } from "../desktop-api";
@@ -11,6 +11,7 @@ interface OfficialSkillsSettingsPanelProps {
   operationStatus: OperationStatus;
   state?: DesktopOfficialSkillsState;
   onInstall: () => void;
+  onRemove: (skillName: string) => void;
 }
 
 const statusFilters = [
@@ -22,6 +23,7 @@ const statusFilters = [
 
 export function OfficialSkillsSettingsPanel({
   onInstall,
+  onRemove,
   operationStatus,
   state
 }: OfficialSkillsSettingsPanelProps): ReactNode {
@@ -144,6 +146,7 @@ export function OfficialSkillsSettingsPanel({
                       <span>{skill.riskLevel} risk</span>
                       <span>{skill.license}</span>
                       <span>{skill.version}</span>
+                      {skill.integrity !== "missing" ? <span>{skill.integrity}</span> : null}
                     </div>
                     <div className="official-skill-row__actions">
                       <StatusPill tone={skillStatusTone(skill)}>{skill.status}</StatusPill>
@@ -157,6 +160,19 @@ export function OfficialSkillsSettingsPanel({
                       >
                         {expanded ? "Close" : "Inspect"}
                       </Button>
+                      {skill.status !== "missing" ? (
+                        <Button
+                          aria-label={`${skill.removeEnabled ? "Remove" : "Remove unavailable"} ${skill.name}`}
+                          disabled={busy || !skill.removeEnabled}
+                          icon={<Trash2 />}
+                          onClick={() => onRemove(skill.name)}
+                          size="sm"
+                          title={skill.removeDisabledReason ?? `Remove ${skill.name}`}
+                          variant={skill.removeEnabled ? "danger" : "quiet"}
+                        >
+                          {skill.removeEnabled ? "Remove" : "Remove unavailable"}
+                        </Button>
+                      ) : null}
                     </div>
                     {expanded ? (
                       <div className="official-skill-row__details" id={detailsId}>

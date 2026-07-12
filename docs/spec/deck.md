@@ -17,7 +17,8 @@ HTMLslide decks use `deck.json` as the project manifest. Version `0.1.0` defines
 - `appVersion`: app version that last wrote the manifest.
 - `safeArea`: non-negative `top`, `right`, `bottom`, and `left` values. Horizontal and vertical totals must fit inside `viewport`.
 - `theme`: optional project-local `css` and/or `tokens` references.
-- `export`: booleans for `pdf`, `html`, `deckpkg`, `thumbnails`, and `speakerNotes`.
+- `speakerNotesMode`: optional `none`, `bullet-notes`, `full-script`, or `rehearsal-cues` value recorded by New Deck and deterministic agent runs. When it is `none`, slides omit `notes` paths.
+- `export`: the project's default output profile, with booleans for `pdf`, `html`, `deckpkg`, `thumbnails`, and `speakerNotes`. The desktop New Deck wizard writes its selected profile here; later GUI and CLI exports read it when no per-invocation choice is supplied.
 - `agent`: optional `preferredEngine` and `lastRunId` metadata.
 
 ## Slide Entries

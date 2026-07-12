@@ -19,11 +19,13 @@ import {
   launchDesktopTarget,
   loadProject,
   readDesktopAppPathConfig,
+  resolveProjectExportOptions,
   tryLoadProjectForCheck,
   uninstallCliShim,
   validateAgentProviderCredentials,
   validateDeckPackageForPresentation
 } from "../src/index";
+import { writeDeckExportOptions } from "@htmlslide/core";
 
 const execFileAsync = promisify(execFile);
 const testDir = path.dirname(fileURLToPath(import.meta.url));
@@ -483,6 +485,70 @@ describe("CLI project helpers", { timeout: 20_000 }, () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("uses the manifest export profile when no CLI flags are provided", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
+    try {
+      const project = await createProject(path.join(root, "manifest-defaults"), "manifest-defaults");
+      await writeDeckExportOptions(project.projectPath, {
+        deckpkg: false,
+        html: true,
+        pdf: false,
+        speakerNotes: true,
+        thumbnails: false
+      });
+
+      const { stdout } = await runCli(["export", project.projectPath, "--json"]);
+      const exported = JSON.parse(stdout) as { artifacts: Record<string, unknown> };
+
+      expect(exported.artifacts).toMatchObject({
+        html: path.join(project.projectPath, "exports", "manifest-defaults.html"),
+        notes: path.join(project.projectPath, "exports", "notes.json")
+      });
+      expect(exported.artifacts).not.toHaveProperty("pdf");
+      expect(exported.artifacts).not.toHaveProperty("deckpkg");
+      expect(exported.artifacts).not.toHaveProperty("thumbnails");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("gives explicit CLI flags precedence over the manifest export profile", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
+    try {
+      const project = await createProject(path.join(root, "explicit-flags"), "explicit-flags");
+      await writeDeckExportOptions(project.projectPath, {
+        deckpkg: false,
+        html: false,
+        pdf: false,
+        speakerNotes: true,
+        thumbnails: false
+      });
+
+      const { stdout } = await runCli(["export", project.projectPath, "--html", "--json"]);
+      const exported = JSON.parse(stdout) as { artifacts: Record<string, unknown> };
+
+      expect(exported.artifacts.html).toBe(path.join(project.projectPath, "exports", "explicit-flags.html"));
+      expect(exported.artifacts.notes).toBe(path.join(project.projectPath, "exports", "notes.json"));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves each CLI export flag against the manifest profile", async () => {
+    const project = {
+      manifest: {
+        export: { deckpkg: true, html: false, pdf: true, speakerNotes: true, thumbnails: false }
+      }
+    } as Awaited<ReturnType<typeof loadProject>>;
+
+    expect(resolveProjectExportOptions(project, { html: true, pdf: false })).toMatchObject({
+      deckpkg: true,
+      html: true,
+      pdf: false,
+      thumbnails: false
+    });
   });
 
   it("packages a checked project without standalone PDF or HTML artifacts", async () => {
@@ -1134,6 +1200,8 @@ describe("CLI project helpers", { timeout: 20_000 }, () => {
         "Create a deterministic CLI coverage deck",
         "--path",
         project.projectPath,
+        "--speaker-notes",
+        "none",
         "--json"
       ]);
       const payload = JSON.parse(executed.stdout);
@@ -1159,6 +1227,8 @@ describe("CLI project helpers", { timeout: 20_000 }, () => {
         brief: "Create a deterministic CLI coverage deck",
         title: "Mock HTMLslide Deck"
       });
+      expect(payload.outputs.speakerNotesMode).toBe("none");
+      expect(payload.outputs.build.notesChanged).toEqual([]);
       expect(payload.outputs.checks.map((check: { status: string }) => check.status)).toEqual(["failed", "passed"]);
       expect(payload.outputs.repairs).toHaveLength(1);
       expect(payload.outputs.export.artifacts).toEqual(
@@ -1184,12 +1254,14 @@ describe("CLI project helpers", { timeout: 20_000 }, () => {
         filesChanged: expect.arrayContaining([
           "deck.json",
           "slides/003-review.html",
-          "notes/003-review.md",
           "theme/tokens.json"
         ])
       });
 
       const deck = JSON.parse(await readFile(path.join(project.projectPath, "deck.json"), "utf8"));
+      expect(deck.speakerNotesMode).toBe("none");
+      expect(deck.export.speakerNotes).toBe(false);
+      expect(deck.slides.every((slide: { notes?: string }) => slide.notes === undefined)).toBe(true);
       expect(deck.slides.map((slide: { id: string }) => slide.id)).toEqual([
         "001-title",
         "002-workflow",
@@ -1198,6 +1270,7 @@ describe("CLI project helpers", { timeout: 20_000 }, () => {
       await expect(readFile(path.join(project.projectPath, "slides", "003-review.html"), "utf8")).resolves.toContain(
         'data-slide-id="003-review"'
       );
+      await expect(access(path.join(project.projectPath, "notes", "001-title.md"))).rejects.toThrow();
 
       const checked = await runCli(["check", project.projectPath, "--json"]);
       const checkPayload = JSON.parse(checked.stdout);
@@ -1217,7 +1290,7 @@ describe("CLI project helpers", { timeout: 20_000 }, () => {
       expect(diffPayload.status).toBe("passed");
       expect(diffPayload.summary.changed).toBeGreaterThan(0);
       expect(diffPayload.added.map((file: { path: string }) => file.path)).toEqual(
-        expect.arrayContaining(["slides/003-review.html", "notes/003-review.md"])
+        expect.arrayContaining(["slides/003-review.html"])
       );
 
       await expect(
@@ -1243,7 +1316,7 @@ describe("CLI project helpers", { timeout: 20_000 }, () => {
         expect.arrayContaining(["deck.json", "slides/001-title.html", "notes/001-title.md"])
       );
       expect(revertPayload.deleted).toEqual(
-        expect.arrayContaining(["slides/003-review.html", "notes/003-review.md"])
+        expect.arrayContaining(["slides/003-review.html"])
       );
 
       const restoredDeck = JSON.parse(await readFile(path.join(project.projectPath, "deck.json"), "utf8"));

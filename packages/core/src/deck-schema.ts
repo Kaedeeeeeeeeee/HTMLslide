@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { HtmlslideIssue } from "./issues.js";
 import { normalizeDeckPath } from "./paths.js";
+import { SpeakerNotesModeSchema } from "./speaker-notes.js";
 import { DECK_SCHEMA_VERSION } from "./version.js";
 
 const CanvasDimensionSchema = z.number().int().min(1).max(16384);
@@ -22,6 +23,14 @@ export const SafeAreaSchema = z
   .strict();
 
 export const AspectRatioSchema = z.enum(["16:9"]);
+
+export const DEFAULT_DECK_EXPORT_OPTIONS = {
+  pdf: false,
+  html: false,
+  deckpkg: false,
+  thumbnails: false,
+  speakerNotes: false
+} as const;
 
 export const SlideKindSchema = z.enum([
   "title",
@@ -81,6 +90,17 @@ export const DeckExportSchema = z
   })
   .strict();
 
+export type DeckExportOptions = z.infer<typeof DeckExportSchema>;
+
+export function parseDeckExportOptions(value: unknown): DeckExportOptions {
+  return DeckExportSchema.parse(value ?? DEFAULT_DECK_EXPORT_OPTIONS);
+}
+
+export function normalizeDeckExportOptions(value: unknown): DeckExportOptions {
+  const result = DeckExportSchema.safeParse(value ?? DEFAULT_DECK_EXPORT_OPTIONS);
+  return result.success ? result.data : { ...DEFAULT_DECK_EXPORT_OPTIONS };
+}
+
 export const DeckAgentSchema = z
   .object({
     preferredEngine: z.string().min(1).nullable().optional(),
@@ -98,15 +118,10 @@ export const DeckSchema = z
     aspectRatio: AspectRatioSchema,
     viewport: ViewportSchema,
     safeArea: SafeAreaSchema.default({ top: 0, right: 0, bottom: 0, left: 0 }),
+    speakerNotesMode: SpeakerNotesModeSchema.optional(),
     theme: ThemeReferenceSchema.optional(),
     slides: z.array(DeckSlideSchema).min(1),
-    export: DeckExportSchema.default({
-      pdf: false,
-      html: false,
-      deckpkg: false,
-      thumbnails: false,
-      speakerNotes: false
-    }),
+    export: DeckExportSchema.default(DEFAULT_DECK_EXPORT_OPTIONS),
     agent: DeckAgentSchema.default({})
   })
   .strict()

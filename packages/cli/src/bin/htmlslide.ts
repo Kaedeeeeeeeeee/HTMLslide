@@ -2,7 +2,7 @@
 import os from "node:os";
 import path from "node:path";
 import { Command, CommanderError } from "commander";
-import { ProjectLoadError } from "@htmlslide/core";
+import { normalizeSpeakerNotesMode, ProjectLoadError } from "@htmlslide/core";
 import { listBuiltInDeckTemplates } from "@htmlslide/core/templates";
 import { HTMLSLIDE_APP_VERSION } from "@htmlslide/core/version";
 import {
@@ -55,6 +55,7 @@ type JsonOption = {
 };
 
 type NewCommandOptions = JsonOption & {
+  speakerNotes?: string;
   template?: string;
   title?: string;
 };
@@ -80,6 +81,7 @@ type AgentRunCommandOptions = JsonOption & {
   engine: string;
   task: string;
   path?: string;
+  speakerNotes?: string;
 };
 
 type AgentValidateProviderCommandOptions = JsonOption & {
@@ -300,12 +302,16 @@ program
   .option("--json", "print machine-readable JSON")
   .option("--template <template>", "built-in deck template id", "default")
   .option("--title <title>", "deck title to write into deck.json")
+  .option("--speaker-notes <mode>", "speaker notes mode: none, bullet-notes, full-script, or rehearsal-cues")
   .description("Create a deck project from a built-in template.")
   .action(async (name: string, options: NewCommandOptions) => {
     const json = Boolean(options.json ?? program.opts<JsonOption>().json);
     try {
       const title = options.title?.trim() || path.basename(path.resolve(name));
-      const project = await createProject(name, title, { templateId: options.template });
+      const project = await createProject(name, title, {
+        speakerNotesMode: options.speakerNotes ? normalizeSpeakerNotesMode(options.speakerNotes) : undefined,
+        templateId: options.template
+      });
       writeResult(
         { status: "passed", projectPath: project.projectPath, template: options.template ?? "default", title: project.manifest.title },
         json
@@ -319,12 +325,16 @@ program
   .command("init")
   .option("--json", "print machine-readable JSON")
   .option("--template <template>", "built-in deck template id", "default")
+  .option("--speaker-notes <mode>", "speaker notes mode: none, bullet-notes, full-script, or rehearsal-cues")
   .description("Initialize the current directory as a deck project.")
   .action(async (options: NewCommandOptions) => {
     const json = Boolean(options.json ?? program.opts<JsonOption>().json);
     try {
       const name = process.cwd().split(/[\\/]/).at(-1) ?? "deck";
-      const project = await createProject(process.cwd(), name, { templateId: options.template });
+      const project = await createProject(process.cwd(), name, {
+        speakerNotesMode: options.speakerNotes ? normalizeSpeakerNotesMode(options.speakerNotes) : undefined,
+        templateId: options.template
+      });
       writeResult(
         { status: "passed", projectPath: project.projectPath, template: options.template ?? "default", title: project.manifest.title },
         json
@@ -720,6 +730,7 @@ agentCommand
   .requiredOption("--engine <engine>", "agent engine id from htmlslide agent engines")
   .requiredOption("--task <task>", "task or brief for the agent run")
   .option("--path <path>", "deck project path", process.cwd())
+  .option("--speaker-notes <mode>", "speaker notes mode: none, bullet-notes, full-script, or rehearsal-cues")
   .option("--json", "print machine-readable JSON")
   .description("Run an agent task with a configured engine.")
   .action(async (options: AgentRunCommandOptions) => {
@@ -727,6 +738,7 @@ agentCommand
     try {
       const result = await runAgentTask({
         engine: options.engine,
+        speakerNotesMode: options.speakerNotes,
         task: options.task,
         projectPath: options.path
       });

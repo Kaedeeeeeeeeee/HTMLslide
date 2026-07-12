@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -19,7 +19,11 @@ const createTempProject = async (): Promise<string> => {
   return projectPath;
 };
 
-const runSuccessfulMockAgent = async (projectPath: string, targetSlideCount?: number) =>
+const runSuccessfulMockAgent = async (
+  projectPath: string,
+  targetSlideCount?: number,
+  speakerNotesMode: "none" | "bullet-notes" | "full-script" | "rehearsal-cues" = "bullet-notes"
+) =>
   runAgent(
     {
       projectRoot: projectPath,
@@ -28,6 +32,7 @@ const runSuccessfulMockAgent = async (projectPath: string, targetSlideCount?: nu
         checkResults: [createMockPassedCheck()]
       }),
       runId: "run-apply-mock",
+      speakerNotesMode,
       targetSlideCount
     },
     {
@@ -105,10 +110,52 @@ describe("applyMockAgentProject", () => {
     expect(files["slides/001-title.html"]).toContain('data-slide-id="001-title"');
     expect(files["slides/002-workflow.html"]).toContain('data-slide-id="002-workflow"');
     expect(files["slides/003-review.html"]).toContain('data-slide-id="003-review"');
-    expect(files["notes/001-title.md"]).toContain("deterministic mock deck");
-    expect(files["notes/002-workflow.md"]).toContain("paths stay project-relative");
+    expect(deck.speakerNotesMode).toBe("bullet-notes");
+    expect(files["notes/001-title.md"]).toContain("- Goal:");
+    expect(files["notes/002-workflow.md"]).toContain("- Context:");
     expect(files["theme/theme.css"]).not.toMatch(/https?:\/\//i);
     expect(files["theme/tokens.json"]).toContain('"accent": "#2357d9"');
+  });
+
+  it.each([
+    ["none", false],
+    ["bullet-notes", true],
+    ["full-script", true],
+    ["rehearsal-cues", true]
+  ] as const)("applies the %s mode to manifest paths and generated notes", async (mode, hasNotes) => {
+    const projectPath = await createTempProject();
+    const result = await runSuccessfulMockAgent(projectPath, undefined, mode);
+    const applied = await applyMockAgentProject({ projectPath, result });
+    const deck = JSON.parse(await readFile(path.join(projectPath, "deck.json"), "utf8")) as {
+      speakerNotesMode?: string;
+      slides: Array<{ notes?: string }>;
+      export: { speakerNotes: boolean };
+    };
+
+    expect(result.ok).toBe(true);
+    expect(result.outputs.speakerNotesMode).toBe(mode);
+    expect(deck.speakerNotesMode).toBe(mode);
+    expect(deck.export.speakerNotes).toBe(hasNotes);
+    expect(deck.slides.every((slide) => slide.notes !== undefined)).toBe(hasNotes);
+    expect(applied.paths.notes).toHaveLength(hasNotes ? 3 : 0);
+    if (hasNotes) {
+      await expect(readFile(path.join(projectPath, "notes", "001-title.md"), "utf8")).resolves.toContain(
+        mode === "full-script" ? "deterministic mock deck" : mode === "rehearsal-cues" ? "Cue:" : "- Goal:"
+      );
+    } else {
+      await expectMissing(path.join(projectPath, "notes", "001-title.md"));
+    }
+  });
+
+  it("removes template note files when none is selected", async () => {
+    const projectPath = await createTempProject();
+    await mkdir(path.join(projectPath, "notes"), { recursive: true });
+    await writeFile(path.join(projectPath, "notes", "001-title.md"), "Old notes\n", "utf8");
+    const result = await runSuccessfulMockAgent(projectPath, undefined, "none");
+
+    await applyMockAgentProject({ projectPath, result });
+
+    await expectMissing(path.join(projectPath, "notes", "001-title.md"));
   });
 
   it("overwrites the same successful result with byte-stable content", async () => {

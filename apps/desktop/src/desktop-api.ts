@@ -19,6 +19,8 @@ import type {
   FileCopyCheckpointRevertResult,
   VisualDirection
 } from "@htmlslide/agent";
+import type { SpeakerNotesMode } from "@htmlslide/core";
+import type { DeckExportOptions } from "@htmlslide/core";
 
 export type DesktopSetupState = {
   appName: string;
@@ -80,7 +82,7 @@ export type DesktopOfficialSkillsState = {
   status: "passed" | "info" | "warning" | "failed";
   installed: boolean;
   managed: true;
-  action?: "installed" | "updated" | "unchanged";
+  action?: "installed" | "updated" | "removed" | "unchanged";
   htmlslideHomeDir: string;
   skillsDir: string;
   skillCount: number;
@@ -121,6 +123,9 @@ export type DesktopOfficialSkillSummary = {
   installed: boolean;
   stale: boolean;
   status: "installed" | "missing" | "stale";
+  integrity: "verified" | "modified" | "unmanaged" | "invalid" | "missing";
+  removeEnabled: boolean;
+  removeDisabledReason?: string;
 };
 
 export type DesktopProjectRecord = Omit<ProjectSummary, "lastOpened"> & {
@@ -148,6 +153,12 @@ export type DesktopPresenterPreferences = {
 };
 
 export type DesktopExportOptions = NewDeckExportSelection;
+export type DesktopCreateProjectRequest = NewDeckDraft & {
+  exportOptions?: DeckExportOptions;
+  speakerNotesMode?: SpeakerNotesMode;
+  sources?: NewDeckSource[];
+  workspacePath?: string;
+};
 
 export type DesktopSourceFileSelection = {
   kind: "file";
@@ -158,7 +169,9 @@ export type DesktopSourceFileSelection = {
 
 export type DesktopProjectPreview = {
   project: DesktopProjectRecord;
+  exportOptions: DesktopExportOptions;
   slides: SlideSummary[];
+  speakerNotesMode?: SpeakerNotesMode;
 };
 
 export type DesktopSlidePreviewDocument = {
@@ -348,6 +361,7 @@ export type DesktopAgentRunRequest = {
   targetSlideCount?: number;
   runExport?: boolean;
   maxRepairRounds?: number;
+  speakerNotesMode?: SpeakerNotesMode;
 };
 
 export type DesktopAgentRunResult =
@@ -478,6 +492,7 @@ export type HtmlslideDesktopApi = {
   getCliIntegration(): Promise<DesktopCliIntegrationState>;
   installCliIntegration(): Promise<DesktopCliIntegrationState>;
   installOfficialSkills(): Promise<DesktopOfficialSkillsState>;
+  removeOfficialSkill(request: { name: string; confirmed?: boolean }): Promise<DesktopOfficialSkillsState>;
   uninstallCliIntegration(): Promise<DesktopCliIntegrationState>;
   copyCliManualInstallCommand(): Promise<{ copied: boolean; command: string }>;
   copyAgentRepairPrompt(prompt: string): Promise<{ copied: boolean }>;
@@ -499,7 +514,7 @@ export type HtmlslideDesktopApi = {
   loadSlidePreview(projectPath: string, slideId: string): Promise<DesktopSlidePreviewDocument>;
   saveSlideNotes(projectPath: string, slideId: string, content: string): Promise<DesktopSaveSlideNotesResult>;
   addQaIgnoreRule(projectPath: string, issueType: string): Promise<{ issueTypes: string[] }>;
-  createProject(request: NewDeckDraft & { workspacePath?: string; sources?: NewDeckSource[] }): Promise<DesktopCliResult>;
+  createProject(request: DesktopCreateProjectRequest): Promise<DesktopCliResult>;
   checkProject(projectPath: string): Promise<DesktopCliResult>;
   exportProject(projectPath: string, options?: DesktopExportOptions): Promise<DesktopCliResult>;
   loadPresenterDeck(projectPath: string): Promise<DesktopPresenterDeckResult>;

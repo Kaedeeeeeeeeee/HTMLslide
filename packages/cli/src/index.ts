@@ -32,9 +32,11 @@ import {
 } from "@htmlslide/compiler";
 import {
   loadDeckProject,
+  normalizeSpeakerNotesMode,
   ProjectLoadError,
   type Deck,
-  type LoadedDeckProject
+  type LoadedDeckProject,
+  type SpeakerNotesMode
 } from "@htmlslide/core";
 import { renderBuiltInDeckTemplate, type DeckTemplateId } from "@htmlslide/core/templates";
 import { HTMLSLIDE_APP_VERSION } from "@htmlslide/core/version";
@@ -152,6 +154,7 @@ export type LoadedProject = {
 };
 
 export type CreateProjectOptions = {
+  speakerNotesMode?: SpeakerNotesMode;
   templateId?: DeckTemplateId | string;
 };
 
@@ -170,6 +173,7 @@ export type AgentRunCliOptions = {
   engine: string;
   task: string;
   projectPath?: string;
+  speakerNotesMode?: string;
 };
 
 export type AgentRunCliResult = AgentRunResult & {
@@ -758,7 +762,11 @@ export const createProject = async (
     throw new Error(`deck.json already exists at ${deckPath}`);
   }
 
-  const template = renderBuiltInDeckTemplate({ name, templateId: options.templateId });
+  const template = renderBuiltInDeckTemplate({
+    name,
+    speakerNotesMode: options.speakerNotesMode,
+    templateId: options.templateId
+  });
   const manifest = template.manifest;
   await ensureProjectDirs(resolvedProjectPath);
   for (const file of template.files) {
@@ -895,8 +903,19 @@ export const checkLoadedProject = async (project: LoadedProject): Promise<CheckR
     }))
   });
 
+export const resolveProjectExportOptions = (
+  project: LoadedProject,
+  options: ExportOptions = {}
+): ExportOptions => ({
+  ...options,
+  deckpkg: options.deckpkg ?? project.manifest.export.deckpkg,
+  html: options.html ?? project.manifest.export.html,
+  pdf: options.pdf ?? project.manifest.export.pdf,
+  thumbnails: options.thumbnails ?? project.manifest.export.thumbnails
+});
+
 export const exportLoadedProject = async (project: LoadedProject, options?: ExportOptions) =>
-  exportDeck(toCompilerInput(project), options);
+  exportDeck(toCompilerInput(project), resolveProjectExportOptions(project, options));
 
 export const packageLoadedProject = async (project: LoadedProject): Promise<PackageProjectResult> => {
   const result = await exportLoadedProject(project, {
@@ -1050,12 +1069,14 @@ export const runAgentTask = async (options: AgentRunCliOptions): Promise<AgentRu
   }
 
   const projectPath = path.resolve(options.projectPath ?? process.cwd());
+  const speakerNotesMode = normalizeSpeakerNotesMode(options.speakerNotesMode);
   const result = await runAgent(
     {
       projectRoot: projectPath,
       brief: options.task,
       provider: createMockProvider(),
-      createCheckpoint: createFileCopyCheckpoint
+      createCheckpoint: createFileCopyCheckpoint,
+      speakerNotesMode
     },
     {
       clock: deterministicAgentClock

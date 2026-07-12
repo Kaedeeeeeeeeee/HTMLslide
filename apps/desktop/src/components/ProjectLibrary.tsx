@@ -4,6 +4,7 @@ import {
   MAX_SOURCE_MATERIAL_BYTES_TOTAL,
   MAX_SOURCE_MATERIAL_COUNT
 } from "@htmlslide/core/source-material-limits";
+import type { SpeakerNotesMode } from "@htmlslide/core";
 import { listBuiltInDeckTemplates } from "@htmlslide/core/templates";
 import {
   BookOpen,
@@ -68,6 +69,7 @@ interface ProjectLibraryProps {
   onCliIntegrationRefresh: () => void;
   onCliIntegrationUninstall: () => void;
   onInstallOfficialSkills: () => void;
+  onRemoveOfficialSkill: (skillName: string) => void;
   onLibrarySectionChange: (section: LibrarySection) => void;
   onRefreshExternalAgents: () => void;
   onSaveAiEngineSettings: (draft: AiEngineSettingsDraft) => Promise<boolean> | void;
@@ -169,6 +171,7 @@ export function ProjectLibrary({
   onCliIntegrationRefresh,
   onCliIntegrationUninstall,
   onInstallOfficialSkills,
+  onRemoveOfficialSkill,
   onLibrarySectionChange,
   onRefreshExternalAgents,
   onSaveAiEngineSettings,
@@ -246,6 +249,7 @@ export function ProjectLibrary({
             />
             <OfficialSkillsSettingsPanel
               onInstall={onInstallOfficialSkills}
+              onRemove={onRemoveOfficialSkill}
               operationStatus={officialSkillsStatus}
               state={officialSkills}
             />
@@ -262,6 +266,7 @@ export function ProjectLibrary({
         {activeSection === "skills" ? (
           <OfficialSkillsSettingsPanel
             onInstall={onInstallOfficialSkills}
+            onRemove={onRemoveOfficialSkill}
             operationStatus={officialSkillsStatus}
             state={officialSkills}
           />
@@ -775,7 +780,7 @@ function RecentProjects({
             <label className="settings-field">
               <span>Speaker notes</span>
               <select
-                onChange={(event) => updateDraft("speakerNotes", event.currentTarget.value)}
+                onChange={(event) => updateDraft("speakerNotes", event.currentTarget.value as SpeakerNotesMode)}
                 value={draft.speakerNotes}
               >
                 {speakerNotesOptions.map((option) => (

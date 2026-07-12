@@ -52,11 +52,30 @@ export function coerceStageOutput(stage: AgentRunStage, output: JsonObject): unk
       return {
         directions: expectNonEmptyArray(output, "directions").map((direction, index) => {
           const record = expectRecord(direction, `directions[${index}]`);
+          const sampleSlides = record.sampleSlides === undefined
+            ? undefined
+            : expectArray(record, "sampleSlides").map((sample, sampleIndex) => {
+                const sampleRecord = expectRecord(sample, `directions[${index}].sampleSlides[${sampleIndex}]`);
+                return {
+                  id: expectString(sampleRecord, "id"),
+                  kind: expectEnum(sampleRecord, "kind", ["title", "content", "data"]),
+                  title: expectString(sampleRecord, "title"),
+                  body: expectString(sampleRecord, "body"),
+                  metric: expectString(sampleRecord, "metric"),
+                  chartValues: expectArray(sampleRecord, "chartValues").map((value, valueIndex) => {
+                    if (typeof value !== "number" || !Number.isFinite(value)) {
+                      throw new Error(`Expected directions[${index}].sampleSlides[${sampleIndex}].chartValues[${valueIndex}] to be a finite number.`);
+                    }
+                    return value;
+                  })
+                };
+              });
           return {
             id: expectString(record, "id"),
             label: expectString(record, "label"),
             rationale: expectString(record, "rationale"),
             sampleSlideIds: expectStringArray(record, "sampleSlideIds"),
+            ...(sampleSlides ? { sampleSlides } : {}),
             tokens: expectRecord(record.tokens, `directions[${index}].tokens`)
           };
         }),
@@ -151,12 +170,20 @@ export function schemaForStage(stage: AgentRunStage): JsonObject {
           label: stringSchema(),
           rationale: stringSchema(),
           sampleSlideIds: arraySchema(stringSchema()),
+          sampleSlides: arraySchema(objectSchema({
+            id: stringSchema(),
+            kind: enumSchema(["title", "content", "data"]),
+            title: stringSchema(),
+            body: stringSchema(),
+            metric: stringSchema(),
+            chartValues: arraySchema(numberSchema())
+          })),
           tokens: objectSchema({
             background: stringSchema(),
             text: stringSchema(),
             accent: stringSchema()
           })
-        }), true),
+        }, ["sampleSlides"]), true),
         selectedDirectionId: nullableStringSchema()
       });
     case "build":
@@ -306,11 +333,15 @@ function sourceWritesSchema(): JsonObject {
   }));
 }
 
-function objectSchema(properties: Record<string, JsonObject>): JsonObject {
+function objectSchema(
+  properties: Record<string, JsonObject>,
+  optionalProperties: readonly string[] = []
+): JsonObject {
+  const optional = new Set(optionalProperties);
   return {
     type: "object",
     properties,
-    required: Object.keys(properties),
+    required: Object.keys(properties).filter((property) => !optional.has(property)),
     additionalProperties: false
   };
 }

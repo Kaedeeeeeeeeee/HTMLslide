@@ -1,5 +1,6 @@
 import { AgentRunCancelledError, AgentRunFailureError, errorMessage, isCancellationError } from "./errors.js";
 import { createFileCopyCheckpoint } from "./checkpoint.js";
+import { DEFAULT_SPEAKER_NOTES_MODE, normalizeSpeakerNotesMode, type SpeakerNotesMode } from "@htmlslide/core";
 import type {
   AgentBuildResult,
   AgentCheckResult,
@@ -80,9 +81,10 @@ export const createAgentRunId = (): string => {
   return runId;
 };
 
-const emptyOutputs = (): AgentRunOutputs => ({
+const emptyOutputs = (speakerNotesMode: SpeakerNotesMode): AgentRunOutputs => ({
   checks: [],
-  repairs: []
+  repairs: [],
+  speakerNotesMode
 });
 
 const checkHasErrors = (check: AgentCheckResult): boolean => check.summary.errors > 0;
@@ -138,6 +140,14 @@ const withTargetSlideCount = <TInput extends Record<string, unknown>>(
   };
 };
 
+const withSpeakerNotesMode = <TInput extends Record<string, unknown>>(
+  input: TInput,
+  speakerNotesMode: SpeakerNotesMode
+): TInput & { speakerNotesMode: SpeakerNotesMode } => ({
+  ...input,
+  speakerNotesMode
+});
+
 const validateOutline = (outline: AgentOutline, targetSlideCount: number | undefined): void => {
   if (outline.slides.length === 0) {
     throw new AgentRunFailureError({
@@ -178,6 +188,7 @@ export class AgentRunController {
   readonly #maxRepairRounds: number;
   readonly #onEvent: AgentOrchestratorOptions["onEvent"];
   readonly #onLog: AgentOrchestratorOptions["onLog"];
+  readonly #speakerNotesMode: SpeakerNotesMode;
 
   #sequence = 0;
   #cancelled = false;
@@ -190,6 +201,7 @@ export class AgentRunController {
     this.#maxRepairRounds = input.maxRepairRounds ?? options.defaultMaxRepairRounds ?? 3;
     this.#onEvent = options.onEvent;
     this.#onLog = options.onLog;
+    this.#speakerNotesMode = normalizeSpeakerNotesMode(input.speakerNotesMode ?? DEFAULT_SPEAKER_NOTES_MODE);
     this.runId = input.runId ?? createAgentRunId();
     this.#snapshot = {
       runId: this.runId,
@@ -199,7 +211,7 @@ export class AgentRunController {
       state: "idle",
       repairAttempts: 0,
       maxRepairRounds: this.#maxRepairRounds,
-      outputs: emptyOutputs(),
+      outputs: emptyOutputs(this.#speakerNotesMode),
       events: this.#events,
       logs: this.#logs
     };
@@ -420,11 +432,11 @@ export class AgentRunController {
         runId: this.runId,
         stage,
         prompt: this.#promptForStage(stage, prompt),
-        input: withTargetSlideCount(input, this.#input.targetSlideCount),
-        metadata:
-          this.#input.targetSlideCount === undefined
-            ? this.#input.metadata
-            : withTargetSlideCount(this.#input.metadata ?? {}, this.#input.targetSlideCount),
+        input: withTargetSlideCount(withSpeakerNotesMode(input, this.#speakerNotesMode), this.#input.targetSlideCount),
+        metadata: withTargetSlideCount(
+          withSpeakerNotesMode(this.#input.metadata ?? {}, this.#speakerNotesMode),
+          this.#input.targetSlideCount
+        ),
         signal: this.#abortController.signal
       });
       this.#throwIfCancelled(stage);

@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import { buildArtifactMetadata } from "./artifact-metadata.mjs";
 import { renderChecklist } from "./create-rc-acceptance.mjs";
 import { renderReleaseNotes } from "./create-release-notes.mjs";
+import { readPackageManifestProvenance } from "./rc-provenance.mjs";
 import {
   REQUIRED_RELEASE_SCRIPTS,
   REQUIRED_RELEASE_SECRETS,
@@ -206,6 +207,8 @@ describe("release evidence scripts", () => {
     expect(workflow).toContain("pnpm rc:byok-fixture-smoke");
     expect(workflow).toContain("rc_checklist_promotion_path");
     expect(workflow).toContain("pnpm rc:checklist:verify");
+    expect(workflow).toContain('--package-manifest "$manifest"');
+    expect(workflow).toContain('--commit "$GITHUB_SHA"');
     expect(workflow.indexOf("Verify RC checklist promotion gate")).toBeLessThan(workflow.indexOf("Attach artifacts to GitHub Release"));
     const bundleVerifyIndex = workflow.indexOf("pnpm release:bundle:verify");
     const bundleEvidenceOutputIndex = workflow.indexOf("--output release-artifacts/HTMLslide-release-bundle-evidence.json");
@@ -682,6 +685,58 @@ describe("release evidence scripts", () => {
     }
   });
 
+  it("binds a completed RC checklist to the exact package manifest provenance", async () => {
+    const fixture = await createExternalAgentEvidenceFixture();
+    const checklistPath = path.join(fixture.root, "bound.md");
+    try {
+      const provenance = await readPackageManifestProvenance(fixture.manifestPath, { requireSourceCommit: true });
+      await writeFile(checklistPath, completeChecklist({
+        commit: provenance.sourceCommit,
+        packageManifestSha256: provenance.manifestSha256,
+        primaryArtifactSha256: provenance.primaryArtifactSha256
+      }), "utf8");
+
+      const result = await verifyChecklist([
+        "--checklist", checklistPath,
+        "--package-manifest", fixture.manifestPath,
+        "--commit", provenance.sourceCommit
+      ]);
+
+      expect(result.provenance).toMatchObject({
+        commit: provenance.sourceCommit,
+        packageManifestSha256: provenance.manifestSha256,
+        primaryArtifactSha256: provenance.primaryArtifactSha256
+      });
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["wrong commit", (text: string) => text.replace(/\| Commit \| [^|]+ \|/u, "| Commit | deadbeef |") , /Commit does not match/iu],
+    ["wrong manifest hash", (text: string) => text.replace(/\| Package manifest SHA256 \| [^|]+ \|/u, `| Package manifest SHA256 | ${"0".repeat(64)} |`), /Package manifest SHA256 does not match/iu],
+    ["wrong artifact hash", (text: string) => text.replace(/\| Primary DMG SHA256 \| [^|]+ \|/u, `| Primary DMG SHA256 | ${"0".repeat(64)} |`), /Primary DMG SHA256 does not match/iu]
+  ])("rejects %s in a provenance-bound RC checklist", async (_name, mutate, expected) => {
+    const fixture = await createExternalAgentEvidenceFixture();
+    const checklistPath = path.join(fixture.root, "invalid-bound.md");
+    try {
+      const provenance = await readPackageManifestProvenance(fixture.manifestPath, { requireSourceCommit: true });
+      await writeFile(checklistPath, mutate(completeChecklist({
+        commit: provenance.sourceCommit,
+        packageManifestSha256: provenance.manifestSha256,
+        primaryArtifactSha256: provenance.primaryArtifactSha256
+      })), "utf8");
+
+      await expect(verifyChecklist([
+        "--checklist", checklistPath,
+        "--package-manifest", fixture.manifestPath,
+        "--commit", provenance.sourceCommit
+      ])).rejects.toThrow(expected);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   it("exposes rc:checklist:verify as a JSON-producing command", async () => {
     const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-rc-checklist-cli-"));
     const inputPath = path.join(fixtureRoot, "completed.md");
@@ -1079,13 +1134,14 @@ describe("release evidence scripts", () => {
   });
 });
 
-function completeChecklist() {
+function completeChecklist(metadata = {}) {
   const rendered = renderChecklist({
     artifactUrl: "https://example.test/htmlslide-alpha.dmg",
     channel: "alpha",
     ciRunUrl: "https://github.test/ci",
     packageRunUrl: "https://github.test/package",
-    version: "0.1.0"
+    version: "0.1.0",
+    ...metadata
   }).replace(/<[^>\n]+>/gu, "filled-value");
   const manualStart = rendered.indexOf("## Manual Acceptance Script");
   const resultStart = rendered.indexOf("## Result", manualStart);
@@ -1397,6 +1453,7 @@ async function createExternalAgentEvidenceFixture() {
     channel: "alpha",
     version: "0.1.0",
     arch: "arm64",
+    sourceCommit: "f570b88",
     signing: "ad-hoc",
     notarized: false,
     stapled: false,

@@ -16,7 +16,7 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-macos-${{ github.ref }}
@@ -25,14 +25,18 @@ concurrency:
 jobs:
   signed-notarized:
     name: Build signed notarized macOS artifact
+    permissions:
+      contents: write
+    environment: macos-release
     runs-on: macos-26
     timeout-minutes: 90
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Validate signed release contract
         shell: bash
@@ -65,12 +69,12 @@ jobs:
           NODE
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
         with:
           run_install: false
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: 22
           cache: pnpm
@@ -113,7 +117,7 @@ jobs:
 
       - name: Upload visual regression artifacts
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: visual-regression-${{ github.job }}-${{ github.run_attempt }}
           path: dist/visual-regression/**
@@ -131,7 +135,7 @@ jobs:
 
       - name: Upload desktop E2E artifacts
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: desktop-e2e-${{ github.job }}-${{ github.run_attempt }}
           path: tmp/playwright/**
@@ -298,8 +302,9 @@ jobs:
 
           shopt -s nullglob
           artifacts=(dist/release/*.dmg dist/release/*.json)
+          manifest="$(find dist/release -maxdepth 1 -type f -name 'HTMLslide-*.json' -print | sort | tail -n 1)"
 
-          if (( ${#artifacts[@]} == 0 )); then
+          if (( ${#artifacts[@]} == 0 )) || [[ -z "$manifest" || ! -f "$manifest" ]]; then
             echo "::error title=No release artifacts::No release DMG or manifest was found under dist/release."
             exit 1
           fi
@@ -322,6 +327,8 @@ jobs:
             --package-run-url "$run_url" \
             --artifact-url "htmlslide-signed-notarized-${GITHUB_RUN_NUMBER}" \
             --release-tag "$release_tag" \
+            --package-manifest "$manifest" \
+            --commit "$GITHUB_SHA" \
             --output release-artifacts/HTMLslide-release-rc-acceptance.md
 
           generated_checklist="release-artifacts/HTMLslide-release-rc-acceptance.md"
@@ -372,7 +379,15 @@ jobs:
           fi
 
           echo "Verifying RC checklist promotion evidence; unresolved TODO placeholders remain a hard failure."
-          pnpm rc:checklist:verify -- --checklist "$checklist"
+          manifest="$(find release-artifacts -maxdepth 1 -type f -name 'HTMLslide-*.json' -print | sort | tail -n 1)"
+          if [[ -z "$manifest" || ! -f "$manifest" ]]; then
+            echo "::error title=Missing final release manifest::The uploaded release bundle has no package manifest."
+            exit 1
+          fi
+          pnpm rc:checklist:verify -- \
+            --checklist "$checklist" \
+            --package-manifest "$manifest" \
+            --commit "$GITHUB_SHA"
 
       - name: Generate release notes
         if: startsWith(github.ref, 'refs/tags/v')
@@ -380,7 +395,7 @@ jobs:
           pnpm release:notes -- --tag "${GITHUB_REF_NAME}" --output release-artifacts/RELEASE_NOTES.md
 
       - name: Upload signed notarized artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: htmlslide-signed-notarized-${{ github.run_number }}
           path: release-artifacts/*

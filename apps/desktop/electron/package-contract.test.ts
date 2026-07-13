@@ -345,6 +345,9 @@ describe("macOS alpha packaging contract", () => {
     expect(workflow).toContain("runs-on: macos-26");
     expect(workflow).toContain("fetch-depth: 0");
     expect(workflow).toContain("contents: write");
+    expect(workflow).toContain("contents: read");
+    expect(workflow).toContain("environment: macos-release");
+    expect(workflow).toContain("persist-credentials: false");
     expect(workflow).toContain("docs:build");
     expect(workflow).toContain("version:check");
     expect(workflow).toContain("pnpm docs:build");
@@ -413,9 +416,10 @@ describe("macOS alpha packaging contract", () => {
     const workflows = await Promise.all(workflowPaths.map((workflowPath) => readText(workflowPath)));
 
     for (const workflow of workflows) {
-      expect(workflow).toContain("actions/checkout@v7");
-      expect(workflow).toContain("actions/setup-node@v6");
-      expect(workflow).toContain("pnpm/action-setup@v6");
+      expect(workflow).toContain("actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7");
+      expect(workflow).toContain("actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6");
+      expect(workflow).toContain("pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6");
+      expect(workflow).toContain("persist-credentials: false");
       expect(workflow).not.toMatch(/actions\/checkout@v[1-6]\b/);
       expect(workflow).not.toMatch(/actions\/setup-node@v[1-5]\b/);
       expect(workflow).not.toMatch(/pnpm\/action-setup@v[1-5]\b/);
@@ -424,7 +428,7 @@ describe("macOS alpha packaging contract", () => {
 
     for (const workflow of [workflows[0], workflows[2], workflows[3]]) {
       expect(workflow).not.toContain("macos-latest");
-      expect(workflow).toContain("actions/upload-artifact@v7");
+      expect(workflow).toContain("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7");
     }
     for (const workflow of workflows) {
       expect(workflow).not.toContain("ubuntu-latest");
@@ -488,11 +492,11 @@ describe("macOS alpha packaging contract", () => {
     expect(workflow).toContain("name: github-pages");
     expect(workflow).toContain("run: pnpm docs:check");
     expect(workflow).toContain("run: pnpm docs:build");
-    expect(workflow).toContain("actions/configure-pages@v6");
-    expect(workflow).toContain("actions/upload-pages-artifact@v5");
+    expect(workflow).toContain("actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6");
+    expect(workflow).toContain("actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5");
     expect(workflow).toContain("path: dist/docs-site");
     expect(workflow).toContain("include-hidden-files: true");
     expect(workflow).not.toContain("enablement: true");
-    expect(workflow).toContain("actions/deploy-pages@v5");
+    expect(workflow).toContain("actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5");
   });
 });

@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { readPackageManifestProvenance, validateCommit } from "./rc-provenance.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
@@ -12,7 +13,14 @@ if (isDirectRun()) {
 
 export async function main(args) {
   const options = parseArgs(args);
-  const version = options.version ?? packageJson.version ?? "0.0.0";
+  if (Boolean(options.packageManifest) !== Boolean(options.commit)) {
+    throw new Error("--package-manifest and --commit must be provided together for RC provenance binding.");
+  }
+
+  const packageProvenance = options.packageManifest
+    ? await readPackageManifestProvenance(options.packageManifest, { requireSourceCommit: true })
+    : undefined;
+  const version = options.version ?? packageProvenance?.version ?? packageJson.version ?? "0.0.0";
   const channel = options.channel ?? "alpha";
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
   const outputPath = path.resolve(
@@ -23,11 +31,25 @@ export async function main(args) {
   if (channel !== "alpha" && channel !== "release") {
     throw new Error(`Unsupported channel: ${channel}. Expected alpha or release.`);
   }
+  if (packageProvenance && packageProvenance.channel !== channel) {
+    throw new Error(`RC checklist channel ${channel} does not match package manifest channel ${packageProvenance.channel}.`);
+  }
+  if (packageProvenance && packageProvenance.version !== version) {
+    throw new Error(`RC checklist version ${version} does not match package manifest version ${packageProvenance.version}.`);
+  }
+
+  const commit = options.commit ? validateCommit(options.commit, "Candidate commit") : undefined;
+  if (packageProvenance && packageProvenance.sourceCommit !== commit) {
+    throw new Error("Candidate commit does not match package manifest sourceCommit.");
+  }
 
   const checklist = renderChecklist({
     artifactUrl: options.artifactUrl,
     channel,
     ciRunUrl: options.ciRunUrl,
+    commit,
+    packageManifestSha256: packageProvenance?.manifestSha256,
+    primaryArtifactSha256: packageProvenance?.primaryArtifactSha256,
     packageRunUrl: options.packageRunUrl,
     releaseTag: options.releaseTag,
     version
@@ -96,6 +118,9 @@ export function renderChecklist(metadata) {
 | CI run | ${metadata.ciRunUrl ?? "TODO"} |
 | Package workflow run | ${metadata.packageRunUrl ?? "TODO"} |
 | DMG / artifact URL | ${metadata.artifactUrl ?? "TODO"} |
+| Commit | ${metadata.commit ?? "TODO"} |
+| Package manifest SHA256 | ${metadata.packageManifestSha256 ?? "TODO"} |
+| Primary DMG SHA256 | ${metadata.primaryArtifactSha256 ?? "TODO"} |
 | Tester | TODO |
 | Clean macOS account / machine | TODO |
 | Date | TODO |

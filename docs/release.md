@@ -28,6 +28,6 @@ CI runs lint, typecheck, tests, performance smoke, security checks, build, docs 
 
 Versioning is checked with `pnpm version:check`. The app version lives in `package.json` and `HTMLSLIDE_APP_VERSION`, while deck, deckpkg, check-report, agent-report, and checkpoint compatibility each have independent schema constants. Release notes and packaging scripts use those constants instead of local version literals.
 
-Every release candidate must also have a completed manual acceptance checklist generated with `pnpm rc:checklist`. The Alpha Package and Release macOS workflows upload a prefilled checklist template next to their artifacts; it is not a claim that manual acceptance passed until a tester completes it. The completed checklist is release evidence, not source code, and should be attached to the candidate notes.
+Every release candidate must also have a completed manual acceptance checklist generated with `pnpm rc:checklist`. The generated metadata binds the checklist to the package manifest's source commit, manifest SHA-256, and primary DMG SHA-256. The Alpha Package and Release macOS workflows upload a prefilled checklist template next to their artifacts; it is not a claim that manual acceptance passed until a tester completes it. The completed checklist is release evidence, not source code, and should be attached to the candidate notes. Promotion verification rechecks those fingerprints against the final uploaded bundle.
 
 See [dev/release.md](dev/release.md) for the detailed release contract.

@@ -735,6 +735,9 @@ const manifest = {
   version,
   arch,
   channel,
+  ...(typeof process.env.GITHUB_SHA === "string" && process.env.GITHUB_SHA.trim().length > 0
+    ? { sourceCommit: process.env.GITHUB_SHA.trim() }
+    : {}),
   bundleIdentifier: config.bundleIdentifier,
   browserRuntime: {
     kind: "chromium-headless-shell",

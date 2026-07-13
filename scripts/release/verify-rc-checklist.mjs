@@ -2,6 +2,7 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
+import { readPackageManifestProvenance, validateCommit } from "./rc-provenance.mjs";
 
 const maxChecklistBytes = 2 * 1024 * 1024;
 const expectedManualItems = 13;
@@ -26,14 +27,18 @@ export async function main(args) {
   }
 
   const markdown = await readFile(checklistPath, "utf8");
-  const result = verifyChecklist(markdown, { checklistPath });
+  const result = await verifyChecklist(markdown, {
+    checklistPath,
+    expectedCommit: options.commit,
+    packageManifestPath: options.packageManifest
+  });
   process.stdout.write(options.json ? `${JSON.stringify(result)}\n` : `${formatHumanResult(result)}\n`);
   return result;
 }
 
 export function parseArgs(args) {
   const parsed = { json: false };
-  const allowed = new Set(["checklist", "input", "json"]);
+  const allowed = new Set(["checklist", "input", "json", "packageManifest", "commit"]);
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -69,10 +74,13 @@ export function parseArgs(args) {
   if (typeof parsed.checklist !== "string" || parsed.checklist.trim().length === 0) {
     throw new Error("Missing required --checklist value.");
   }
+  if (Boolean(parsed.packageManifest) !== Boolean(parsed.commit)) {
+    throw new Error("--package-manifest and --commit must be provided together for RC provenance binding.");
+  }
   return parsed;
 }
 
-export function verifyChecklist(markdown, metadata = {}) {
+export async function verifyChecklist(markdown, metadata = {}) {
   if (typeof markdown !== "string" || markdown.trim().length === 0) {
     throw new Error("RC checklist must be a non-empty Markdown document.");
   }
@@ -169,6 +177,10 @@ export function verifyChecklist(markdown, metadata = {}) {
     throw new Error("RC checklist still contains unresolved TODO placeholders.");
   }
 
+  const provenance = metadata.packageManifestPath
+    ? await verifyProvenance(markdown, metadata)
+    : undefined;
+
   const statusCounts = Object.fromEntries(["Pass", "Fail", "N/A"].map((status) => [
     status,
     items.filter((item) => item.status === status).length
@@ -183,7 +195,45 @@ export function verifyChecklist(markdown, metadata = {}) {
     manualItemCount: items.length,
     manualStatuses: statusCounts,
     statusCounts,
-    result: resultStatus
+    result: resultStatus,
+    ...(provenance ? { provenance } : {})
+  };
+}
+
+async function verifyProvenance(markdown, metadata) {
+  const expectedCommit = validateCommit(metadata.expectedCommit, "Expected commit");
+  const provenance = await readPackageManifestProvenance(metadata.packageManifestPath, { requireSourceCommit: true });
+  if (provenance.sourceCommit !== expectedCommit) {
+    throw new Error("Package manifest sourceCommit does not match the expected commit.");
+  }
+
+  const metadataSection = sectionBetween(markdown, "## Metadata", "## Automated Gates");
+  const checklistVersion = metadataFieldValue(metadataSection, "Version");
+  const checklistChannel = metadataFieldValue(metadataSection, "Channel").toLowerCase();
+  const checklistCommit = metadataFieldValue(metadataSection, "Commit");
+  const checklistManifestSha256 = metadataFieldValue(metadataSection, "Package manifest SHA256");
+  const checklistArtifactSha256 = metadataFieldValue(metadataSection, "Primary DMG SHA256");
+
+  if (checklistVersion !== provenance.version) {
+    throw new Error("RC checklist Version does not match the package manifest.");
+  }
+  if (checklistChannel !== provenance.channel) {
+    throw new Error("RC checklist Channel does not match the package manifest.");
+  }
+  if (checklistCommit !== expectedCommit || checklistCommit !== provenance.sourceCommit) {
+    throw new Error("RC checklist Commit does not match the package manifest and expected commit.");
+  }
+  if (checklistManifestSha256 !== provenance.manifestSha256) {
+    throw new Error("RC checklist Package manifest SHA256 does not match the supplied package manifest.");
+  }
+  if (checklistArtifactSha256 !== provenance.primaryArtifactSha256) {
+    throw new Error("RC checklist Primary DMG SHA256 does not match the supplied package manifest.");
+  }
+
+  return {
+    commit: expectedCommit,
+    packageManifestSha256: provenance.manifestSha256,
+    primaryArtifactSha256: provenance.primaryArtifactSha256
   };
 }
 

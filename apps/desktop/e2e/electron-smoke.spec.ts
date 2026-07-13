@@ -353,8 +353,8 @@ const args = readPairs(process.argv.slice(2));
 const projectRoot = requireArg(args, "--project");
 const promptFile = requireArg(args, "--prompt-file");
 const manifestFile = requireArg(args, "--writes-manifest");
-const stateFile = process.env.HTMLSLIDE_E2E_AGENT_STATE_FILE;
-const completionReleaseFile = process.env.HTMLSLIDE_E2E_AGENT_COMPLETION_RELEASE_FILE;
+const stateFile = requireArg(args, "--state-file");
+const completionReleaseFile = args.get("--completion-release-file");
 const prompt = fs.readFileSync(promptFile, "utf8");
 const cancelThenRetry = prompt.includes("CANCEL_THEN_RETRY");
 const completeBeforeCancel = prompt.includes("COMPLETE_BEFORE_CANCEL");
@@ -1301,7 +1301,7 @@ test.describe("HTMLslide desktop smoke", () => {
     await mkdir(workspaceDir, { recursive: true });
     await cp(sampleProjectPath, projectPath, { recursive: true });
     await writeControlledExternalAgentScript(fakeAgentScript);
-    const commandTemplate = `"${process.execPath}" "${fakeAgentScript}" --project "{{projectPath}}" --prompt-file "{{promptFile}}" --writes-manifest "{{writeManifest}}"`;
+    const commandTemplate = `"${process.execPath}" "${fakeAgentScript}" --project "{{projectPath}}" --prompt-file "{{promptFile}}" --writes-manifest "{{writeManifest}}" --state-file "${agentStateFile}"`;
     await writeFile(
       path.join(userDataDir, "ai-engine-settings.json"),
       `${JSON.stringify({
@@ -1423,7 +1423,7 @@ test.describe("HTMLslide desktop smoke", () => {
     await mkdir(workspaceDir, { recursive: true });
     await cp(sampleProjectPath, projectPath, { recursive: true });
     await writeControlledExternalAgentScript(fakeAgentScript);
-    const commandTemplate = `"${process.execPath}" "${fakeAgentScript}" --project "{{projectPath}}" --prompt-file "{{promptFile}}" --writes-manifest "{{writeManifest}}"`;
+    const commandTemplate = `"${process.execPath}" "${fakeAgentScript}" --project "{{projectPath}}" --prompt-file "{{promptFile}}" --writes-manifest "{{writeManifest}}" --state-file "${agentStateFile}" --completion-release-file "${completionReleaseFile}"`;
     await writeFile(
       path.join(userDataDir, "ai-engine-settings.json"),
       `${JSON.stringify({

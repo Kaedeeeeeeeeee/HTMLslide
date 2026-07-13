@@ -1714,6 +1714,10 @@ export async function runHtmlslideCli(args: string[], options: CliRunnerOptions)
     command,
     args: commandArgs,
     cwd: options.cwd ?? options.rootPath ?? path.dirname(cliPath),
+    // The HTMLslide CLI is an application-owned child process. It needs the
+    // renderer/runtime variables configured by the desktop shell; external
+    // agent commands remain restricted by the adapter runner.
+    inheritEnv: true,
     env: {
       ELECTRON_RUN_AS_NODE: "1",
       ...options.env

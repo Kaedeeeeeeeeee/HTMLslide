@@ -2842,6 +2842,31 @@ process.stderr.write("e".repeat(${COMMAND_CAPTURE_LIMIT_CHARS + 16_384}));
     expect(result.stderr.match(/output truncated/gu)).toHaveLength(1);
   });
 
+  it("preserves application runtime environment for the owned desktop CLI", async () => {
+    const root = await tempDir();
+    const scriptPath = path.join(root, "runtime-env-cli.mjs");
+    const envName = "HTMLSLIDE_TEST_CLI_RUNTIME";
+    const previous = process.env[envName];
+    process.env[envName] = "renderer-runtime-fixture";
+    try {
+      await writeFile(scriptPath, `process.stdout.write(process.env[${JSON.stringify(envName)}] ?? "missing");\n`, "utf8");
+      const result = await runHtmlslideCli([], {
+        cliPath: scriptPath,
+        cwd: root,
+        timeoutMs: 5_000
+      });
+
+      expect(result).toMatchObject({ ok: true, exitCode: 0 });
+      expect(result.stdout).toBe("renderer-runtime-fixture");
+    } finally {
+      if (previous === undefined) {
+        delete process.env[envName];
+      } else {
+        process.env[envName] = previous;
+      }
+    }
+  });
+
   it("bounds and sanitizes desktop agent metadata before service storage", () => {
     const secret = "sk-metadatasecret123456789";
     let deep: JsonObject = { value: secret };

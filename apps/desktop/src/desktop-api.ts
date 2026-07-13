@@ -21,6 +21,7 @@ import type {
 } from "@htmlslide/agent";
 import type { SpeakerNotesMode } from "@htmlslide/core";
 import type { DeckExportOptions } from "@htmlslide/core";
+import type { AGENT_RUN_REPORT_SCHEMA_VERSION } from "@htmlslide/core/version";
 
 export type DesktopSetupState = {
   appName: string;
@@ -405,7 +406,7 @@ export type DesktopCheckpointRequest = {
 };
 
 export type DesktopAgentReviewState = {
-  schemaVersion: "0.1.0";
+  schemaVersion: typeof AGENT_RUN_REPORT_SCHEMA_VERSION;
   kind: "htmlslide-agent-review";
   status: "accepted";
   runId: string;

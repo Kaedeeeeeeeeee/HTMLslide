@@ -10,6 +10,7 @@ pnpm version:check
 pnpm lint
 pnpm typecheck
 pnpm test
+pnpm test:coverage
 pnpm test:visual:browser
 pnpm perf:smoke
 pnpm security:check
@@ -41,6 +42,7 @@ pnpm package:release:macos
 - Official skills E2E covers the inspectable Skills library, including install-state and deck-type filtering, expanded metadata review, risk flags, install paths, and markdown previews before installation.
 - Docs check validates required public docs, GitHub issue template contracts, and the pull request template, including reproducible bug fields, diagnostics prompts, privacy confirmation, and private security reporting links.
 - Performance smoke records 20-slide preview, PDF export, checker, and presenter state timings with CI guardrails; alpha/RC hardware baselines remain manual validation data.
+- Coverage gates run the full core suite and focused linter/agent-adapter suites with line thresholds of core 85%, linter 80%, and agent-adapters 80%. Reports use a system temporary directory and are removed after the gate.
 - Security check scans tracked source files for common committed secret formats and runs `pnpm audit --audit-level high`.
 - Docs build renders the publishable GitHub Pages site into `dist/docs-site` and validates generated local links before upload.
 - Version check verifies all workspace package versions match `HTMLSLIDE_APP_VERSION`, keeps `DECK_SCHEMA_VERSION` independent, and rejects production version literals outside the core version contract.

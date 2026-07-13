@@ -6,6 +6,7 @@ import { AgentAdapterFailureError, createAgentAdapterFailure, toAgentAdapterFail
 import { runCommand } from "./runner.js";
 import {
   collectSensitiveValues,
+  collectProvidedValues,
   createCommandOutputRedactor,
   sanitizeAgentAdapterText,
   sanitizeRenderedCommand
@@ -26,7 +27,10 @@ export async function runGenericAgentAdapter(options: GenericAgentRunOptions): P
     promptFile: options.promptFile,
     ...options.variables
   };
-  const sensitiveValues = collectSensitiveValues(process.env, variables, options.env);
+  const sensitiveValues = [
+    ...collectSensitiveValues(process.env, variables),
+    ...collectProvidedValues(options.env)
+  ];
   const outputRedactor = createCommandOutputRedactor(sensitiveValues);
 
   let renderedCommand: RenderedCommand | undefined;
@@ -46,6 +50,7 @@ export async function runGenericAgentAdapter(options: GenericAgentRunOptions): P
       command: renderedCommand.command,
       args: renderedCommand.args,
       cwd: projectRoot,
+      inheritEnv: false,
       env: options.env,
       onOutput: (chunk) => {
         const safeChunk = outputRedactor.push(chunk);

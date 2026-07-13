@@ -139,6 +139,7 @@ export async function runBuiltInExternalAgentAdapter(
       command: command.command,
       args: command.args,
       cwd: projectRoot,
+      inheritEnv: false,
       signal: options.signal,
       timeoutMs: options.timeoutMs,
       onOutput: (chunk) => {

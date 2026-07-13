@@ -32,8 +32,9 @@ describe("release evidence scripts", () => {
       const appPath = path.join(tempRoot, "HTMLslide.app");
       const dmgPath = path.join(tempRoot, "HTMLslide-0.1.0-signed-notarized-arm64.dmg");
       const manifestPath = path.join(tempRoot, "HTMLslide-0.1.0-signed-notarized-arm64.json");
+      await mkdir(path.join(appPath, "Contents"), { recursive: true });
       await Promise.all([
-        writeFile(appPath, "signed app fixture\n", "utf8"),
+        writeFile(path.join(appPath, "Contents", "Info.plist"), "signed app fixture\n", "utf8"),
         writeFile(dmgPath, "signed dmg fixture\n", "utf8"),
         writeFile(manifestPath, "manifest fixture\n", "utf8")
       ]);
@@ -194,6 +195,12 @@ describe("release evidence scripts", () => {
       const artifactPath = path.join(tempRoot, "HTMLslide-0.1.0-signed-notarized-arm64.dmg");
       const manifestPath = path.join(tempRoot, "HTMLslide-0.1.0-signed-notarized-arm64.json");
       await writeFile(artifactPath, "deterministic signed artifact fixture\n", "utf8");
+      const appMetadata = {
+        fileName: "HTMLslide.app",
+        sizeBytes: 123,
+        sha256: "c".repeat(64)
+      };
+      const dmgMetadata = (await buildArtifactMetadata([artifactPath]))[0];
       const manifest = {
         appName: "HTMLslide",
         version: "0.1.0",
@@ -216,10 +223,27 @@ describe("release evidence scripts", () => {
       await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
       await writeFile(path.join(tempRoot, "release-security-evidence-arm64.json"), `${JSON.stringify({
         schemaVersion: "1",
-        checks: [{ tool: "fixture", status: "passed" }],
+        checks: [
+          "codesign.app.verify",
+          "codesign.app.display",
+          "spctl.app.execute",
+          "codesign.dmg.verify",
+          "codesign.dmg.display",
+          "xcrun.stapler.validate",
+          "spctl.dmg.open"
+        ].map((tool) => ({ tool, status: "passed" })),
+        signature: {
+          identity: "Developer ID Application: HTMLslide (TEAM123456)",
+          bundleIdentifier: "app.htmlslide",
+          teamIdentifier: "TEAM123456",
+          hardenedRuntime: true
+        },
         artifacts: {
+          app: appMetadata,
+          dmg: dmgMetadata,
           manifest: {
             fileName: path.basename(manifestPath),
+            sizeBytes: (await readFile(manifestPath)).byteLength,
             sha256: createHash("sha256").update(await readFile(manifestPath)).digest("hex")
           }
         }
@@ -231,11 +255,34 @@ describe("release evidence scripts", () => {
         artifactPath
       });
 
+      await expect(validateReleaseManifest(manifestPath, { expectedTeamIdentifier: "OTHERTEAM" }))
+        .rejects.toThrow(/securityEvidence does not prove/iu);
+
+      const evidencePath = path.join(tempRoot, "release-security-evidence-arm64.json");
+      const evidence = JSON.parse(await readFile(evidencePath, "utf8")) as Record<string, unknown>;
+      evidence.checks = [{ tool: "fixture", status: "passed" }];
+      await writeFile(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
+      await expect(validateReleaseManifest(manifestPath)).rejects.toThrow(/securityEvidence does not prove/iu);
+
       await writeFile(manifestPath, `${JSON.stringify({ ...manifest, arch: "x64" }, null, 2)}\n`, "utf8");
       await expect(validateReleaseManifest(manifestPath)).rejects.toThrow(/arch must be arm64/iu);
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
+  });
+
+  it("fails the direct signed packaging wrapper before build work when secrets are absent", async () => {
+    const env = Object.fromEntries(
+      Object.entries(process.env).filter(([name]) => !REQUIRED_RELEASE_SECRETS.includes(name))
+    );
+    const result = await execFileAsync(
+      process.execPath,
+      [path.join(root, "scripts", "release", "package-release-macos.mjs")],
+      { cwd: root, env }
+    ).catch((error: { stdout?: string; stderr?: string; code?: number }) => error);
+
+    expect(result.code).not.toBe(0);
+    expect(`${result.stdout ?? ""}\n${result.stderr ?? ""}`).toContain("Missing signing secrets:");
   });
 
   it("renders alpha RC checklists with run-bound metadata and manual evidence sections", () => {

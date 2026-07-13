@@ -11,6 +11,7 @@ pnpm version:check
 pnpm lint
 pnpm typecheck
 pnpm test
+pnpm test:coverage
 pnpm test:visual:browser
 pnpm perf:smoke
 pnpm security:check
@@ -23,9 +24,11 @@ Required root package contract:
 
 - `packageManager` pinned to a pnpm version.
 - `pnpm-lock.yaml` committed.
-- `docs:check`, `docs:build`, `version:check`, `lint`, `typecheck`, `test`, `perf:smoke`, `security:check`, `build`, `e2e:desktop`, and `e2e:desktop:a11y` scripts in `package.json`.
+- `docs:check`, `docs:build`, `version:check`, `lint`, `typecheck`, `test`, `test:coverage`, `perf:smoke`, `security:check`, `build`, `e2e:desktop`, and `e2e:desktop:a11y` scripts in `package.json`.
 - `test:visual:browser` for focused browser-rendered full-slide screenshot regression.
 - `package:alpha`, `smoke:package:alpha`, `package:release:macos`, `release:contract:check`, `rc:checklist`, `rc:checklist:verify`, and `release:notes` scripts before macOS packaging is enabled.
+
+`pnpm test:coverage` enforces line coverage thresholds of core 85%, linter 80%, and agent-adapters 80%. The core scope runs the full suite; linter and agent-adapters use their focused contract suites. Coverage reports are written under the system temporary directory and are deleted after the gate.
 
 ## Test Layers
 

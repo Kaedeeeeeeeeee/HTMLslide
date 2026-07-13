@@ -10,7 +10,7 @@ API keys must not be written to project files, fixtures, reports, logs, crash ou
 
 Agents, MCP tools, and source-write paths must stay inside the selected deck project unless the user explicitly chooses another folder. Path traversal must be rejected.
 
-External-agent output is bounded and sanitized at the adapter boundary, including inherited environment values, command failures, and streamed chunks. Generic runs must report every changed source file before Check or Export proceeds. Provider validation rejects malformed environment-variable names and compatible URLs containing embedded credentials, query parameters, or fragments.
+External-agent child processes receive only a small runtime environment by default; full parent-environment inheritance is opt-in at the low-level runner and is not used by the built-in or Generic adapters. Explicit child environment values, command failures, and streamed chunks are bounded and sanitized at the adapter boundary. Generic runs must report every changed source file before Check or Export proceeds. Provider validation rejects malformed environment-variable names and compatible URLs containing embedded credentials, query parameters, or fragments.
 
 ## vulnerability reports
 

@@ -166,6 +166,8 @@ jobs:
 
       - name: Validate signed release manifest
         shell: bash
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
 
@@ -177,12 +179,14 @@ jobs:
 
           node scripts/release/validate-release-contract.mjs \
             --manifest "$manifest" \
-            --expected-arch arm64
+            --expected-arch arm64 \
+            --team-id "$APPLE_TEAM_ID"
 
       - name: Verify signed release security evidence
         shell: bash
         env:
           APPLE_DEVELOPER_ID_APPLICATION: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
 
@@ -200,6 +204,7 @@ jobs:
             --manifest "$manifest" \
             --evidence "$evidence" \
             --identity "$APPLE_DEVELOPER_ID_APPLICATION" \
+            --team-id "$APPLE_TEAM_ID" \
             --bundle-identifier app.htmlslide
 
       - name: Contract-only external-agent verifier smoke (fixture only; no real compatibility evidence)

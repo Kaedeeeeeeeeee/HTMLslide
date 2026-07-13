@@ -41,7 +41,7 @@ jobs:
           node <<'NODE'
           const fs = require('fs');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          const requiredScripts = ['docs:check', 'docs:build', 'version:check', 'lint', 'typecheck', 'test', 'test:visual:browser', 'perf:smoke', 'security:check', 'build', 'e2e:desktop', 'e2e:desktop:a11y'];
+          const requiredScripts = ['docs:check', 'docs:build', 'version:check', 'lint', 'typecheck', 'test', 'test:coverage', 'test:visual:browser', 'perf:smoke', 'security:check', 'build', 'e2e:desktop', 'e2e:desktop:a11y'];
           const missing = requiredScripts.filter((name) => !pkg.scripts || !pkg.scripts[name]);
 
           if (missing.length > 0) {
@@ -88,6 +88,9 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      - name: Coverage gates
+        run: pnpm test:coverage
 
       - name: Browser visual regression
         run: pnpm test:visual:browser

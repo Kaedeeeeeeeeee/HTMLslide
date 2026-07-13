@@ -7,6 +7,15 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const sha256Pattern = /^[a-f0-9]{64}$/u;
 const releaseArtifactName = "HTMLslide-${version}-signed-notarized-${arch}";
+export const REQUIRED_RELEASE_SECURITY_CHECKS = Object.freeze([
+  "codesign.app.verify",
+  "codesign.app.display",
+  "spctl.app.execute",
+  "codesign.dmg.verify",
+  "codesign.dmg.display",
+  "xcrun.stapler.validate",
+  "spctl.dmg.open"
+]);
 
 export const REQUIRED_RELEASE_SCRIPTS = Object.freeze([
   "docs:check",
@@ -149,7 +158,10 @@ export function validateReleaseEnvironment({ packageJson, config, env = process.
   };
 }
 
-export async function validateReleaseManifest(manifestPath, { expectedArch = "arm64" } = {}) {
+export async function validateReleaseManifest(
+  manifestPath,
+  { expectedArch = "arm64", expectedTeamIdentifier } = {}
+) {
   const resolvedManifestPath = path.resolve(manifestPath);
   let manifest;
   try {
@@ -194,6 +206,7 @@ export async function validateReleaseManifest(manifestPath, { expectedArch = "ar
   }
 
   const artifactDirectory = path.dirname(resolvedManifestPath);
+  const resolvedReleaseArtifactPath = typeof artifacts[0] === "string" ? path.resolve(artifacts[0]) : "";
   for (const artifact of artifacts) {
     if (typeof artifact !== "string" || artifact.length === 0) {
       errors.push("every release artifact must be a non-empty path string.");
@@ -253,11 +266,36 @@ export async function validateReleaseManifest(manifestPath, { expectedArch = "ar
         const securityEvidence = JSON.parse(await readFile(securityEvidencePath, "utf8"));
         const checks = Array.isArray(securityEvidence.checks) ? securityEvidence.checks : [];
         const manifestEvidence = securityEvidence.artifacts?.manifest;
+        const signature = securityEvidence.signature;
+        const appEvidence = securityEvidence.artifacts?.app;
+        const dmgEvidence = securityEvidence.artifacts?.dmg;
+        const checkTools = checks.map((check) => isRecord(check) ? check.tool : undefined);
+        const evidenceArtifactMetadataValid =
+          isReleaseArtifactMetadata(appEvidence, "HTMLslide.app") &&
+          isReleaseArtifactMetadata(dmgEvidence, path.basename(resolvedReleaseArtifactPath)) &&
+          isReleaseArtifactMetadata(manifestEvidence, path.basename(resolvedManifestPath));
+        const manifestArtifact = artifactMetadata.find(
+          (entry) => isRecord(entry) && entry.fileName === path.basename(resolvedReleaseArtifactPath)
+        );
         if (
           securityEvidence.schemaVersion !== "1" ||
-          checks.length === 0 ||
+          checks.length !== REQUIRED_RELEASE_SECURITY_CHECKS.length ||
+          new Set(checkTools).size !== REQUIRED_RELEASE_SECURITY_CHECKS.length ||
+          !REQUIRED_RELEASE_SECURITY_CHECKS.every((tool) => checkTools.includes(tool)) ||
           checks.some((check) => !isRecord(check) || check.status !== "passed") ||
-          !isRecord(manifestEvidence) ||
+          !isRecord(signature) ||
+          typeof signature.identity !== "string" ||
+          !signature.identity.startsWith("Developer ID Application:") ||
+          signature.bundleIdentifier !== "app.htmlslide" ||
+          typeof signature.teamIdentifier !== "string" ||
+          signature.teamIdentifier.trim().length === 0 ||
+          (expectedTeamIdentifier !== undefined && signature.teamIdentifier !== expectedTeamIdentifier) ||
+          signature.hardenedRuntime !== true ||
+          !evidenceArtifactMetadataValid ||
+          !isRecord(manifestArtifact) ||
+          dmgEvidence.fileName !== manifestArtifact.fileName ||
+          dmgEvidence.sizeBytes !== manifestArtifact.sizeBytes ||
+          dmgEvidence.sha256 !== manifestArtifact.sha256 ||
           manifestEvidence.fileName !== path.basename(resolvedManifestPath) ||
           manifestEvidence.sha256 !== await sha256File(resolvedManifestPath)
         ) {
@@ -325,9 +363,20 @@ export async function main(args) {
     process.stdout.write("Release package configuration contract passed.\n");
   }
   if (options.manifest) {
-    await validateReleaseManifest(options.manifest, { expectedArch: options.expectedArch ?? "arm64" });
+    await validateReleaseManifest(options.manifest, {
+      expectedArch: options.expectedArch ?? "arm64",
+      expectedTeamIdentifier: options.teamId
+    });
     process.stdout.write("Release manifest contract passed.\n");
   }
+}
+
+function isReleaseArtifactMetadata(value, expectedFileName) {
+  return isRecord(value) &&
+    value.fileName === expectedFileName &&
+    Number.isSafeInteger(value.sizeBytes) &&
+    value.sizeBytes >= 0 &&
+    sha256Pattern.test(String(value.sha256 ?? ""));
 }
 
 async function readJson(filePath) {

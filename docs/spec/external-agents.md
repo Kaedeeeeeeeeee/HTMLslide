@@ -71,6 +71,8 @@ Adapters must not execute generated shell text. Tests should use injected runner
 
 External command runs can stream stdout/stderr chunks through the adapter while retaining bounded stdout/stderr diagnostic captures when the process exits. The command runner continues draining both pipes after each capture reaches its limit. The adapter redactor carries known secret prefixes across stream chunks before delivery. The desktop external-agent path frames chunks into bounded complete lines before redaction and build-stage log delivery. This preserves live progress without allowing a secret split across transport chunks, an unbounded line, an API key, or a bearer token into desktop IPC.
 
+External-agent child processes receive a small runtime environment by default (`PATH`, user/temp locale paths, and `HTMLSLIDE_HOME`). Full parent-environment inheritance is never used by the built-in or Generic adapters; callers must explicitly provide any additional environment values, and those values are treated as sensitive for output redaction.
+
 Generic live chunks are published as bounded, sanitized desktop run snapshots over the shared agent-run update channel. Built-in Claude/Codex stdout and stderr are reduced to metadata-only progress/diagnostic events; raw structured output is omitted from renderer results. The renderer does not receive command handles, environment variables, credentials, prompt-file contents, or unsanitized stdout/stderr.
 
 ## Desktop External Agent Runs

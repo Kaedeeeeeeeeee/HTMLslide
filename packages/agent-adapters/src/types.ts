@@ -43,6 +43,8 @@ export interface CommandInvocation {
   readonly command: string;
   readonly args: readonly string[];
   readonly cwd: string;
+  /** Full parent-process environment is intentionally opt-in. */
+  readonly inheritEnv?: boolean;
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly timeoutMs?: number;
   readonly signal?: AbortSignal;

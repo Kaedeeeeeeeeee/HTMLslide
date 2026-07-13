@@ -700,6 +700,7 @@ if (channel === "release") {
     appPath,
     dmgPath,
     expectedIdentity: developerIdIdentity(),
+    expectedTeamIdentifier: process.env.APPLE_TEAM_ID,
     manifestPath
   });
   await writeFile(securityEvidencePath, `${JSON.stringify(securityEvidence, null, 2)}\n`, "utf8");

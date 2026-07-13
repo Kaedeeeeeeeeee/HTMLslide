@@ -28,6 +28,20 @@ export function collectSensitiveValues(
   return [...values].sort((left, right) => right.length - left.length);
 }
 
+/** Values explicitly handed to a child process are secrets unless proven otherwise. */
+export function collectProvidedValues(
+  record: Readonly<Record<string, string | undefined>> | undefined
+): string[] {
+  if (record === undefined) {
+    return [];
+  }
+
+  return Object.values(record)
+    .map((value) => value?.trim())
+    .filter((value): value is string => value !== undefined && value.length >= 4)
+    .sort((left, right) => right.length - left.length);
+}
+
 export function sanitizeAgentAdapterText(
   value: string | undefined,
   sensitiveValues: readonly string[] = []

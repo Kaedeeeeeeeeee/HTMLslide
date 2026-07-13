@@ -51,7 +51,11 @@ async function latestManifestPath() {
   const entries = await readdir(packageDir).catch(() => []);
   const manifests = await Promise.all(
     entries
-      .filter((entry) => entry.endsWith(".json"))
+      .filter((entry) =>
+        entry.startsWith("HTMLslide-") &&
+        entry.includes(artifactNameMarker) &&
+        entry.endsWith(".json")
+      )
       .map(async (entry) => {
         const filePath = path.join(packageDir, entry);
         return {

@@ -174,6 +174,51 @@ describe("external agent output sanitization", () => {
     expect(sanitized).toBe("api_key=[redacted] Authorization: Bearer [redacted] [redacted]");
   });
 
+  it("does not inherit opaque parent environment values into generic commands", async () => {
+    const project = await createFakeProject("safe-command-environment");
+    const inheritedName = "HTMLSLIDE_TEST_OPAQUE_VALUE";
+    const explicitName = "HTMLSLIDE_TEST_EXPLICIT_VALUE";
+    const inheritedSecret = "opaque-parent-secret-value-123";
+    const explicitSecret = "explicit-child-secret-value-456";
+    const previous = process.env[inheritedName];
+    process.env[inheritedName] = inheritedSecret;
+
+    try {
+      const scriptFile = await writeFakeAgentScript(
+        project.projectRoot,
+        "safe-command-environment",
+        `
+process.stdout.write(JSON.stringify({
+  inherited: process.env[${JSON.stringify(inheritedName)}] ?? null,
+  explicit: process.env[${JSON.stringify(explicitName)}] ?? null
+}));
+`
+      );
+      const result = await runGenericAgentAdapter({
+        adapter: createFakeAdapter(nodeCommandTemplate()),
+        projectRoot: project.projectRoot,
+        promptFile: project.promptFile,
+        variables: {
+          scriptFile,
+          writeManifest: project.writeManifest
+        },
+        env: { [explicitName]: explicitSecret }
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.stdout).toContain(`"inherited":null`);
+      expect(result.stdout).toContain('"explicit":"[redacted]"');
+      expect(result.stdout).not.toContain(inheritedSecret);
+      expect(result.stdout).not.toContain(explicitSecret);
+    } finally {
+      if (previous === undefined) {
+        delete process.env[inheritedName];
+      } else {
+        process.env[inheritedName] = previous;
+      }
+    }
+  });
+
   it("redacts sensitive option values without hiding unrelated arguments", () => {
     expect(sanitizeRenderedCommand({
       command: "agent",
@@ -338,6 +383,7 @@ describe("built-in external agent adapters", () => {
         promptFile: project.promptFile
       }).args,
       cwd: project.projectRoot,
+      inheritEnv: false,
       signal: controller.signal,
       timeoutMs: 4_321,
       onOutput: expect.any(Function)

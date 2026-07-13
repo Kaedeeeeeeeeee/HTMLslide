@@ -5,6 +5,23 @@ import type { CommandInvocation, CommandResult } from "./types.js";
 export const COMMAND_CAPTURE_LIMIT_CHARS = 1024 * 1024;
 export const COMMAND_CAPTURE_TRUNCATION_MARKER = `\n[HTMLslide: output truncated after ${COMMAND_CAPTURE_LIMIT_CHARS} characters]\n`;
 const POST_EXIT_PIPE_DRAIN_GRACE_MS = 500;
+const SAFE_ENVIRONMENT_KEYS = [
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "LOGNAME",
+  "PATH",
+  "SHELL",
+  "TERM",
+  "TERM_PROGRAM",
+  "TMPDIR",
+  "USER",
+  "XDG_CACHE_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "HTMLSLIDE_HOME"
+] as const;
 
 export function runCommand(invocation: CommandInvocation): Promise<CommandResult> {
   return new Promise<CommandResult>((resolve) => {
@@ -12,7 +29,7 @@ export function runCommand(invocation: CommandInvocation): Promise<CommandResult
     const child = spawn(invocation.command, [...invocation.args], {
       cwd: invocation.cwd,
       detached: isolatedProcessGroup,
-      env: { ...process.env, ...invocation.env },
+      env: createCommandEnvironment(invocation),
       shell: false,
       stdio: ["ignore", "pipe", "pipe"]
     });
@@ -234,6 +251,31 @@ export function runCommand(invocation: CommandInvocation): Promise<CommandResult
       invocation.signal?.addEventListener("abort", cancelRun, { once: true });
     }
   });
+}
+
+function createCommandEnvironment(invocation: CommandInvocation): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {};
+
+  if (invocation.inheritEnv === true) {
+    Object.assign(environment, process.env);
+  } else {
+    for (const key of SAFE_ENVIRONMENT_KEYS) {
+      const value = process.env[key];
+      if (value !== undefined) {
+        environment[key] = value;
+      }
+    }
+  }
+
+  for (const [key, value] of Object.entries(invocation.env ?? {})) {
+    if (value === undefined) {
+      delete environment[key];
+    } else {
+      environment[key] = value;
+    }
+  }
+
+  return environment;
 }
 
 interface BoundedCapture {

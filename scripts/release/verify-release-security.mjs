@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { lstat, readFile, readdir, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
@@ -17,16 +17,53 @@ function defaultRunCommand(command, args) {
 }
 
 async function fileMetadata(filePath) {
-  const fileStats = await stat(filePath);
-  if (!fileStats.isFile()) {
-    throw new Error(`Release security input is not a regular file: ${path.basename(filePath)}.`);
+  const fileStats = await lstat(filePath);
+  if (fileStats.isFile()) {
+    const contents = await readFile(filePath);
+    return {
+      fileName: path.basename(filePath),
+      sizeBytes: contents.byteLength,
+      sha256: createHash("sha256").update(contents).digest("hex")
+    };
   }
-  const contents = await readFile(filePath);
+  if (!fileStats.isDirectory()) {
+    throw new Error(`Release security input is not a regular file or app bundle: ${path.basename(filePath)}.`);
+  }
+
+  const files = await collectBundleFiles(filePath);
+  const digest = createHash("sha256");
+  let sizeBytes = 0;
+  for (const childPath of files.sort()) {
+    const relativePath = path.relative(filePath, childPath).split(path.sep).join("/");
+    const contents = await readFile(childPath);
+    sizeBytes += contents.byteLength;
+    digest.update(`${relativePath}\0${contents.byteLength}\0`);
+    digest.update(contents);
+  }
   return {
     fileName: path.basename(filePath),
-    sizeBytes: contents.byteLength,
-    sha256: createHash("sha256").update(contents).digest("hex")
+    sizeBytes,
+    sha256: digest.digest("hex")
   };
+}
+
+async function collectBundleFiles(rootPath, currentPath = rootPath) {
+  const entries = await readdir(currentPath, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const entryPath = path.join(currentPath, entry.name);
+    if (entry.isSymbolicLink()) {
+      throw new Error(`Release security input contains a symlink: ${path.relative(rootPath, entryPath)}.`);
+    }
+    if (entry.isDirectory()) {
+      files.push(...await collectBundleFiles(rootPath, entryPath));
+    } else if (entry.isFile()) {
+      files.push(entryPath);
+    } else {
+      throw new Error(`Release security input contains an unsupported entry: ${path.relative(rootPath, entryPath)}.`);
+    }
+  }
+  return files;
 }
 
 function valueFromOutput(output, key) {
@@ -34,7 +71,7 @@ function valueFromOutput(output, key) {
   return match?.[1]?.trim();
 }
 
-function assertSignatureDisplay(output, { expectedIdentity, expectedBundleIdentifier }) {
+function assertSignatureDisplay(output, { expectedIdentity, expectedBundleIdentifier, expectedTeamIdentifier }) {
   const identity = valueFromOutput(output, "Authority") ?? "";
   const bundleIdentifier = valueFromOutput(output, "Identifier") ?? "";
   const teamIdentifier = valueFromOutput(output, "TeamIdentifier") ?? "";
@@ -49,6 +86,9 @@ function assertSignatureDisplay(output, { expectedIdentity, expectedBundleIdenti
   }
   if (!teamIdentifier) {
     throw new Error("Release app signature is missing a TeamIdentifier.");
+  }
+  if (expectedTeamIdentifier && teamIdentifier !== expectedTeamIdentifier) {
+    throw new Error("Release app signature TeamIdentifier does not match the configured Apple team.");
   }
   if (!/\bruntime\b/u.test(output)) {
     throw new Error("Release app signature is missing the hardened runtime flag.");
@@ -66,13 +106,18 @@ export async function verifyReleaseSecurity({
   dmgPath,
   manifestPath,
   expectedIdentity,
+  expectedTeamIdentifier,
   expectedBundleIdentifier = "app.htmlslide",
   now = new Date().toISOString(),
   runCommand = defaultRunCommand
 }) {
   runCommand("codesign", ["--verify", "--deep", "--strict", "--verbose=4", appPath]);
   const appDisplay = runCommand("codesign", ["--display", "--verbose=4", appPath]);
-  const signature = assertSignatureDisplay(appDisplay, { expectedIdentity, expectedBundleIdentifier });
+  const signature = assertSignatureDisplay(appDisplay, {
+    expectedIdentity,
+    expectedBundleIdentifier,
+    expectedTeamIdentifier
+  });
   runCommand("spctl", ["--assess", "--type", "execute", "--verbose=4", appPath]);
 
   runCommand("codesign", ["--verify", "--strict", "--verbose=4", dmgPath]);
@@ -130,6 +175,7 @@ export async function main(args = process.argv.slice(2)) {
     dmgPath: path.resolve(options.dmg),
     manifestPath: path.resolve(options.manifest),
     expectedIdentity: options.identity,
+    expectedTeamIdentifier: options.teamId,
     expectedBundleIdentifier: options.bundleIdentifier ?? "app.htmlslide"
   });
   await writeFile(options.evidence, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");

@@ -259,6 +259,50 @@ describe("HTMLslide linter", () => {
     expectMachineRepairableIssues(report.issues);
   });
 
+  it("reports a missing slide id from the authored fragment", async () => {
+    await withTempFixture("linter-valid-clean", async (projectPath) => {
+      await writeFile(
+        path.join(projectPath, "slides", "001-clean.html"),
+        "<!doctype html><section class=\"slide\"><h1>Missing id</h1></section>\n",
+        "utf8"
+      );
+
+      const report = await checkProject(projectPath);
+      expect(report.issues).toContainEqual(expect.objectContaining({
+        slideId: "001-clean",
+        severity: "error",
+        type: "slide-id-mismatch",
+        measurement: { expectedSlideId: "001-clean", actualSlideId: "" }
+      }));
+    });
+  });
+
+  it("reports a missing notes file for a manual project input", async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-linter-manual-"));
+    try {
+      const sourcePath = path.join(tempRoot, "slide.html");
+      await writeFile(sourcePath, "<!doctype html><section class=\"slide\" data-slide-id=\"001\"><h1>Manual</h1></section>\n", "utf8");
+
+      const report = await checkProject({
+        projectPath: tempRoot,
+        slides: [{
+          id: "001",
+          title: "Manual slide",
+          sourcePath,
+          notesPath: "notes/missing.md"
+        }]
+      });
+
+      expect(report.issues).toContainEqual(expect.objectContaining({
+        slideId: "001",
+        path: "notes/missing.md",
+        type: "missing-notes"
+      }));
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("normalizes core schema validation issues into repairable linter issues", async () => {
     const report = await checkProject(fixturePath("linter-schema-invalid"));
 

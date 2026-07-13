@@ -84,10 +84,18 @@ describe("macOS alpha packaging contract", () => {
       packageScript.indexOf("async function createDmg")
     );
     expect(desktopRuntimeBlock).toContain('"@htmlslide/compiler"');
+    expect(desktopRuntimeBlock).toContain('"@htmlslide/linter"');
+    expect(desktopRuntimeBlock).toContain('"@htmlslide/mcp-server"');
     expect(desktopRuntimeBlock).toContain('"@htmlslide/renderer"');
     expect(desktopRuntimeBlock).toContain('[compilerRequire, "pdf-lib"]');
     expect(desktopRuntimeBlock).toContain('[compilerRequire, "playwright-core"]');
     expect(desktopRuntimeBlock).toContain('[compilerRequire, "postcss"]');
+    expect(desktopRuntimeBlock).toContain('[mcpSdkRequire, "@hono/node-server"]');
+    expect(desktopRuntimeBlock).toContain('[mcpSdkRequire, "@modelcontextprotocol/sdk"]');
+    expect(desktopRuntimeBlock).toContain('[mcpSdkRequire, "hono"]');
+    expect(desktopRuntimeBlock).toContain('[mcpSdkRequire, "zod-to-json-schema"]');
+    expect(packageScript).toContain("async function copyNpmRuntimeDependencyClosure");
+    expect(packageScript).toContain("Object.keys(packageJson.optionalDependencies ?? {})");
     expect(desktopRuntimeBlock).toContain('[postcssRequire, "nanoid"]');
     expect(desktopRuntimeBlock).toContain('[pdfLibRequire, "@pdf-lib/standard-fonts"]');
     expect(desktopRuntimeBlock).toContain('[pdfLibRequire, "@pdf-lib/upng"]');

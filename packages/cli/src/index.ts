@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { execFile } from "node:child_process";
 import { access, chmod, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -40,6 +41,7 @@ import {
   type CommandRunner
 } from "@htmlslide/agent-adapters";
 import {
+  buildSlidePreviewDocument,
   exportDeck,
   inspectChromiumRuntime,
   type CompilerProjectInput,
@@ -923,6 +925,241 @@ export const loadProject = async (projectPath = process.cwd()): Promise<LoadedPr
       exitCode: EXIT_CODES.validationFailed
     });
   }
+};
+
+export const DEV_SERVER_HOST = "127.0.0.1" as const;
+export const DEFAULT_DEV_SERVER_PORT = 4173;
+
+export type StartDevServerOptions = {
+  projectPath?: string;
+  port?: number;
+};
+
+export type DevServerSlide = {
+  id: string;
+  title: string;
+  path: string;
+};
+
+export type DevServerInfo = {
+  host: typeof DEV_SERVER_HOST;
+  port: number;
+  origin: string;
+  indexPath: "/";
+  slides: DevServerSlide[];
+};
+
+export type DevServer = DevServerInfo & {
+  close: () => Promise<void>;
+};
+
+const validateDevServerPort = (port: number | undefined): number => {
+  const selectedPort = port ?? DEFAULT_DEV_SERVER_PORT;
+  if (!Number.isInteger(selectedPort) || selectedPort < 0 || selectedPort > 65_535) {
+    throw Object.assign(new Error(`Invalid dev server port: ${String(port)}.`), {
+      code: "DEV_PORT_INVALID",
+      exitCode: EXIT_CODES.generic,
+      suggestedFix: "Use a whole-number port between 0 and 65535."
+    });
+  }
+  return selectedPort;
+};
+
+const escapeDevHtml = (value: string): string =>
+  value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+
+const devRouteForProjectPath = (projectPath: string): string =>
+  `/${projectPath.split("/").map((segment) => encodeURIComponent(segment)).join("/")}`;
+
+const devRouteKeyForProjectPath = (projectPath: string): string => `/${projectPath}`;
+
+const devIndexDocument = (project: LoadedProject): string => {
+  const slides = project.manifest.slides
+    .map(
+      (slide) =>
+        `      <li><a href="${escapeDevHtml(devRouteForProjectPath(slide.source))}">${escapeDevHtml(slide.title)}</a></li>`
+    )
+    .join("\n");
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeDevHtml(project.manifest.title)} | HTMLslide</title>
+  </head>
+  <body>
+    <main>
+      <h1>${escapeDevHtml(project.manifest.title)}</h1>
+      <ul>
+${slides}
+      </ul>
+    </main>
+  </body>
+</html>
+`;
+};
+
+const sendDevResponse = (
+  request: IncomingMessage,
+  response: ServerResponse,
+  statusCode: number,
+  body: string,
+  contentType: string
+): void => {
+  const bodyBytes = Buffer.byteLength(body, "utf8");
+  response.writeHead(statusCode, {
+    "cache-control": "no-store",
+    "content-length": bodyBytes,
+    "content-type": contentType,
+    "x-content-type-options": "nosniff"
+  });
+  if (request.method === "HEAD") {
+    response.end();
+    return;
+  }
+  response.end(body);
+};
+
+const sendDevNotFound = (request: IncomingMessage, response: ServerResponse): void => {
+  sendDevResponse(request, response, 404, "Not found.\n", "text/plain; charset=utf-8");
+};
+
+const decodeDevRequestPath = (requestUrl: string): string | undefined => {
+  const queryStart = requestUrl.indexOf("?");
+  const rawPath = queryStart >= 0 ? requestUrl.slice(0, queryStart) : requestUrl;
+  if (!rawPath.startsWith("/") || rawPath.includes("#")) {
+    return undefined;
+  }
+  try {
+    return decodeURIComponent(rawPath);
+  } catch {
+    return undefined;
+  }
+};
+
+const isSafeDevRequestPath = (requestPath: string): boolean => {
+  if (requestPath === "/") {
+    return true;
+  }
+  if (!requestPath.startsWith("/") || requestPath.includes("\\") || requestPath.includes("\0")) {
+    return false;
+  }
+  return requestPath
+    .slice(1)
+    .split("/")
+    .every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
+};
+
+const handleDevRequest = async (
+  projectPath: string,
+  request: IncomingMessage,
+  response: ServerResponse
+): Promise<void> => {
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    response.writeHead(405, {
+      allow: "GET, HEAD",
+      "content-length": 0,
+      "content-type": "text/plain; charset=utf-8"
+    });
+    response.end();
+    return;
+  }
+
+  const requestPath = decodeDevRequestPath(request.url ?? "/");
+  if (!requestPath || !isSafeDevRequestPath(requestPath)) {
+    sendDevNotFound(request, response);
+    return;
+  }
+
+  try {
+    const project = await loadProject(projectPath);
+    if (requestPath === "/") {
+      sendDevResponse(request, response, 200, devIndexDocument(project), "text/html; charset=utf-8");
+      return;
+    }
+
+    const requestedSlide = project.manifest.slides.find(
+      (slide) => devRouteKeyForProjectPath(slide.source) === requestPath
+    );
+    if (!requestedSlide) {
+      sendDevNotFound(request, response);
+      return;
+    }
+
+    const preview = await buildSlidePreviewDocument(project.projectPath, { slideId: requestedSlide.id });
+    sendDevResponse(request, response, 200, preview.htmlDocument, "text/html; charset=utf-8");
+  } catch {
+    sendDevResponse(request, response, 500, "Preview unavailable.\n", "text/plain; charset=utf-8");
+  }
+};
+
+export const startDevServer = async (options: StartDevServerOptions = {}): Promise<DevServer> => {
+  const requestedPort = validateDevServerPort(options.port);
+  const project = await loadProject(options.projectPath ?? process.cwd());
+  const server = createServer((request, response) => {
+    void handleDevRequest(project.projectPath, request, response).catch(() => {
+      if (!response.headersSent) {
+        sendDevResponse(request, response, 500, "Preview unavailable.\n", "text/plain; charset=utf-8");
+      } else {
+        response.destroy();
+      }
+    });
+  });
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error): void => {
+        server.off("listening", onListening);
+        reject(error);
+      };
+      const onListening = (): void => {
+        server.off("error", onError);
+        resolve();
+      };
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(requestedPort, DEV_SERVER_HOST);
+    });
+  } catch (error) {
+    server.close();
+    throw error;
+  }
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    throw new Error("Dev server did not expose a TCP address.");
+  }
+
+  let closePromise: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    closePromise ??= new Promise<void>((resolve, reject) => {
+      if (!server.listening) {
+        resolve();
+        return;
+      }
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+    return closePromise;
+  };
+
+  return {
+    host: DEV_SERVER_HOST,
+    port: address.port,
+    origin: `http://${DEV_SERVER_HOST}:${address.port}`,
+    indexPath: "/",
+    slides: project.manifest.slides.map((slide) => ({
+      id: slide.id,
+      title: slide.title,
+      path: devRouteForProjectPath(slide.source)
+    })),
+    close
+  };
 };
 
 export const tryLoadProjectForCheck = async (projectPath = process.cwd()): Promise<ProjectLoadResult> => {

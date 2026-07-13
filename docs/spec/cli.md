@@ -8,6 +8,7 @@ Initial commands:
 - `htmlslide init [--template <id>]` initializes the current folder as a deck project from a built-in template.
 - `htmlslide templates list --json` lists built-in deck template metadata.
 - `htmlslide open [path] --json` opens a loadable deck project or validated `.deckpkg` in the configured macOS app.
+- `htmlslide dev [path] [--port <port>] [--json]` starts a bounded loopback preview server for a deck project.
 - `htmlslide check [path] --json` discovers `deck.json` from a project root, nested source path, or direct `deck.json` path, then validates schema, files, notes, and source rules.
 - `htmlslide repair --for claude|codex|generic [path] --json` runs the shared check read-only and emits a sanitized, prompt-only repair request. It never invokes an external agent or writes source files, `.htmlslide` reports, or `exports/`.
 - `htmlslide export [path] --pdf --html --deckpkg --thumbnails` creates export artifacts plus `exports/export-manifest.json` after a successful check. When an output flag is omitted, the command uses the corresponding `deck.json` `export` value.
@@ -31,6 +32,35 @@ Each explicit `--pdf`/`--no-pdf`, `--html`/`--no-html`, `--deckpkg`/`--no-deckpk
 - `htmlslide agent test <engine> [--path <dir>] --json` runs a read-only engine preflight. Supported engines are `claude-code`, `codex-cli`, `gemini-cli`, and `htmlslide-mock`; Claude/Codex checks version, authentication, and the fixed headless contract, while Gemini is detection-only.
 - `htmlslide agent run --engine htmlslide-mock --task <task> [--speaker-notes <mode>] --path <project> --json` runs the deterministic agent; `<mode>` is `none`, `bullet-notes`, `full-script`, or `rehearsal-cues`.
 - `pnpm rc:byok-evidence -- --project <path> --provider-validation <validation.json> [--run-id <id>] [--report <agent-report.json>] [--output <evidence.json>]` verifies a completed desktop BYOK run without reading provider credentials.
+
+## Local Dev Preview
+
+`htmlslide dev [path]` binds only to `127.0.0.1`. The default port is `4173`; `--port 0` requests an ephemeral port and is intended for tests and parallel local sessions. The server is a read-only preview surface: it does not write source files, `.htmlslide/`, or `exports/`.
+
+The server exposes only `GET` and `HEAD` requests for:
+
+- `/`: a small HTML index with one link per manifest slide.
+- `/<slide.source>`: the project-relative route for that slide, served by the compiler's canonical `buildSlidePreviewDocument` API. Referenced local assets are therefore handled by the shared preview builder rather than by generic static-file serving.
+
+Unknown routes, traversal segments, backslashes, malformed encoded paths, and direct requests for project files return `404`. Other methods return `405` with `Allow: GET, HEAD`.
+
+With `--json`, startup metadata uses the normal success envelope and contains no project path:
+
+```json
+{
+  "status": "passed",
+  "command": "dev",
+  "host": "127.0.0.1",
+  "port": 4173,
+  "origin": "http://127.0.0.1:4173",
+  "indexPath": "/",
+  "slides": [
+    { "id": "001-title", "title": "Title", "path": "/slides/001-title.html" }
+  ]
+}
+```
+
+The process remains alive until `SIGINT` or `SIGTERM`; the exported `startDevServer` helper returns the same metadata plus an async `close()` for deterministic tests.
 
 Exit codes:
 

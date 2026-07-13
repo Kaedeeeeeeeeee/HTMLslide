@@ -374,7 +374,7 @@ async function copyWorkspaceRuntimePackage(appNodeModulesPath, packageName, pack
   await requirePath(path.join(runtimePath, "dist", "index.js"), `Packaged desktop runtime ${packageName}`);
 }
 
-async function copyNpmRuntimePackage(appNodeModulesPath, packageName, requireContext) {
+function resolveNpmRuntimePackageRoot(packageName, requireContext) {
   let packageRoot;
   try {
     packageRoot = path.dirname(requireContext.resolve(`${packageName}/package.json`));
@@ -388,6 +388,11 @@ async function copyNpmRuntimePackage(appNodeModulesPath, packageName, requireCon
     }
     packageRoot = candidate;
   }
+  return packageRoot;
+}
+
+async function copyNpmRuntimePackage(appNodeModulesPath, packageName, requireContext) {
+  const packageRoot = resolveNpmRuntimePackageRoot(packageName, requireContext);
   const runtimePath = path.join(appNodeModulesPath, ...packageName.split("/"));
   await rm(runtimePath, { recursive: true, force: true });
   await mkdir(path.dirname(runtimePath), { recursive: true });
@@ -396,12 +401,49 @@ async function copyNpmRuntimePackage(appNodeModulesPath, packageName, requireCon
     verbatimSymlinks: false
   });
   await requirePath(path.join(runtimePath, "package.json"), `Packaged npm runtime ${packageName}`);
+  return packageRoot;
+}
+
+async function copyNpmRuntimeDependencyClosure(appNodeModulesPath, roots) {
+  const pending = [...roots];
+  const visited = new Set();
+
+  while (pending.length > 0) {
+    const [requireContext, packageName] = pending.shift();
+    const packageRoot = resolveNpmRuntimePackageRoot(packageName, requireContext);
+    if (visited.has(packageRoot)) {
+      continue;
+    }
+    visited.add(packageRoot);
+
+    await copyNpmRuntimePackage(appNodeModulesPath, packageName, requireContext);
+    const packageJson = JSON.parse(await readFile(path.join(packageRoot, "package.json"), "utf8"));
+    const dependencyNames = new Set([
+      ...Object.keys(packageJson.dependencies ?? {}),
+      ...Object.keys(packageJson.optionalDependencies ?? {})
+    ]);
+    const packageRequire = createRequire(path.join(packageRoot, "package.json"));
+
+    for (const dependencyName of dependencyNames) {
+      try {
+        resolveNpmRuntimePackageRoot(dependencyName, packageRequire);
+        pending.push([packageRequire, dependencyName]);
+      } catch (error) {
+        if (packageJson.optionalDependencies?.[dependencyName] !== undefined) {
+          continue;
+        }
+        throw error;
+      }
+    }
+  }
 }
 
 async function deployDesktopRuntime(appResourcesPath) {
   const appNodeModulesPath = path.join(appResourcesPath, "node_modules");
   const compilerRequire = createRequire(path.join(root, "packages", "compiler", "package.json"));
   const coreRequire = createRequire(path.join(root, "packages", "core", "package.json"));
+  const mcpServerRequire = createRequire(path.join(root, "packages", "mcp-server", "package.json"));
+  const mcpSdkRequire = createRequire(mcpServerRequire.resolve("@modelcontextprotocol/sdk/package.json"));
   const jszipRequire = createRequire(compilerRequire.resolve("jszip/package.json"));
   const pdfLibRequire = createRequire(compilerRequire.resolve("pdf-lib/package.json"));
   const postcssRequire = createRequire(compilerRequire.resolve("postcss/package.json"));
@@ -410,6 +452,8 @@ async function deployDesktopRuntime(appResourcesPath) {
     ["@htmlslide/agent-adapters", path.join(root, "packages", "agent-adapters")],
     ["@htmlslide/compiler", path.join(root, "packages", "compiler")],
     ["@htmlslide/core", path.join(root, "packages", "core")],
+    ["@htmlslide/linter", path.join(root, "packages", "linter")],
+    ["@htmlslide/mcp-server", path.join(root, "packages", "mcp-server")],
     ["@htmlslide/presenter", path.join(root, "packages", "presenter")],
     ["@htmlslide/renderer", path.join(root, "packages", "renderer")],
     ["@htmlslide/skills", path.join(root, "packages", "skills")]
@@ -419,7 +463,24 @@ async function deployDesktopRuntime(appResourcesPath) {
     [compilerRequire, "pdf-lib"],
     [compilerRequire, "playwright-core"],
     [compilerRequire, "postcss"],
+    [mcpSdkRequire, "@hono/node-server"],
+    [mcpSdkRequire, "@modelcontextprotocol/sdk"],
+    [mcpSdkRequire, "ajv"],
+    [mcpSdkRequire, "ajv-formats"],
+    [mcpSdkRequire, "content-type"],
+    [mcpSdkRequire, "cors"],
+    [mcpSdkRequire, "cross-spawn"],
+    [mcpSdkRequire, "eventsource"],
+    [mcpSdkRequire, "eventsource-parser"],
+    [mcpSdkRequire, "express"],
+    [mcpSdkRequire, "express-rate-limit"],
+    [mcpSdkRequire, "hono"],
+    [mcpSdkRequire, "jose"],
+    [mcpSdkRequire, "json-schema-typed"],
+    [mcpSdkRequire, "pkce-challenge"],
+    [mcpSdkRequire, "raw-body"],
     [coreRequire, "zod"],
+    [mcpSdkRequire, "zod-to-json-schema"],
     [pdfLibRequire, "@pdf-lib/standard-fonts"],
     [pdfLibRequire, "@pdf-lib/upng"],
     [pdfLibRequire, "tslib"],
@@ -446,9 +507,7 @@ async function deployDesktopRuntime(appResourcesPath) {
   for (const [packageName, packagePath] of workspaceRuntimePackages) {
     await copyWorkspaceRuntimePackage(appNodeModulesPath, packageName, packagePath);
   }
-  for (const [requireContext, packageName] of npmRuntimePackages) {
-    await copyNpmRuntimePackage(appNodeModulesPath, packageName, requireContext);
-  }
+  await copyNpmRuntimeDependencyClosure(appNodeModulesPath, npmRuntimePackages);
 }
 
 async function createDmg({ appPath, artifactBaseName, outputDir, volumeName }) {

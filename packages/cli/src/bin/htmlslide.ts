@@ -39,6 +39,7 @@ import {
   packageLoadedProject,
   revertCheckpoint,
   runAgentTask,
+  startDevServer,
   testAgentEngine,
   tryLoadProjectForCheck,
   uninstallCliShim,
@@ -95,6 +96,10 @@ type AgentTestCommandOptions = JsonOption & {
   path?: string;
 };
 
+type DevCommandOptions = JsonOption & {
+  port: string;
+};
+
 type AgentValidateProviderCommandOptions = JsonOption & {
   apiKeyEnv: string;
   baseUrl?: string;
@@ -133,6 +138,25 @@ type CliError = Error & {
   issues?: unknown;
   summary?: unknown;
   details?: unknown;
+};
+
+const parseDevPort = (value: string): number => {
+  if (!/^\d+$/.test(value)) {
+    throw Object.assign(new Error(`Invalid dev server port: ${value}.`), {
+      code: "DEV_PORT_INVALID",
+      exitCode: EXIT_CODES.generic,
+      suggestedFix: "Use a whole-number port between 0 and 65535."
+    });
+  }
+  const port = Number(value);
+  if (port > 65_535) {
+    throw Object.assign(new Error(`Invalid dev server port: ${value}.`), {
+      code: "DEV_PORT_INVALID",
+      exitCode: EXIT_CODES.generic,
+      suggestedFix: "Use a whole-number port between 0 and 65535."
+    });
+  }
+  return port;
 };
 
 const writeResult = (payload: unknown, json = false): void => {
@@ -392,6 +416,43 @@ program
       }
       const project = await loadProject(targetPath);
       writeResult(await launchDesktopTarget("open", project.projectPath, "project"), json);
+    } catch (error) {
+      fail(annotateProjectLoadError(error), json);
+    }
+  });
+
+program
+  .command("dev")
+  .argument("[path]", "deck project path", process.cwd())
+  .option("--port <port>", "loopback preview server port; use 0 for an ephemeral port", "4173")
+  .option("--json", "print machine-readable startup metadata")
+  .description("Start a bounded local preview server for a deck project.")
+  .action(async (projectPath: string, options: DevCommandOptions) => {
+    const json = Boolean(options.json ?? program.opts<JsonOption>().json);
+    try {
+      const server = await startDevServer({
+        projectPath,
+        port: parseDevPort(options.port)
+      });
+      const { close, ...startup } = server;
+      writeResult({ status: "passed", command: "dev", ...startup }, json);
+
+      let stopping = false;
+      const shutdown = (): void => {
+        if (stopping) {
+          return;
+        }
+        stopping = true;
+        void close().then(
+          () => process.exit(EXIT_CODES.success),
+          (error: unknown) => {
+            process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+            process.exit(EXIT_CODES.generic);
+          }
+        );
+      };
+      process.once("SIGINT", shutdown);
+      process.once("SIGTERM", shutdown);
     } catch (error) {
       fail(annotateProjectLoadError(error), json);
     }

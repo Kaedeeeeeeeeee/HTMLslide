@@ -298,7 +298,7 @@ export class AgentRunController {
         }
 
         this.#timedOut = true;
-        const timeoutError = new AgentRunTimeoutError(this.#runTimeoutMs, this.#snapshot.currentStage);
+        const timeoutError = new AgentRunTimeoutError(this.#runTimeoutMs, this.#snapshot.currentStage ?? "brief");
         this.#abortController.abort();
         resolve(this.#finishFailed({
           code: "timeout",
@@ -577,7 +577,7 @@ export class AgentRunController {
   }
 
   #timeoutErrorInfo(): AgentRunErrorInfo {
-    const timeoutError = new AgentRunTimeoutError(this.#runTimeoutMs, this.#snapshot.currentStage);
+    const timeoutError = new AgentRunTimeoutError(this.#runTimeoutMs, this.#snapshot.currentStage ?? "brief");
     return {
       code: "timeout",
       message: timeoutError.message,

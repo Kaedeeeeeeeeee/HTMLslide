@@ -322,6 +322,24 @@ describe("agent orchestrator", () => {
     expect(result.events.some((event) => event.type === "run-completed")).toBe(false);
   });
 
+  it("reports an early startup timeout as a brief-stage failure", async () => {
+    const result = await runMockAgent({
+      runId: "run-startup-timeout",
+      runTimeoutMs: 1,
+      provider: createMockProvider({ delayMs: 25 })
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: "failed",
+      error: {
+        code: "timeout",
+        stage: "brief",
+        timeoutMs: 1
+      }
+    });
+  });
+
   it("does not mark the run successful when check status is failed without counted errors", async () => {
     const failedCheck = {
       ...createMockPassedCheck(),

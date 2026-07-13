@@ -82,6 +82,11 @@ type AgentRunCommandOptions = JsonOption & {
   task: string;
   path?: string;
   speakerNotes?: string;
+  provider?: string;
+  model?: string;
+  apiKeyEnv?: string;
+  baseUrl?: string;
+  targetSlideCount?: string;
 };
 
 type AgentValidateProviderCommandOptions = JsonOption & {
@@ -731,6 +736,11 @@ agentCommand
   .requiredOption("--task <task>", "task or brief for the agent run")
   .option("--path <path>", "deck project path", process.cwd())
   .option("--speaker-notes <mode>", "speaker notes mode: none, bullet-notes, full-script, or rehearsal-cues")
+  .option("--provider <provider>", "provider id: openai, anthropic, or compatible")
+  .option("--model <model>", "provider model id")
+  .option("--api-key-env <name>", "environment variable that contains the provider API key")
+  .option("--base-url <url>", "OpenAI-compatible provider API root")
+  .option("--target-slide-count <count>", "exact target slide count for provider-backed runs")
   .option("--json", "print machine-readable JSON")
   .description("Run an agent task with a configured engine.")
   .action(async (options: AgentRunCommandOptions) => {
@@ -738,6 +748,11 @@ agentCommand
     try {
       const result = await runAgentTask({
         engine: options.engine,
+        provider: options.provider,
+        model: options.model,
+        apiKeyEnv: options.apiKeyEnv,
+        baseUrl: options.baseUrl,
+        targetSlideCount: options.targetSlideCount === undefined ? undefined : Number(options.targetSlideCount),
         speakerNotesMode: options.speakerNotes,
         task: options.task,
         projectPath: options.path

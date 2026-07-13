@@ -246,8 +246,15 @@ type DesktopAudienceWindowRequest = {
   payload?: DesktopAudienceSlidePayload;
 };
 
+type DesktopAudienceWindowState = {
+  open: boolean;
+  displayId?: number;
+  reason?: "target-disconnected" | "target-reconnected" | "closed";
+};
+
 let audienceWindow: BrowserWindow | undefined;
 let audienceWindowDisplayId: number | undefined;
+let audienceWindowPayload: DesktopAudienceSlidePayload | undefined;
 
 const invokeCli = async (args: string[]) => {
   if (!cliRuntime) {
@@ -418,8 +425,11 @@ function normalizeAudienceWindowRequest(value: unknown): Required<Pick<DesktopAu
   };
 }
 
-function audienceWindowBounds(displayId: number | undefined): Rectangle {
+function audienceWindowBounds(displayId: number | undefined): Rectangle | undefined {
   const selectedDisplay = screen.getAllDisplays().find((display) => display.id === displayId) ?? screen.getPrimaryDisplay();
+  if (displayId !== undefined && selectedDisplay.id !== displayId) {
+    return undefined;
+  }
   const bounds = selectedDisplay.bounds;
   const width = Math.max(960, Math.round(bounds.width));
   const height = Math.max(540, Math.round(bounds.height));
@@ -433,6 +443,9 @@ function audienceWindowBounds(displayId: number | undefined): Rectangle {
 
 function createAudienceWindow(displayId: number | undefined): BrowserWindow {
   const bounds = audienceWindowBounds(displayId);
+  if (!bounds) {
+    throw new Error("The selected presenter display is not connected.");
+  }
   const browserWindow = new BrowserWindow({
     ...bounds,
     alwaysOnTop: true,
@@ -451,8 +464,11 @@ function createAudienceWindow(displayId: number | undefined): BrowserWindow {
 
   browserWindow.on("closed", () => {
     if (audienceWindow === browserWindow) {
+      const closedDisplayId = audienceWindowDisplayId;
       audienceWindow = undefined;
       audienceWindowDisplayId = undefined;
+      audienceWindowPayload = undefined;
+      sendAudienceWindowState({ open: false, displayId: closedDisplayId, reason: "closed" });
     }
   });
 
@@ -461,12 +477,22 @@ function createAudienceWindow(displayId: number | undefined): BrowserWindow {
 
 async function openAudienceWindow(requestValue: unknown) {
   const request = normalizeAudienceWindowRequest(requestValue);
+  const bounds = audienceWindowBounds(request.displayId);
+  if (!bounds) {
+    return {
+      open: false,
+      displayId: request.displayId,
+      reason: "target-disconnected" as const
+    };
+  }
+
   audienceWindowDisplayId = request.displayId;
+  audienceWindowPayload = request.payload;
 
   if (!audienceWindow || audienceWindow.isDestroyed()) {
     audienceWindow = createAudienceWindow(request.displayId);
   } else {
-    audienceWindow.setBounds(audienceWindowBounds(request.displayId));
+    audienceWindow.setBounds(bounds);
   }
 
   await audienceWindow.loadURL(audienceSlideDataUrl(request.payload));
@@ -479,6 +505,7 @@ async function openAudienceWindow(requestValue: unknown) {
 
 async function updateAudienceWindow(requestValue: unknown) {
   const request = normalizeAudienceWindowRequest(requestValue);
+  audienceWindowPayload = request.payload;
   if (!audienceWindow || audienceWindow.isDestroyed()) {
     return {
       open: false,
@@ -487,8 +514,19 @@ async function updateAudienceWindow(requestValue: unknown) {
   }
 
   audienceWindowDisplayId = request.displayId;
-  audienceWindow.setBounds(audienceWindowBounds(request.displayId));
+  const bounds = audienceWindowBounds(request.displayId);
+  if (!bounds) {
+    audienceWindow.hide();
+    return {
+      open: false,
+      displayId: request.displayId,
+      reason: "target-disconnected" as const
+    };
+  }
+
+  audienceWindow.setBounds(bounds);
   await audienceWindow.loadURL(audienceSlideDataUrl(request.payload));
+  audienceWindow.showInactive();
   return {
     open: true,
     displayId: audienceWindowDisplayId
@@ -501,30 +539,53 @@ function closeAudienceWindow() {
   }
   audienceWindow = undefined;
   audienceWindowDisplayId = undefined;
+  audienceWindowPayload = undefined;
   return {
     open: false
   };
 }
 
-function reconcileAudienceWindowDisplay(): void {
+async function reconcileAudienceWindowDisplay(): Promise<void> {
   if (!audienceWindow || audienceWindow.isDestroyed() || audienceWindowDisplayId === undefined) {
     return;
   }
 
   const displayStillConnected = screen.getAllDisplays().some((display) => display.id === audienceWindowDisplayId);
   if (displayStillConnected) {
+    const bounds = audienceWindowBounds(audienceWindowDisplayId);
+    if (bounds) {
+      audienceWindow.setBounds(bounds);
+    }
+    if (audienceWindowPayload && audienceWindow.isVisible() === false) {
+      await audienceWindow.loadURL(audienceSlideDataUrl(audienceWindowPayload));
+      audienceWindow.showInactive();
+      sendAudienceWindowState({
+        open: true,
+        displayId: audienceWindowDisplayId,
+        reason: "target-reconnected"
+      });
+    }
     return;
   }
 
-  const primaryDisplay = screen.getPrimaryDisplay();
-  audienceWindowDisplayId = primaryDisplay.id;
-  audienceWindow.setBounds(audienceWindowBounds(primaryDisplay.id));
+  audienceWindow.hide();
+  sendAudienceWindowState({
+    open: false,
+    displayId: audienceWindowDisplayId,
+    reason: "target-disconnected"
+  });
 }
 
 function notifyPresenterDisplaysChanged(): void {
-  reconcileAudienceWindowDisplay();
+  void reconcileAudienceWindowDisplay();
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("htmlslide:presenter-displays-changed");
+  }
+}
+
+function sendAudienceWindowState(state: DesktopAudienceWindowState): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("htmlslide:audience-window-state-changed", state);
   }
 }
 
@@ -547,7 +608,7 @@ function audienceSlideDataUrl(payload: DesktopAudienceSlidePayload): string {
 function audienceSlideHtml(payload: DesktopAudienceSlidePayload): string {
   const safeSourceDocumentHtml = payload.sourceDocumentHtml ?? "";
   const safeImageDataUrl = safeAudienceImageDataUrl(payload.imageDataUrl);
-  const screenLabel = payload.screen === "black" ? "Black screen" : payload.screen === "white" ? "White screen" : "";
+  const screenLabel = payload.screen === "black" ? "Black screen" : payload.screen === "white" ? "White screen" : "Normal screen";
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -646,31 +707,18 @@ function audienceSlideHtml(payload: DesktopAudienceSlidePayload): string {
       display: ${payload.screen === "normal" ? "none" : "grid"};
       place-items: center;
       background: ${payload.screen === "white" ? "#fff" : "#000"};
-      color: ${payload.screen === "white" ? "#111" : "#fff"};
-      font-size: clamp(2rem, 7vw, 7rem);
-      font-weight: 700;
       z-index: 10;
-    }
-    .audience-meta {
-      position: absolute;
-      right: 1rem;
-      bottom: .8rem;
-      color: rgba(255,255,255,.72);
-      font-size: .85rem;
-      z-index: 11;
-      text-shadow: 0 1px 2px rgba(0,0,0,.8);
     }
   </style>
 </head>
 <body>
-  <main class="audience-stage" aria-label="HTMLslide audience window">
+  <main class="audience-stage" aria-label="HTMLslide audience window" data-slide-number="${payload.slideNumber}" data-slide-count="${payload.slideCount}">
     ${safeSourceDocumentHtml
       ? `<iframe class="audience-slide-frame" sandbox="" srcdoc="${escapeHtml(safeSourceDocumentHtml)}" title="${escapeHtml(payload.slideTitle)}"></iframe>`
       : safeImageDataUrl
         ? `<div class="audience-slide audience-slide--image"><img src="${safeImageDataUrl}" alt="${escapeHtml(payload.slideTitle)}" /></div>`
         : audienceFallbackHtml(payload)}
-    <div class="audience-cover">${escapeHtml(screenLabel)}</div>
-    <div class="audience-meta">${payload.slideNumber} / ${payload.slideCount}</div>
+    <div class="audience-cover" aria-label="${escapeHtml(screenLabel)}" data-screen="${payload.screen}"></div>
   </main>
 </body>
 </html>`;

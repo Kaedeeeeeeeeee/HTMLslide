@@ -63,6 +63,11 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
     ipcRenderer.on("htmlslide:presenter-displays-changed", listener);
     return () => ipcRenderer.removeListener("htmlslide:presenter-displays-changed", listener);
   },
+  onAudienceWindowStateChanged: (handler: (state: unknown) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, state: unknown) => handler(state);
+    ipcRenderer.on("htmlslide:audience-window-state-changed", listener);
+    return () => ipcRenderer.removeListener("htmlslide:audience-window-state-changed", listener);
+  },
   openAudienceWindow: (request: unknown) => ipcRenderer.invoke("htmlslide:open-audience-window", request),
   updateAudienceWindow: (request: unknown) => ipcRenderer.invoke("htmlslide:update-audience-window", request),
   closeAudienceWindow: () => ipcRenderer.invoke("htmlslide:close-audience-window"),

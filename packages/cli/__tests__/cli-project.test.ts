@@ -20,6 +20,7 @@ import {
   loadProject,
   readDesktopAppPathConfig,
   resolveProjectExportOptions,
+  runAgentTask,
   tryLoadProjectForCheck,
   uninstallCliShim,
   validateAgentProviderCredentials,
@@ -56,6 +57,124 @@ const runCli = (args: string[], env: NodeJS.ProcessEnv = {}) =>
     },
     timeout: 10000
   });
+
+const providerDeck = (): string => JSON.stringify({
+  schemaVersion: "0.1.0",
+  id: "provider-deck",
+  title: "Provider Deck",
+  language: "en-US",
+  aspectRatio: "16:9",
+  viewport: { width: 1920, height: 1080 },
+  slides: [
+    {
+      id: "001-title",
+      title: "Provider title",
+      source: "slides/001-title.html",
+      kind: "title",
+      status: "ready"
+    },
+    {
+      id: "002-detail",
+      title: "Provider detail",
+      source: "slides/002-detail.html",
+      kind: "content",
+      status: "ready"
+    }
+  ],
+  export: {
+    pdf: false,
+    html: false,
+    deckpkg: false,
+    thumbnails: false,
+    speakerNotes: false
+  }
+});
+
+const createFakeProviderFetch = (options: { validSource?: boolean } = {}) => {
+  const validSource = options.validSource ?? true;
+  return async (input: string | URL, init?: RequestInit): Promise<Response> => {
+    const requestUrl = String(input);
+    if (requestUrl.includes("/models/")) {
+      return new Response(JSON.stringify({ id: "fake-model" }), { status: 200 });
+    }
+
+    const body = JSON.parse(String(init?.body)) as {
+      messages?: Array<{ content?: string }>;
+    };
+    const userMessage = body.messages?.[1]?.content;
+    const request = JSON.parse(userMessage ?? "{}") as { stage?: string };
+    const stage = request.stage;
+    const outputs: Record<string, unknown> = {
+      brief: {
+        title: "Provider Deck",
+        brief: "A deterministic provider-backed deck",
+        language: "en-US",
+        audience: "testers",
+        durationMinutes: 4
+      },
+      outline: {
+        title: "Provider Deck",
+        language: "en-US",
+        audience: "testers",
+        durationMinutes: 4,
+        slides: [
+          { id: "001-title", title: "Provider title", kind: "title", goal: "Set context" },
+          { id: "002-detail", title: "Provider detail", kind: "content", goal: "Show detail" }
+        ]
+      },
+      "visual-direction": {
+        directions: [{
+          id: "provider-direction",
+          label: "Provider Direction",
+          rationale: "Deterministic test direction",
+          sampleSlideIds: ["001-title", "002-detail"],
+          tokens: { background: "#ffffff", text: "#111111", accent: "#2255cc" }
+        }],
+        selectedDirectionId: "provider-direction"
+      },
+      build: {
+        filesChanged: ["deck.json", "slides/001-title.html", "slides/002-detail.html"],
+        slidesChanged: ["001-title", "002-detail"],
+        notesChanged: [],
+        themeChanged: [],
+        sourceWrites: [
+          { path: "deck.json", content: providerDeck() },
+          {
+            path: "slides/001-title.html",
+            content: validSource
+              ? '<section class="slide" data-slide-id="001-title"><h1>Provider title</h1></section>\n'
+              : '<section class="slide"><h1>Provider title</h1></section>\n'
+          },
+          {
+            path: "slides/002-detail.html",
+            content: '<section class="slide" data-slide-id="002-detail"><h1>Provider detail</h1></section>\n'
+          }
+        ]
+      },
+      check: {
+        status: "passed",
+        summary: { errors: 0, warnings: 0, info: 0 },
+        issues: []
+      },
+      export: {
+        artifacts: [{ type: "html", path: "exports/provider.html" }]
+      },
+      review: {
+        summary: "Provider run is ready for review.",
+        filesChanged: ["deck.json", "slides/001-title.html", "slides/002-detail.html"],
+        issuesRemaining: 0,
+        nextActions: []
+      }
+    };
+
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify(outputs[stage ?? ""]) } }]
+    }), {
+      headers: { "content-type": "application/json" },
+      status: 200
+    });
+  };
+};
 
 describe("CLI project helpers", { timeout: 20_000 }, () => {
   it("configures only a validated packaged Chromium executable inside the CLI runtime", async () => {
@@ -1372,6 +1491,208 @@ describe("CLI project helpers", { timeout: 20_000 }, () => {
       expect(restoredDeck.title).toBe("Demo");
       expect(restoredDeck.slides.map((slide: { id: string }) => slide.id)).toEqual(["001-title", "002-workflow"]);
       await expectMissing(path.join(project.projectPath, "slides", "003-review.html"));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it("runs a provider-backed agent with fake fetch, applies source writes, and writes a sanitized report", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-byok-"));
+    const secret = "provider-backed-test-secret";
+    try {
+      const project = await createProject(path.join(root, "provider-deck"), "provider-deck");
+      const result = await runAgentTask({
+        apiKeyEnv: "HTMLSLIDE_TEST_BYOK_KEY",
+        baseUrl: "https://provider.example.test/v1",
+        engine: "htmlslide-byok",
+        env: { HTMLSLIDE_TEST_BYOK_KEY: secret },
+        fetch: createFakeProviderFetch(),
+        model: "fake-model",
+        projectPath: project.projectPath,
+        provider: "compatible",
+        targetSlideCount: 2,
+        task: "Create a deterministic provider-backed deck"
+      });
+
+      expect(result).toMatchObject({
+        ok: true,
+        provider: "compatible",
+        providerId: "htmlslide-byok",
+        model: "fake-model",
+        targetSlideCount: 2,
+        applied: {
+          source: "provider-source-writes",
+          writeCount: 3,
+          filesChanged: ["deck.json", "slides/001-title.html", "slides/002-detail.html"]
+        },
+        check: { status: "passed" },
+        export: { artifacts: { notes: path.join(project.projectPath, "exports", "notes.json") } },
+        exportManifest: {
+          artifactCount: 1,
+          sourceDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+          sha256: expect.stringMatching(/^[a-f0-9]{64}$/u)
+        }
+      });
+      expect(result.checkpointDiff?.summary.changed).toBeGreaterThan(0);
+
+      const reportPath = path.join(project.projectPath, ".htmlslide", "reports", "latest-agent-run.json");
+      const reportText = await readFile(reportPath, "utf8");
+      const report = JSON.parse(reportText) as Record<string, any>;
+      expect(report).toMatchObject({
+        kind: "htmlslide-agent-run-report",
+        schemaVersion: "0.1.0",
+        providerId: "htmlslide-byok",
+        provider: {
+          provider: "compatible",
+          model: "fake-model",
+          baseUrlSha256: expect.stringMatching(/^[a-f0-9]{64}$/u)
+        },
+        projectPath: project.projectPath,
+        status: "succeeded",
+        ok: true,
+        outputs: {
+          outline: { slides: expect.arrayContaining([expect.objectContaining({ id: "001-title" })]) },
+          build: { sourceWriteCount: 3, sourceWritePaths: ["deck.json", "slides/001-title.html", "slides/002-detail.html"] }
+        },
+        checkpoint: { strategy: "file-copy", canRevert: true },
+        checkpointDiff: { summary: { changed: expect.any(Number) } },
+        cli: {
+          check: { ok: true, exitCode: 0, status: "passed" },
+          export: {
+            ok: true,
+            exitCode: 0,
+            status: "passed",
+            artifactPaths: expect.arrayContaining(["exports/notes.json"])
+          }
+        },
+        exportManifest: { artifactCount: 1 }
+      });
+      expect(report.outputs.build).not.toHaveProperty("sourceWrites");
+      expect(reportText).not.toContain(secret);
+      expect(JSON.stringify(result)).not.toContain(secret);
+
+      const deck = JSON.parse(await readFile(path.join(project.projectPath, "deck.json"), "utf8")) as { title: string };
+      expect(deck.title).toBe("Provider Deck");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it("rejects invalid provider selection and missing provider environment values with agent JSON exit behavior", async () => {
+    await expect(
+      runAgentTask({
+        apiKeyEnv: "HTMLSLIDE_TEST_INVALID_PROVIDER_KEY",
+        engine: "htmlslide-byok",
+        model: "fake-model",
+        provider: "not-a-provider",
+        task: "invalid provider"
+      })
+    ).rejects.toMatchObject({ code: "AGENT_PROVIDER_NOT_FOUND", exitCode: EXIT_CODES.agentFailed });
+
+    const missingEnv = "HTMLSLIDE_TEST_MISSING_BYOK_KEY";
+    const failure = await runCli([
+      "agent",
+      "run",
+      "--engine",
+      "htmlslide-byok",
+      "--provider",
+      "openai",
+      "--model",
+      "fake-model",
+      "--api-key-env",
+      missingEnv,
+      "--task",
+      "missing provider key",
+      "--json"
+    ]).then(
+      () => undefined,
+      (error: unknown) => error
+    );
+    expect(failure).toMatchObject({
+      code: EXIT_CODES.agentFailed,
+      stdout: expect.stringContaining('"code": "AGENT_PROVIDER_API_KEY_ENV_MISSING"')
+    });
+    expect(String((failure as { stdout?: unknown }).stdout ?? "")).not.toContain("fake-model-secret");
+  });
+
+  it("fails provider-backed runs when the authoritative shared check fails", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-byok-check-"));
+    try {
+      const project = await createProject(path.join(root, "provider-deck"), "provider-deck");
+      const result = await runAgentTask({
+        apiKeyEnv: "HTMLSLIDE_TEST_BYOK_KEY",
+        baseUrl: "https://provider.example.test/v1",
+        engine: "htmlslide-byok",
+        env: { HTMLSLIDE_TEST_BYOK_KEY: "check-failure-secret" },
+        fetch: createFakeProviderFetch({ validSource: false }),
+        model: "fake-model",
+        projectPath: project.projectPath,
+        provider: "compatible",
+        targetSlideCount: 2,
+        task: "Create a deck that should fail the shared check"
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        status: "failed",
+        error: { code: "check-failed" },
+        check: { status: "failed" }
+      });
+      const report = JSON.parse(await readFile(
+        path.join(project.projectPath, ".htmlslide", "reports", "latest-agent-run.json"),
+        "utf8"
+      )) as Record<string, any>;
+      expect(report).toMatchObject({
+        ok: false,
+        status: "failed",
+        cli: { check: { ok: false, exitCode: EXIT_CODES.validationFailed, status: "failed" } }
+      });
+      expect(report.cli).not.toHaveProperty("export");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it("fails provider-backed runs when shared export returns no artifacts", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-byok-export-"));
+    try {
+      const project = await createProject(path.join(root, "provider-deck"), "provider-deck");
+      const result = await runAgentTask({
+        apiKeyEnv: "HTMLSLIDE_TEST_BYOK_KEY",
+        baseUrl: "https://provider.example.test/v1",
+        engine: "htmlslide-byok",
+        env: { HTMLSLIDE_TEST_BYOK_KEY: "export-failure-secret" },
+        exportProject: async (loadedProject) => ({
+          projectPath: loadedProject.projectPath,
+          exportsPath: path.join(loadedProject.projectPath, "exports"),
+          artifacts: {},
+          metadata: { manifest: path.join(loadedProject.projectPath, "exports", "export-manifest.json") },
+          verification: { expectedPageCount: loadedProject.manifest.slides.length }
+        }),
+        fetch: createFakeProviderFetch(),
+        model: "fake-model",
+        projectPath: project.projectPath,
+        provider: "compatible",
+        targetSlideCount: 2,
+        task: "Create a deck that should fail the shared export gate"
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        status: "failed",
+        error: { code: "export-failed" },
+        check: { status: "passed" },
+        export: { artifacts: {} }
+      });
+      const report = JSON.parse(await readFile(
+        path.join(project.projectPath, ".htmlslide", "reports", "latest-agent-run.json"),
+        "utf8"
+      )) as Record<string, any>;
+      expect(report).toMatchObject({
+        ok: false,
+        status: "failed",
+        cli: { export: { ok: false, exitCode: EXIT_CODES.exportFailed, status: "failed", artifactPaths: [] } }
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

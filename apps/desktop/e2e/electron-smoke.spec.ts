@@ -1915,7 +1915,8 @@ fetch("${previewNetworkOrigin}/fetch");
     await expect(audiencePage.getByLabel("HTMLslide audience window")).toBeVisible();
     await expect(audiencePage.locator(".audience-slide-frame")).toBeVisible();
     await expect(audienceFrame.getByRole("heading", { name: "HTML as source" })).toBeVisible();
-    await expect(audiencePage.getByText("1 / 2")).toBeVisible();
+    await expect(audiencePage.locator(".audience-stage")).toHaveAttribute("data-slide-number", "1");
+    await expect(audiencePage.locator(".audience-stage")).toHaveAttribute("data-slide-count", "2");
     await page.bringToFront();
 
     await page.keyboard.press("ArrowRight");
@@ -1924,7 +1925,7 @@ fetch("${previewNetworkOrigin}/fetch");
     await expect(currentSlideFrame.getByRole("heading", { name: "Project structure" })).toBeVisible();
     await expect(presenter.getByText("Project folders stay readable")).toBeVisible();
     await expect(audienceFrame.getByRole("heading", { name: "Project structure" })).toBeVisible();
-    await expect(audiencePage.getByText("2 / 2")).toBeVisible();
+    await expect(audiencePage.locator(".audience-stage")).toHaveAttribute("data-slide-number", "2");
 
     await page.keyboard.press("ArrowLeft");
     await expect(presenter.getByText("1 / 2")).toBeVisible();
@@ -1963,13 +1964,15 @@ fetch("${previewNetworkOrigin}/fetch");
 
     await page.keyboard.press("B");
     await expect(screenCover).toHaveText("Black screen");
-    await expect(audiencePage.getByText("Black screen")).toBeVisible();
+    await expect(audiencePage.locator(".audience-cover")).toHaveAttribute("data-screen", "black");
+    await expect(audiencePage.locator(".audience-cover")).toBeEmpty();
     await page.keyboard.press("B");
     await expect(screenCover).toBeHidden();
 
     await page.keyboard.press("W");
     await expect(screenCover).toHaveText("White screen");
-    await expect(audiencePage.getByText("White screen")).toBeVisible();
+    await expect(audiencePage.locator(".audience-cover")).toHaveAttribute("data-screen", "white");
+    await expect(audiencePage.locator(".audience-cover")).toBeEmpty();
     await page.keyboard.press("W");
     await expect(screenCover).toBeHidden();
 
@@ -2121,7 +2124,8 @@ fetch("${previewNetworkOrigin}/fetch");
     const audienceFrame = audiencePage.frameLocator(".audience-slide-frame");
     await expect(audiencePage.locator(".audience-slide-frame")).toBeVisible();
     await expect(audienceFrame.getByRole("heading", { name: "HTML as source" })).toBeVisible();
-    await expect(audiencePage.locator(".audience-meta")).toHaveText("1 / 2");
+    await expect(audiencePage.locator(".audience-stage")).toHaveAttribute("data-slide-number", "1");
+    await expect(audiencePage.locator(".audience-stage")).toHaveAttribute("data-slide-count", "2");
     await page.bringToFront();
 
     await page.keyboard.press("ArrowRight");
@@ -2129,7 +2133,7 @@ fetch("${previewNetworkOrigin}/fetch");
     await expect(currentSlideHeading).toHaveText("Project structure");
     await expect(currentSlideFrame.getByRole("heading", { name: "Project structure" })).toBeVisible();
     await expect(audienceFrame.getByRole("heading", { name: "Project structure" })).toBeVisible();
-    await expect(audiencePage.locator(".audience-meta")).toHaveText("2 / 2");
+    await expect(audiencePage.locator(".audience-stage")).toHaveAttribute("data-slide-number", "2");
 
     await audiencePage.close();
 

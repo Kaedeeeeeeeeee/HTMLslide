@@ -137,6 +137,7 @@ interface WorkspaceProps {
   onCopyRepairPrompt?: () => void;
   onInspectorTabChange: (tab: InspectorTab) => void;
   onPresenterDisplaysChanged?: (handler: () => void) => () => void;
+  onAudienceWindowStateChanged?: (handler: (state: DesktopAudienceWindowState) => void) => () => void;
   onQaFilterChange: (filter: QaFilter) => void;
   onRevertDiff?: () => void;
   onRunAction: (action: "start" | "pause" | "cancel" | "retry") => void;
@@ -317,6 +318,7 @@ export function Workspace({
   onCopyRepairPrompt,
   onInspectorTabChange,
   onPresenterDisplaysChanged,
+  onAudienceWindowStateChanged,
   closeAudienceWindow,
   loadSlidePreview,
   loadPresenterDeck,
@@ -670,6 +672,7 @@ export function Workspace({
           project={project}
           listPresenterDisplays={listPresenterDisplays}
           onPresenterDisplaysChanged={onPresenterDisplaysChanged}
+          onAudienceWindowStateChanged={onAudienceWindowStateChanged}
           session={presenterState.session}
           slides={slides}
           source={presenterState.source}
@@ -687,6 +690,7 @@ interface PresenterModeProps {
   project: ProjectSummary;
   listPresenterDisplays?: () => Promise<DesktopPresenterDisplay[]>;
   onPresenterDisplaysChanged?: (handler: () => void) => () => void;
+  onAudienceWindowStateChanged?: (handler: (state: DesktopAudienceWindowState) => void) => () => void;
   openAudienceWindow?: (request: DesktopAudienceWindowRequest) => Promise<DesktopAudienceWindowState>;
   session: PresenterSessionState;
   slides: SlideSummary[];
@@ -705,6 +709,7 @@ function PresenterMode({
   initialPreferences,
   listPresenterDisplays,
   onPresenterDisplaysChanged,
+  onAudienceWindowStateChanged,
   onExit,
   onSessionChange,
   openAudienceWindow,
@@ -790,17 +795,19 @@ function PresenterMode({
           display.label === initialSelectedDisplayRef.current?.label &&
           display.internal === initialSelectedDisplayRef.current?.internal
         );
-      const preferredDisplay =
-        selectedDisplay ??
-        persistedDisplay ??
-        displays.find((display) => !display.internal && !display.primary) ??
-        displays.find((display) => display.primary) ??
-        displays[0];
+      const selectedDisplayDisconnected = currentSelectedDisplayId !== undefined && !selectedDisplay;
+      const preferredDisplay = selectedDisplayDisconnected
+        ? undefined
+        : selectedDisplay ??
+          persistedDisplay ??
+          displays.find((display) => !display.internal && !display.primary) ??
+          displays.find((display) => display.primary) ??
+          displays[0];
 
-      selectedDisplayIdRef.current = preferredDisplay?.id;
+      selectedDisplayIdRef.current = preferredDisplay?.id ?? currentSelectedDisplayId;
       setPresenterDisplays(displays);
-      setDisplayError(undefined);
-      setSelectedDisplayId(preferredDisplay?.id);
+      setDisplayError(selectedDisplayDisconnected ? "Selected display is disconnected. Reconnect it to resume audience output." : undefined);
+      setSelectedDisplayId(preferredDisplay?.id ?? currentSelectedDisplayId);
       setDisplayResolutionReady(true);
       window.requestAnimationFrame(() => shellRef.current?.focus());
     } catch (error: unknown) {
@@ -836,6 +843,18 @@ function PresenterMode({
       unsubscribe();
     };
   }, [onPresenterDisplaysChanged, refreshPresenterDisplays]);
+
+  useEffect(() => {
+    if (!onAudienceWindowStateChanged) {
+      return;
+    }
+
+    const unsubscribe = onAudienceWindowStateChanged((state) => {
+      setAudienceWindowState(state);
+      setAudienceWindowError(audienceWindowStateError(state));
+    });
+    return unsubscribe;
+  }, [onAudienceWindowStateChanged]);
 
   const view = useMemo(
     () => getPresenterSessionView(deck, session, nowMs),
@@ -926,7 +945,7 @@ function PresenterMode({
     updateAudienceWindow(audienceWindowRequest)
       .then((state) => {
         setAudienceWindowState(state);
-        setAudienceWindowError(undefined);
+        setAudienceWindowError(audienceWindowStateError(state));
       })
       .catch((error: unknown) => {
         setAudienceWindowError(error instanceof Error ? error.message : String(error));
@@ -951,7 +970,7 @@ function PresenterMode({
     openAudienceWindow(audienceWindowRequest)
       .then((state) => {
         setAudienceWindowState(state);
-        setAudienceWindowError(undefined);
+        setAudienceWindowError(audienceWindowStateError(state));
         window.requestAnimationFrame(() => shellRef.current?.focus());
       })
       .catch((error: unknown) => {
@@ -972,7 +991,7 @@ function PresenterMode({
     openAudienceWindow(audienceWindowRequest)
       .then((state) => {
         setAudienceWindowState(state);
-        setAudienceWindowError(undefined);
+        setAudienceWindowError(audienceWindowStateError(state));
         window.requestAnimationFrame(() => shellRef.current?.focus());
       })
       .catch((error: unknown) => {
@@ -1291,7 +1310,8 @@ function PresenterDisplayPanel({
   selectedDisplayId?: number;
   onSelectedDisplayIdChange: (displayId: number | undefined) => void;
 }): ReactNode {
-  const selectedDisplay = displays.find((display) => display.id === selectedDisplayId) ?? displays[0];
+  const selectedDisplay = displays.find((display) => display.id === selectedDisplayId);
+  const selectedDisplayDisconnected = selectedDisplayId !== undefined && !selectedDisplay;
   const displayCountLabel =
     displayError
       ? "Unavailable"
@@ -1324,6 +1344,11 @@ function PresenterDisplayPanel({
               onChange={(event) => onSelectedDisplayIdChange(Number(event.currentTarget.value))}
               value={selectedDisplay?.id ?? ""}
             >
+              {selectedDisplayDisconnected ? (
+                <option value="" disabled>
+                  Target display unavailable
+                </option>
+              ) : null}
               {displays.map((display) => (
                 <option
                   key={display.id}
@@ -1362,6 +1387,11 @@ function PresenterDisplayPanel({
           {audienceError ? (
             <p className="presenter-display-empty">
               {audienceError}
+            </p>
+          ) : null}
+          {displayError ? (
+            <p className="presenter-display-empty">
+              {displayError}
             </p>
           ) : null}
         </>
@@ -1476,6 +1506,12 @@ function formatPresenterClock(ms: number): string {
 
 function formatDisplayBounds(bounds: DesktopPresenterDisplay["bounds"]): string {
   return `${bounds.width} x ${bounds.height}`;
+}
+
+function audienceWindowStateError(state: DesktopAudienceWindowState): string | undefined {
+  return state.reason === "target-disconnected"
+    ? "Selected display is disconnected. Audience output is paused until it reconnects."
+    : undefined;
 }
 
 function isPresenterTextInputTarget(target: EventTarget | null): boolean {

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { execFile } from "node:child_process";
 import { access, chmod, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
@@ -7,30 +8,38 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import {
   applyMockAgentProject,
+  applyAgentSourceWrites,
   createAnthropicProvider,
   createFileCopyCheckpoint,
   createMockProvider,
   createOpenAICompatibleProvider,
   diffFileCopyCheckpoint,
   mockEngines,
+  normalizeAgentSourceWrites,
   recordCheckpointChanges,
   revertFileCopyCheckpoint,
   runAgent,
   sanitizeProviderText,
   type AgentRunResult,
+  type AgentRunErrorInfo,
+  type AgentRunStage,
+  type AgentSourceWrite,
   type ApplyMockAgentProjectResult,
   type CredentialStatus,
   type FetchLike,
   type FileCopyCheckpointDiff,
-  type FileCopyCheckpointRevertResult
+  type FileCopyCheckpointRevertResult,
+  type ModelProvider
 } from "@htmlslide/agent";
 import {
   exportDeck,
   inspectChromiumRuntime,
   type CompilerProjectInput,
-  type ExportOptions
+  type ExportOptions,
+  type ExportResult
 } from "@htmlslide/compiler";
 import {
+  ExportManifestSchema,
   loadDeckProject,
   normalizeSpeakerNotesMode,
   ProjectLoadError,
@@ -39,7 +48,7 @@ import {
   type SpeakerNotesMode
 } from "@htmlslide/core";
 import { renderBuiltInDeckTemplate, type DeckTemplateId } from "@htmlslide/core/templates";
-import { HTMLSLIDE_APP_VERSION } from "@htmlslide/core/version";
+import { AGENT_RUN_REPORT_SCHEMA_VERSION, HTMLSLIDE_APP_VERSION } from "@htmlslide/core/version";
 import { checkProject, type CheckReport } from "@htmlslide/linter";
 import { validateDeckPackage, type DeckPackageValidationResult } from "@htmlslide/presenter";
 
@@ -174,10 +183,49 @@ export type AgentRunCliOptions = {
   task: string;
   projectPath?: string;
   speakerNotesMode?: string;
+  provider?: string;
+  model?: string;
+  apiKeyEnv?: string;
+  baseUrl?: string;
+  targetSlideCount?: number;
+  env?: Record<string, string | undefined>;
+  fetch?: FetchLike;
+  checkProject?: (project: LoadedProject) => Promise<CheckReport>;
+  exportProject?: (project: LoadedProject) => Promise<ExportResult>;
+};
+
+export type AppliedProviderAgentSourceWrites = {
+  projectPath: string;
+  source: "provider-source-writes";
+  filesChanged: string[];
+  writeCount: number;
+  stages: Array<{
+    stage: Extract<AgentRunStage, "build" | "repair">;
+    attempt?: number;
+    filesChanged: string[];
+    writeCount: number;
+  }>;
+};
+
+export type AgentRunExportManifestSummary = {
+  sourceDigest: string;
+  artifactCount: number;
+  sha256: string;
 };
 
 export type AgentRunCliResult = AgentRunResult & {
-  applied?: ApplyMockAgentProjectResult;
+  projectPath?: string;
+  provider?: AgentProviderKind;
+  providerId?: "htmlslide-byok";
+  model?: string;
+  baseUrl?: string;
+  targetSlideCount?: number;
+  applied?: ApplyMockAgentProjectResult | AppliedProviderAgentSourceWrites;
+  checkpointDiff?: FileCopyCheckpointDiff;
+  check?: CheckReport;
+  export?: ExportResult;
+  exportManifest?: AgentRunExportManifestSummary;
+  reportPath?: string;
 };
 
 export type AgentProviderKind = "openai" | "anthropic" | "compatible";
@@ -1006,7 +1054,19 @@ export const doctor = async (options: CliShimTargetOptions = {}) => {
   };
 };
 
-export const listAgentEngines = () => mockEngines;
+const providerBackedEngineIds = new Set(["htmlslide-byok", "htmlslide-byok-openai"]);
+
+export const listAgentEngines = () => [
+  ...mockEngines.map((engine) =>
+    engine.id === "htmlslide-byok-openai" ? { ...engine, available: true } : engine
+  ),
+  {
+    id: "htmlslide-byok",
+    label: "HTMLslide Agent (BYOK)",
+    mode: "byok" as const,
+    available: true
+  }
+];
 
 const agentError = (
   code: string,
@@ -1080,11 +1140,149 @@ const requireTrimmedAgentOption = (value: string, code: string, message: string,
   return trimmed;
 };
 
+const normalizeTargetSlideCount = (value: number | undefined): number | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw agentError(
+      "AGENT_TARGET_SLIDE_COUNT_INVALID",
+      "Target slide count must be a positive integer.",
+      "Rerun with --target-slide-count set to a positive integer."
+    );
+  }
+  return value;
+};
+
+type ResolvedAgentProvider = {
+  provider: AgentProviderKind;
+  model: string;
+  apiKeyEnv: string;
+  apiKey: string;
+  baseUrl?: string;
+  modelProvider: ModelProvider;
+};
+
+const resolveAgentProvider = (options: AgentProviderValidationOptions): ResolvedAgentProvider => {
+  const provider = normalizeAgentProviderKind(options.provider);
+  const model = requireTrimmedAgentOption(
+    options.model,
+    "AGENT_PROVIDER_MODEL_REQUIRED",
+    "Pass a provider model id.",
+    "Rerun with --model set to the exact model you want to validate."
+  );
+  const apiKeyEnv = requireTrimmedAgentOption(
+    options.apiKeyEnv,
+    "AGENT_PROVIDER_API_KEY_ENV_REQUIRED",
+    "Pass the environment variable name that contains the provider API key.",
+    "Set --api-key-env OPENAI_API_KEY, ANTHROPIC_API_KEY, or another provider-owned environment variable."
+  );
+
+  if (!envNamePattern.test(apiKeyEnv)) {
+    throw agentError(
+      "AGENT_PROVIDER_API_KEY_ENV_INVALID",
+      "Invalid API key environment variable name.",
+      "Use a shell environment variable name such as OPENAI_API_KEY or ANTHROPIC_API_KEY."
+    );
+  }
+
+  const baseUrl = provider === "compatible"
+    ? normalizeCompatibleProviderBaseUrl(options.baseUrl)
+    : options.baseUrl?.trim().replace(/\/+$/u, "");
+  if (provider === "compatible" && (!baseUrl || baseUrl.length === 0)) {
+    throw agentError(
+      "AGENT_PROVIDER_BASE_URL_REQUIRED",
+      "OpenAI-compatible provider validation requires --base-url.",
+      "Rerun with --base-url set to the compatible provider API root, for example https://api.example.com/v1.",
+      { provider }
+    );
+  }
+
+  if (provider !== "compatible" && baseUrl && baseUrl.length > 0) {
+    throw agentError(
+      "AGENT_PROVIDER_BASE_URL_UNSUPPORTED",
+      `--base-url is only supported for the compatible provider, not ${provider}.`,
+      "Use --provider compatible for custom OpenAI-compatible API roots.",
+      { provider }
+    );
+  }
+
+  const env = options.env ?? process.env;
+  const apiKey = env[apiKeyEnv]?.trim();
+  if (!apiKey) {
+    throw agentError(
+      "AGENT_PROVIDER_API_KEY_ENV_MISSING",
+      `Environment variable ${apiKeyEnv} is not set or is empty.`,
+      "Export the provider API key in that environment variable, then rerun the command. Do not paste API keys into CLI arguments.",
+      { apiKeyEnv }
+    );
+  }
+
+  const label = `HTMLslide Agent (${provider} / ${model})`;
+  const modelProvider = provider === "anthropic"
+    ? createAnthropicProvider({
+        apiKey,
+        fetch: options.fetch,
+        id: "htmlslide-byok",
+        label,
+        model
+      })
+    : createOpenAICompatibleProvider({
+        apiKey,
+        baseUrl: provider === "compatible" ? baseUrl : undefined,
+        fetch: options.fetch,
+        id: "htmlslide-byok",
+        label,
+        model
+      });
+
+  return {
+    provider,
+    model,
+    apiKeyEnv,
+    apiKey,
+    ...(provider === "compatible" ? { baseUrl } : {}),
+    modelProvider
+  };
+};
+
+const validateResolvedAgentProvider = async (
+  resolved: ResolvedAgentProvider
+): Promise<CredentialStatus> => {
+  try {
+    return await resolved.modelProvider.validateCredentials();
+  } catch (error) {
+    return {
+      ok: false,
+      providerId: resolved.modelProvider.id,
+      reason: sanitizeProviderText(error instanceof Error ? error.message : String(error), [resolved.apiKey]),
+      recoverable: true
+    };
+  }
+};
+
+const providerCredentialFailure = (
+  resolved: ResolvedAgentProvider,
+  credential: CredentialStatus
+): Error => agentError(
+  "AGENT_PROVIDER_CREDENTIALS_INVALID",
+  credential.ok
+    ? "Provider credential validation failed."
+    : credential.reason,
+  "Resolve the provider credential/model or endpoint, then rerun the agent.",
+  {
+    apiKeyEnv: resolved.apiKeyEnv,
+    model: resolved.model,
+    provider: resolved.provider
+  }
+);
+
 const deterministicAgentClock = () => new Date("2026-01-01T00:00:00.000Z");
 
 export const runAgentTask = async (options: AgentRunCliOptions): Promise<AgentRunCliResult> => {
   const engine = mockEngines.find((candidate) => candidate.id === options.engine);
-  if (engine === undefined) {
+  const providerBacked = providerBackedEngineIds.has(options.engine);
+  if (engine === undefined && !providerBacked) {
     throw agentError(
       "AGENT_ENGINE_NOT_FOUND",
       `Unknown agent engine: ${options.engine}.`,
@@ -1093,13 +1291,20 @@ export const runAgentTask = async (options: AgentRunCliOptions): Promise<AgentRu
     );
   }
 
-  if (engine.id !== "htmlslide-mock") {
+  if (engine !== undefined && engine.id !== "htmlslide-mock") {
+    if (providerBackedEngineIds.has(engine.id)) {
+      return runProviderBackedAgentTask(options);
+    }
     throw agentError(
       "AGENT_ENGINE_UNAVAILABLE",
       `Agent engine ${engine.id} is not available from the CLI yet.`,
       "Use --engine htmlslide-mock for deterministic local test runs.",
       { engine: engine.id }
     );
+  }
+
+  if (providerBacked) {
+    return runProviderBackedAgentTask(options);
   }
 
   const projectPath = path.resolve(options.projectPath ?? process.cwd());
@@ -1138,6 +1343,498 @@ export const runAgentTask = async (options: AgentRunCliOptions): Promise<AgentRu
     checkpoint,
     applied
   };
+};
+
+const runProviderBackedAgentTask = async (options: AgentRunCliOptions): Promise<AgentRunCliResult> => {
+  const projectPath = path.resolve(options.projectPath ?? process.cwd());
+  const targetSlideCount = normalizeTargetSlideCount(options.targetSlideCount);
+  const resolved = resolveAgentProvider({
+    apiKeyEnv: options.apiKeyEnv ?? "",
+    baseUrl: options.baseUrl,
+    env: options.env,
+    fetch: options.fetch,
+    model: options.model ?? "",
+    provider: options.provider ?? ""
+  });
+  const credential = await validateResolvedAgentProvider(resolved);
+  if (!credential.ok) {
+    throw providerCredentialFailure(resolved, credential);
+  }
+
+  let agent = await runAgent({
+    brief: options.task,
+    createCheckpoint: createFileCopyCheckpoint,
+    metadata: {
+      mode: "cli-byok-agent",
+      model: resolved.model,
+      provider: resolved.provider,
+      ...(resolved.baseUrl ? { baseUrl: resolved.baseUrl } : {})
+    },
+    projectRoot: projectPath,
+    provider: resolved.modelProvider,
+    speakerNotesMode: normalizeSpeakerNotesMode(options.speakerNotesMode),
+    targetSlideCount
+  });
+
+  let applied: AppliedProviderAgentSourceWrites | undefined;
+  let checkpointDiff: FileCopyCheckpointDiff | undefined;
+  let check: CheckReport | undefined;
+  let exportResult: ExportResult | undefined;
+  let exportManifest: AgentRunExportManifestSummary | undefined;
+
+  if (agent.ok) {
+    try {
+      applied = await applyProviderAgentSourceWrites({
+        projectPath,
+        result: agent
+      });
+      const checkpoint = await recordCheckpointChanges({
+        projectRoot: projectPath,
+        runId: agent.runId,
+        filesChanged: applied.filesChanged
+      });
+      agent = {
+        ...agent,
+        checkpoint
+      };
+      checkpointDiff = await diffFileCopyCheckpoint({
+        projectRoot: projectPath,
+        runId: agent.runId
+      });
+
+      const project = await loadProject(projectPath);
+      check = await (options.checkProject ?? checkLoadedProject)(project);
+      if (check.status !== "passed" || check.summary.errors > 0) {
+        throw agentGateError(
+          "check-failed",
+          `Authoritative CLI check failed with status "${check.status}" and ${check.summary.errors} error(s).`,
+          "check"
+        );
+      }
+
+      exportResult = await (options.exportProject ?? exportLoadedProject)(project);
+      if (collectExportArtifactPaths(exportResult.artifacts).length === 0) {
+        throw agentGateError("export-failed", "Authoritative CLI export returned no artifacts.", "export");
+      }
+      exportManifest = await readAgentRunExportManifest(projectPath);
+    } catch (error) {
+      const gate = error as { agentGateCode?: AgentRunErrorInfo["code"]; agentStage?: AgentRunStage };
+      agent = createAgentFailureResult(agent, {
+        code: gate.agentGateCode ?? "unknown",
+        message: sanitizeProviderText(error instanceof Error ? error.message : String(error), [resolved.apiKey]),
+        stage: gate.agentStage ?? "build"
+      });
+    }
+  }
+
+  return finalizeProviderAgentRun({
+    agent,
+    applied,
+    apiKey: resolved.apiKey,
+    baseUrl: resolved.baseUrl,
+    check,
+    checkpointDiff,
+    exportManifest,
+    exportResult,
+    model: resolved.model,
+    projectPath,
+    provider: resolved.provider,
+    targetSlideCount
+  });
+};
+
+const agentGateError = (
+  code: AgentRunErrorInfo["code"],
+  message: string,
+  stage: AgentRunStage
+): Error => Object.assign(new Error(message), {
+  agentGateCode: code,
+  agentStage: stage
+});
+
+const createAgentFailureResult = (
+  result: AgentRunResult,
+  error: AgentRunErrorInfo
+): AgentRunResult => {
+  if (!result.ok) {
+    return result;
+  }
+  return {
+    ok: false,
+    status: "failed",
+    runId: result.runId,
+    checkpoint: result.checkpoint,
+    error,
+    outputs: result.outputs,
+    events: result.events,
+    logs: result.logs
+  };
+};
+
+const applyProviderAgentSourceWrites = async ({
+  projectPath,
+  result
+}: {
+  projectPath: string;
+  result: AgentRunResult;
+}): Promise<AppliedProviderAgentSourceWrites> => {
+  if (!result.ok || result.status !== "succeeded") {
+    throw new Error("Cannot apply provider source writes from a non-successful agent run.");
+  }
+
+  if (!result.outputs.build?.sourceWrites) {
+    throw new Error("Provider agent did not return build sourceWrites.");
+  }
+
+  const batches: Array<{
+    stage: Extract<AgentRunStage, "build" | "repair">;
+    attempt?: number;
+    writes: AgentSourceWrite[];
+  }> = [
+    {
+      stage: "build",
+      writes: normalizeAgentSourceWrites(result.outputs.build.sourceWrites)
+    }
+  ];
+
+  for (const repair of result.outputs.repairs) {
+    if (!repair.sourceWrites) {
+      throw new Error(`Provider agent did not return sourceWrites for repair attempt ${repair.attempt}.`);
+    }
+    batches.push({
+      attempt: repair.attempt,
+      stage: "repair",
+      writes: normalizeAgentSourceWrites(repair.sourceWrites)
+    });
+  }
+
+  const stages: AppliedProviderAgentSourceWrites["stages"] = [];
+  for (const batch of batches) {
+    const applied = await applyAgentSourceWrites({
+      projectPath,
+      writes: batch.writes
+    });
+    stages.push({
+      ...(batch.attempt === undefined ? {} : { attempt: batch.attempt }),
+      filesChanged: applied.filesChanged,
+      stage: batch.stage,
+      writeCount: applied.writes.length
+    });
+  }
+
+  const filesChanged = [...new Set(stages.flatMap((stage) => stage.filesChanged))];
+  return {
+    projectPath: path.resolve(projectPath),
+    source: "provider-source-writes",
+    filesChanged,
+    writeCount: stages.reduce((total, stage) => total + stage.writeCount, 0),
+    stages
+  };
+};
+
+const finalizeProviderAgentRun = async ({
+  agent,
+  apiKey,
+  applied,
+  baseUrl,
+  check,
+  checkpointDiff,
+  exportManifest,
+  exportResult,
+  model,
+  projectPath,
+  provider,
+  targetSlideCount
+}: {
+  agent: AgentRunResult;
+  applied?: AppliedProviderAgentSourceWrites;
+  apiKey: string;
+  baseUrl?: string;
+  check?: CheckReport;
+  checkpointDiff?: FileCopyCheckpointDiff;
+  exportManifest?: AgentRunExportManifestSummary;
+  exportResult?: ExportResult;
+  model: string;
+  projectPath: string;
+  provider: AgentProviderKind;
+  targetSlideCount?: number;
+}): Promise<AgentRunCliResult> => {
+  const reportPath = await writeAgentRunReport({
+    agent,
+    apiKey,
+    applied,
+    baseUrl,
+    check,
+    checkpointDiff,
+    exportManifest,
+    exportResult,
+    model,
+    projectPath,
+    provider,
+    targetSlideCount
+  });
+
+  return {
+    ...agent,
+    applied,
+    baseUrl,
+    check,
+    checkpointDiff,
+    export: exportResult,
+    exportManifest,
+    model,
+    projectPath,
+    provider,
+    providerId: "htmlslide-byok",
+    reportPath,
+    targetSlideCount
+  };
+};
+
+type AgentRunReportCliSummary = {
+  ok: boolean;
+  exitCode: number;
+  status?: string;
+  summary?: unknown;
+  artifactPaths: string[];
+};
+
+const collectExportArtifactPaths = (artifacts: ExportResult["artifacts"]): string[] => {
+  const paths: string[] = [];
+  for (const value of Object.values(artifacts)) {
+    if (typeof value === "string") {
+      paths.push(value);
+    } else if (Array.isArray(value)) {
+      for (const item of value) {
+        if (typeof item === "string") {
+          paths.push(item);
+        }
+      }
+    }
+  }
+  return paths;
+};
+
+const readAgentRunExportManifest = async (
+  projectPath: string
+): Promise<AgentRunExportManifestSummary> => {
+  const manifestPath = path.join(projectPath, "exports", "export-manifest.json");
+  const manifestStat = await lstat(manifestPath);
+  if (!manifestStat.isFile() || manifestStat.isSymbolicLink()) {
+    throw new Error("Authoritative CLI export did not produce a regular export manifest.");
+  }
+  const manifestBytes = await readFile(manifestPath);
+  const manifest = ExportManifestSchema.parse(JSON.parse(manifestBytes.toString("utf8")));
+  return {
+    sourceDigest: manifest.sourceDigest,
+    artifactCount: manifest.artifacts.length,
+    sha256: createHash("sha256").update(manifestBytes).digest("hex")
+  };
+};
+
+const writeAgentRunReport = async ({
+  agent,
+  apiKey,
+  applied,
+  baseUrl,
+  check,
+  checkpointDiff,
+  exportManifest,
+  exportResult,
+  model,
+  projectPath,
+  provider,
+  targetSlideCount
+}: {
+  agent: AgentRunResult;
+  apiKey: string;
+  applied?: AppliedProviderAgentSourceWrites;
+  baseUrl?: string;
+  check?: CheckReport;
+  checkpointDiff?: FileCopyCheckpointDiff;
+  exportManifest?: AgentRunExportManifestSummary;
+  exportResult?: ExportResult;
+  model: string;
+  projectPath: string;
+  provider: AgentProviderKind;
+  targetSlideCount?: number;
+}): Promise<string> => {
+  const reportsPath = await ensureAgentRunReportsPath(projectPath);
+  const report: Record<string, unknown> = {
+    schemaVersion: AGENT_RUN_REPORT_SCHEMA_VERSION,
+    kind: "htmlslide-agent-run-report",
+    runId: agent.runId,
+    providerId: "htmlslide-byok",
+    provider: {
+      provider,
+      model,
+      ...(baseUrl ? { baseUrlSha256: createHash("sha256").update(baseUrl).digest("hex") } : {})
+    },
+    ...(targetSlideCount === undefined ? {} : { targetSlideCount }),
+    projectPath: path.resolve(projectPath),
+    generatedAt: new Date().toISOString(),
+    ok: agent.ok,
+    status: agent.status,
+    outputs: sanitizeAgentOutputsForReport(agent.outputs, [apiKey]),
+    ...(agent.checkpoint
+      ? {
+          checkpoint: {
+            id: agent.checkpoint.id,
+            strategy: agent.checkpoint.strategy,
+            manifestPath: agent.checkpoint.manifestPath,
+            canRevert: agent.checkpoint.restore.canRevert
+          }
+        }
+      : {}),
+    ...(applied
+      ? {
+          applied: {
+            source: applied.source,
+            filesChanged: applied.filesChanged,
+            writeCount: applied.writeCount,
+            stages: applied.stages
+          }
+        }
+      : {}),
+    ...(checkpointDiff
+      ? {
+          checkpointDiff: {
+            summary: checkpointDiff.summary,
+            changedPaths: checkpointDiff.changed.map((file) => file.path),
+            addedPaths: checkpointDiff.added.map((file) => file.path),
+            deletedPaths: checkpointDiff.deleted.map((file) => file.path)
+          }
+        }
+      : {}),
+    cli: {
+      ...(check ? { check: summarizeAgentRunCheck(check) } : {}),
+      ...(exportResult ? { export: summarizeAgentRunExport(exportResult, projectPath) } : {})
+    },
+    ...(exportManifest ? { exportManifest } : {})
+  };
+
+  const payload = `${JSON.stringify(sanitizeReportValue(report, [apiKey]), null, 2)}\n`;
+  const reportPath = path.join(reportsPath, `agent-run-${safeAgentRunReportId(agent.runId)}.json`);
+  await Promise.all([
+    writeAgentRunReportFile(reportPath, payload),
+    writeAgentRunReportFile(path.join(reportsPath, "latest-agent-run.json"), payload)
+  ]);
+  return reportPath;
+};
+
+const summarizeAgentRunCheck = (check: CheckReport): AgentRunReportCliSummary => ({
+  ok: check.status === "passed" && check.summary.errors === 0,
+  exitCode: check.status === "passed" && check.summary.errors === 0
+    ? EXIT_CODES.success
+    : EXIT_CODES.validationFailed,
+  status: check.status,
+  summary: check.summary,
+  artifactPaths: []
+});
+
+const summarizeAgentRunExport = (
+  exportResult: ExportResult,
+  projectPath: string
+): AgentRunReportCliSummary => ({
+  ok: collectExportArtifactPaths(exportResult.artifacts).length > 0,
+  exitCode: collectExportArtifactPaths(exportResult.artifacts).length > 0
+    ? EXIT_CODES.success
+    : EXIT_CODES.exportFailed,
+  status: collectExportArtifactPaths(exportResult.artifacts).length > 0 ? "passed" : "failed",
+  artifactPaths: collectExportArtifactPaths(exportResult.artifacts).map((artifactPath) =>
+    path.relative(path.resolve(projectPath), path.resolve(projectPath, artifactPath)).split(path.sep).join("/")
+  )
+});
+
+const sanitizeAgentOutputsForReport = (
+  outputs: AgentRunResult["outputs"],
+  secrets: readonly string[]
+): Record<string, unknown> => {
+  const reportOutputs: Record<string, unknown> = {
+    checks: sanitizeReportValue(outputs.checks, secrets),
+    repairs: outputs.repairs.map((repair) => ({
+      attempt: repair.attempt,
+      filesChanged: sanitizeReportValue(repair.filesChanged, secrets),
+      issuesAddressed: sanitizeReportValue(repair.issuesAddressed, secrets),
+      sourceWriteCount: repair.sourceWrites?.length ?? 0,
+      sourceWritePaths: repair.sourceWrites?.map((write) => sanitizeProviderText(write.path, secrets)) ?? []
+    }))
+  };
+
+  if (outputs.speakerNotesMode) {
+    reportOutputs.speakerNotesMode = outputs.speakerNotesMode;
+  }
+  if (outputs.brief) {
+    reportOutputs.brief = sanitizeReportValue(outputs.brief, secrets);
+  }
+  if (outputs.outline) {
+    reportOutputs.outline = sanitizeReportValue(outputs.outline, secrets);
+  }
+  if (outputs.visualDirection) {
+    reportOutputs.visualDirection = sanitizeReportValue(outputs.visualDirection, secrets);
+  }
+  if (outputs.selectedVisualDirectionId) {
+    reportOutputs.selectedVisualDirectionId = sanitizeProviderText(outputs.selectedVisualDirectionId, secrets);
+  }
+  if (outputs.build) {
+    reportOutputs.build = {
+      filesChanged: sanitizeReportValue(outputs.build.filesChanged, secrets),
+      slidesChanged: sanitizeReportValue(outputs.build.slidesChanged, secrets),
+      notesChanged: sanitizeReportValue(outputs.build.notesChanged, secrets),
+      themeChanged: sanitizeReportValue(outputs.build.themeChanged, secrets),
+      sourceWriteCount: outputs.build.sourceWrites?.length ?? 0,
+      sourceWritePaths: outputs.build.sourceWrites?.map((write) => sanitizeProviderText(write.path, secrets)) ?? []
+    };
+  }
+  if (outputs.export) {
+    reportOutputs.export = sanitizeReportValue(outputs.export, secrets);
+  }
+  if (outputs.review) {
+    reportOutputs.review = sanitizeReportValue(outputs.review, secrets);
+  }
+  return reportOutputs;
+};
+
+const sanitizeReportValue = (value: unknown, secrets: readonly string[]): unknown => {
+  if (typeof value === "string") {
+    return sanitizeProviderText(value, secrets);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeReportValue(item, secrets));
+  }
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, sanitizeReportValue(item, secrets)])
+    );
+  }
+  return value;
+};
+
+const ensureAgentRunReportsPath = async (projectPath: string): Promise<string> => {
+  const runtimeRoot = path.join(path.resolve(projectPath), ".htmlslide");
+  const reportsPath = path.join(runtimeRoot, "reports");
+  for (const directory of [runtimeRoot, reportsPath]) {
+    await mkdir(directory, { recursive: true });
+    const entry = await lstat(directory);
+    if (!entry.isDirectory() || entry.isSymbolicLink()) {
+      throw new Error(`Agent run report path must be a real project directory: ${directory}`);
+    }
+  }
+  return reportsPath;
+};
+
+const writeAgentRunReportFile = async (filePath: string, payload: string): Promise<void> => {
+  const temporaryPath = path.join(
+    path.dirname(filePath),
+    `.${path.basename(filePath)}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  );
+  await writeFile(temporaryPath, payload, { encoding: "utf8", flag: "wx", mode: 0o600 });
+  await rename(temporaryPath, filePath);
+};
+
+const safeAgentRunReportId = (runId: string): string => {
+  const safeId = runId.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 96);
+  return safeId.length > 0 && safeId !== "." && safeId !== ".." ? safeId : "run";
 };
 
 export const validateAgentProviderCredentials = async (

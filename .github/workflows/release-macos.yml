@@ -179,6 +179,29 @@ jobs:
             --manifest "$manifest" \
             --expected-arch arm64
 
+      - name: Verify signed release security evidence
+        shell: bash
+        env:
+          APPLE_DEVELOPER_ID_APPLICATION: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION }}
+        run: |
+          set -euo pipefail
+
+          manifest="$(find dist/release -maxdepth 1 -type f -name 'HTMLslide-*.json' -print | sort | tail -n 1)"
+          dmg="$(find dist/release -maxdepth 1 -type f -name '*.dmg' -print | sort | tail -n 1)"
+          evidence="$(find dist/release -maxdepth 1 -type f -name 'release-security-evidence-*.json' -print | sort | tail -n 1)"
+          if [[ -z "$manifest" || -z "$dmg" || -z "$evidence" || ! -d dist/release/HTMLslide.app ]]; then
+            echo "::error title=Missing release security inputs::Expected the signed app, DMG, manifest, and security evidence under dist/release."
+            exit 1
+          fi
+
+          pnpm release:security:verify -- \
+            --app dist/release/HTMLslide.app \
+            --dmg "$dmg" \
+            --manifest "$manifest" \
+            --evidence "$evidence" \
+            --identity "$APPLE_DEVELOPER_ID_APPLICATION" \
+            --bundle-identifier app.htmlslide
+
       - name: Contract-only external-agent verifier smoke (fixture only; no real compatibility evidence)
         shell: bash
         run: |

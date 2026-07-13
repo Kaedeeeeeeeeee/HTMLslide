@@ -475,6 +475,7 @@ export type DesktopAudienceWindowRequest = {
 export type DesktopAudienceWindowState = {
   open: boolean;
   displayId?: number;
+  reason?: "target-disconnected" | "target-reconnected" | "closed";
 };
 
 export type DesktopAiEngineSettingsSaveRequest = {
@@ -523,6 +524,7 @@ export type HtmlslideDesktopApi = {
   reportSmokeReady(marker: DesktopSmokeReadyMarker): Promise<{ ok: boolean }>;
   listPresenterDisplays(): Promise<DesktopPresenterDisplay[]>;
   onPresenterDisplaysChanged(handler: () => void): () => void;
+  onAudienceWindowStateChanged(handler: (state: DesktopAudienceWindowState) => void): () => void;
   openAudienceWindow(request: DesktopAudienceWindowRequest): Promise<DesktopAudienceWindowState>;
   updateAudienceWindow(request: DesktopAudienceWindowRequest): Promise<DesktopAudienceWindowState>;
   closeAudienceWindow(): Promise<DesktopAudienceWindowState>;

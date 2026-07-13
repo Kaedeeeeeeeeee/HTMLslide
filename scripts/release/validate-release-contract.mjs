@@ -22,6 +22,7 @@ export const REQUIRED_RELEASE_SCRIPTS = Object.freeze([
   "e2e:desktop",
   "e2e:desktop:a11y",
   "package:release:macos",
+  "release:security:verify",
   "smoke:package:alpha",
   "release:contract:check",
   "rc:checklist",
@@ -232,6 +233,39 @@ export async function validateReleaseManifest(manifestPath, { expectedArch = "ar
       errors.push(`artifact metadata SHA-256 is invalid for ${artifact}.`);
     } else if (metadata.sha256 !== await sha256File(resolvedArtifactPath)) {
       errors.push(`artifact metadata SHA-256 mismatch for ${artifact}.`);
+    }
+  }
+
+  if (
+    !isRecord(manifest.securityEvidence) ||
+    typeof manifest.securityEvidence.fileName !== "string" ||
+    manifest.securityEvidence.fileName.trim().length === 0 ||
+    path.basename(manifest.securityEvidence.fileName) !== manifest.securityEvidence.fileName
+  ) {
+    errors.push("securityEvidence must reference a beside-the-manifest evidence file.");
+  } else {
+    const securityEvidencePath = path.join(artifactDirectory, manifest.securityEvidence.fileName);
+    try {
+      const securityEvidenceStats = await stat(securityEvidencePath);
+      if (!securityEvidenceStats.isFile()) {
+        errors.push("securityEvidence must be a regular file.");
+      } else {
+        const securityEvidence = JSON.parse(await readFile(securityEvidencePath, "utf8"));
+        const checks = Array.isArray(securityEvidence.checks) ? securityEvidence.checks : [];
+        const manifestEvidence = securityEvidence.artifacts?.manifest;
+        if (
+          securityEvidence.schemaVersion !== "1" ||
+          checks.length === 0 ||
+          checks.some((check) => !isRecord(check) || check.status !== "passed") ||
+          !isRecord(manifestEvidence) ||
+          manifestEvidence.fileName !== path.basename(resolvedManifestPath) ||
+          manifestEvidence.sha256 !== await sha256File(resolvedManifestPath)
+        ) {
+          errors.push("securityEvidence does not prove the signed release checks and manifest hash.");
+        }
+      }
+    } catch {
+      errors.push(`securityEvidence is missing or invalid: ${manifest.securityEvidence.fileName}.`);
     }
   }
 

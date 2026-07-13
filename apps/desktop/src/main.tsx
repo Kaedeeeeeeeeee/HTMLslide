@@ -1804,6 +1804,12 @@ function App(): React.ReactNode {
     [desktopApi]
   );
 
+  const onAudienceWindowStateChanged = useCallback(
+    (handler: (state: DesktopAudienceWindowState) => void): (() => void) =>
+      desktopApi?.onAudienceWindowStateChanged(handler) ?? (() => undefined),
+    [desktopApi]
+  );
+
   const openAudienceWindow = useCallback(
     (request: DesktopAudienceWindowRequest): Promise<DesktopAudienceWindowState> =>
       desktopApi?.openAudienceWindow(request) ?? Promise.resolve({ open: false }),
@@ -2062,6 +2068,7 @@ function App(): React.ReactNode {
       loadPresenterPreferences={loadPresenterPreferences}
       listPresenterDisplays={listPresenterDisplays}
       onPresenterDisplaysChanged={desktopApi?.onPresenterDisplaysChanged}
+      onAudienceWindowStateChanged={onAudienceWindowStateChanged}
       openAudienceWindow={openAudienceWindow}
       savePresenterPreferences={savePresenterPreferences}
       updateAudienceWindow={updateAudienceWindow}

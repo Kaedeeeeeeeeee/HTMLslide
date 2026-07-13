@@ -19,12 +19,96 @@ import {
 import { main as verifyByokEvidence } from "./verify-byok-acceptance.mjs";
 import { main as verifyChecklist } from "./verify-rc-checklist.mjs";
 import { main as verifyExternalAgentEvidence } from "./verify-external-agent-acceptance.mjs";
+import { verifyReleaseSecurity } from "./verify-release-security.mjs";
 
 const execFileAsync = promisify(execFile);
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(currentDir, "..", "..");
 
 describe("release evidence scripts", () => {
+  it("records independent signature, Gatekeeper, staple, and hash evidence", async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-release-security-"));
+    try {
+      const appPath = path.join(tempRoot, "HTMLslide.app");
+      const dmgPath = path.join(tempRoot, "HTMLslide-0.1.0-signed-notarized-arm64.dmg");
+      const manifestPath = path.join(tempRoot, "HTMLslide-0.1.0-signed-notarized-arm64.json");
+      await Promise.all([
+        writeFile(appPath, "signed app fixture\n", "utf8"),
+        writeFile(dmgPath, "signed dmg fixture\n", "utf8"),
+        writeFile(manifestPath, "manifest fixture\n", "utf8")
+      ]);
+
+      const commands: string[] = [];
+      const evidence = await verifyReleaseSecurity({
+        appPath,
+        dmgPath,
+        manifestPath,
+        expectedIdentity: "Developer ID Application: HTMLslide (TEAM123456)",
+        runCommand(command, args) {
+          commands.push(`${command} ${args.join(" ")}`);
+          if (command === "codesign" && args[0] === "--display" && args.at(-1) === appPath) {
+            return [
+              "Identifier=app.htmlslide",
+              "Authority=Developer ID Application: HTMLslide (TEAM123456)",
+              "TeamIdentifier=TEAM123456",
+              "flags=0x10000(runtime)"
+            ].join("\n");
+          }
+          return "passed";
+        }
+      });
+
+      expect(evidence.signature).toMatchObject({
+        identity: "Developer ID Application: HTMLslide (TEAM123456)",
+        bundleIdentifier: "app.htmlslide",
+        teamIdentifier: "TEAM123456",
+        hardenedRuntime: true
+      });
+      expect(evidence.checks.map((check) => check.tool)).toEqual(expect.arrayContaining([
+        "codesign.app.verify",
+        "spctl.app.execute",
+        "xcrun.stapler.validate",
+        "spctl.dmg.open"
+      ]));
+      expect(evidence.artifacts.manifest.sha256).toMatch(/^[a-f0-9]{64}$/u);
+      expect(commands).toEqual(expect.arrayContaining([
+        expect.stringContaining("codesign --verify --deep --strict --verbose=4"),
+        expect.stringContaining("spctl --assess --type execute"),
+        expect.stringContaining("xcrun stapler validate")
+      ]));
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a release signature without hardened runtime evidence", async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-release-security-invalid-"));
+    try {
+      const appPath = path.join(tempRoot, "HTMLslide.app");
+      const dmgPath = path.join(tempRoot, "HTMLslide.dmg");
+      const manifestPath = path.join(tempRoot, "HTMLslide.json");
+      await Promise.all([
+        writeFile(appPath, "app\n", "utf8"),
+        writeFile(dmgPath, "dmg\n", "utf8"),
+        writeFile(manifestPath, "manifest\n", "utf8")
+      ]);
+
+      await expect(verifyReleaseSecurity({
+        appPath,
+        dmgPath,
+        manifestPath,
+        runCommand(command, args) {
+          if (command === "codesign" && args[0] === "--display") {
+            return "Identifier=app.htmlslide\nAuthority=Developer ID Application: HTMLslide (TEAM123456)\nTeamIdentifier=TEAM123456\nflags=0x0";
+          }
+          return "passed";
+        }
+      })).rejects.toThrow(/hardened runtime/iu);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("builds deterministic artifact integrity metadata", async () => {
     const tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-artifact-metadata-"));
     try {
@@ -100,6 +184,8 @@ describe("release evidence scripts", () => {
     expect(workflow).toContain("node scripts/release/validate-release-contract.mjs");
     expect(workflow).toContain('--manifest "$manifest"');
     expect(workflow).toContain("--expected-arch arm64");
+    expect(workflow).toContain("Verify signed release security evidence");
+    expect(workflow).toContain("pnpm release:security:verify");
   });
 
   it("validates the signed release manifest, architecture, and artifact hash", async () => {
@@ -124,9 +210,20 @@ describe("release evidence scripts", () => {
         notarized: true,
         stapled: true,
         artifacts: [artifactPath],
-        artifactMetadata: await buildArtifactMetadata([artifactPath])
+        artifactMetadata: await buildArtifactMetadata([artifactPath]),
+        securityEvidence: { fileName: "release-security-evidence-arm64.json" }
       };
       await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+      await writeFile(path.join(tempRoot, "release-security-evidence-arm64.json"), `${JSON.stringify({
+        schemaVersion: "1",
+        checks: [{ tool: "fixture", status: "passed" }],
+        artifacts: {
+          manifest: {
+            fileName: path.basename(manifestPath),
+            sha256: createHash("sha256").update(await readFile(manifestPath)).digest("hex")
+          }
+        }
+      }, null, 2)}\n`, "utf8");
 
       await expect(validateReleaseManifest(manifestPath)).resolves.toMatchObject({
         arch: "arm64",

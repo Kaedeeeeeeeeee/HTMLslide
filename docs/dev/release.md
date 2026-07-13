@@ -122,10 +122,11 @@ The release script uses `build/package/release-macos.json` and writes:
 
 - `dist/release/HTMLslide-<version>-signed-notarized-<arch>.dmg`
 - `dist/release/HTMLslide-<version>-signed-notarized-<arch>.json`
+- `dist/release/release-security-evidence-<version>-<arch>.json`
 
 The hosted signed release workflow currently publishes Apple Silicon (`arm64`) artifacts only. Intel and universal macOS release artifacts are not yet part of the production workflow.
 
-The release manifest uses the same per-artifact filename, byte size, and SHA-256 metadata as alpha builds.
+The release manifest uses the same per-artifact filename, byte size, and SHA-256 metadata as alpha builds. Its `securityEvidence` reference must resolve to a report beside the manifest; `pnpm release:security:verify` independently runs `codesign`, hardened-runtime, `spctl`, `xcrun stapler validate`, and manifest hash checks without recording raw command output.
 Manual `workflow_dispatch` runs can pass the optional `release_tag` input to label the uploaded RC checklist. Tag-triggered runs always use the pushed tag. Manual runs without an input use `manual-<run_number>` so checklist metadata remains run-bound instead of `TODO`.
 The release workflow also writes `release-artifacts/RELEASE_NOTES.md` for tag builds and uses it as the GitHub Release body. Run the same generator locally when preparing a candidate:
 
@@ -143,7 +144,7 @@ The workflow requires these repository or organization secrets:
 - `APPLE_APP_SPECIFIC_PASSWORD`
 - `KEYCHAIN_PASSWORD`
 
-The first workflow gate runs `scripts/release/validate-release-contract.mjs` before dependency installation. It checks the release-only package config, every script used by the signed workflow (including browser visual regression, packaged-app smoke, and release-evidence verifiers), secret presence, and the certificate secret's base64/DER shape without printing secret values. The certificate secret must be a base64-encoded Developer ID Application `.p12`; only keychain import and identity matching can prove that it is the requested identity. The workflow imports it into a temporary keychain, signs the app with hardened runtime, signs the DMG, submits the DMG with `xcrun notarytool --wait`, staples and validates the DMG with `xcrun stapler`, checks the manifest for `channel: release`, `arch: arm64`, `signing: developer-id`, `notarized: true`, and `stapled: true`, then mounts the signed DMG and runs the packaged Chromium export smoke before publishing.
+The first workflow gate runs `scripts/release/validate-release-contract.mjs` before dependency installation. It checks the release-only package config, every script used by the signed workflow (including browser visual regression, packaged-app smoke, and release-evidence verifiers), secret presence, and the certificate secret's base64/DER shape without printing secret values. The certificate secret must be a base64-encoded Developer ID Application `.p12`; only keychain import and identity matching can prove that it is the requested identity. The workflow imports it into a temporary keychain, signs the app with hardened runtime, signs the DMG, submits the DMG with `xcrun notarytool --wait`, staples and validates the DMG with `xcrun stapler`, checks the manifest for `channel: release`, `arch: arm64`, `signing: developer-id`, `notarized: true`, and `stapled: true`, runs the independent release-security evidence verifier, then mounts the signed DMG and runs the packaged Chromium export smoke before publishing.
 
 Signing and notarization secrets must be company-owned repository or organization secrets, never committed files or personal local credentials.
 

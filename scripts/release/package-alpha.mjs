@@ -7,6 +7,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { buildArtifactMetadata } from "./artifact-metadata.mjs";
+import { verifyReleaseSecurity } from "./verify-release-security.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, "..", "..");
@@ -667,33 +668,43 @@ const zipPath = config.createZip === false ? undefined : createZip({ appPath, ar
 const manifestPath = path.join(outputDir, `${artifactBaseName}.json`);
 const artifacts = [dmgPath, zipPath].filter(Boolean);
 const artifactMetadata = await buildArtifactMetadata(artifacts);
+const securityEvidenceFileName = `release-security-evidence-${version}-${arch}.json`;
+const securityEvidencePath = path.join(outputDir, securityEvidenceFileName);
+const manifest = {
+  appName: config.appName,
+  version,
+  arch,
+  channel,
+  bundleIdentifier: config.bundleIdentifier,
+  browserRuntime: {
+    kind: "chromium-headless-shell",
+    revision: browserRuntime.revision,
+    version: browserRuntime.version
+  },
+  documentTypes: [config.deckPackageDocumentType?.extension ?? "deckpkg"],
+  signing,
+  notarized: notarization.notarized,
+  stapled: notarization.stapled,
+  artifacts,
+  artifactMetadata,
+  ...(channel === "release" ? { securityEvidence: { fileName: securityEvidenceFileName } } : {})
+};
 
 await writeFile(
   manifestPath,
-  `${JSON.stringify(
-    {
-      appName: config.appName,
-      version,
-      arch,
-      channel,
-      bundleIdentifier: config.bundleIdentifier,
-      browserRuntime: {
-        kind: "chromium-headless-shell",
-        revision: browserRuntime.revision,
-        version: browserRuntime.version
-      },
-      documentTypes: [config.deckPackageDocumentType?.extension ?? "deckpkg"],
-      signing,
-      notarized: notarization.notarized,
-      stapled: notarization.stapled,
-      artifacts,
-      artifactMetadata
-    },
-    null,
-    2
-  )}\n`
+  `${JSON.stringify(manifest, null, 2)}\n`
 );
 
-for (const artifact of [...artifacts, manifestPath]) {
+if (channel === "release") {
+  const securityEvidence = await verifyReleaseSecurity({
+    appPath,
+    dmgPath,
+    expectedIdentity: developerIdIdentity(),
+    manifestPath
+  });
+  await writeFile(securityEvidencePath, `${JSON.stringify(securityEvidence, null, 2)}\n`, "utf8");
+}
+
+for (const artifact of [...artifacts, manifestPath, ...(channel === "release" ? [securityEvidencePath] : [])]) {
   process.stdout.write(`${artifact}\n`);
 }

@@ -34,6 +34,7 @@ export const REQUIRED_RELEASE_SCRIPTS = Object.freeze([
   "package:release:macos",
   "release:security:verify",
   "release:bundle:verify",
+  "release:promote:verify",
   "smoke:package:alpha",
   "release:contract:check",
   "rc:checklist",

@@ -1,0 +1,166 @@
+name: Promote macOS Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing vX.Y.Z tag whose Draft GitHub Release contains the candidate."
+        required: true
+        type: string
+      candidate_run_id:
+        description: "GitHub Actions run ID that produced the candidate artifact."
+        required: true
+        type: string
+      rc_checklist_asset:
+        description: "Completed RC checklist asset uploaded to the Draft GitHub Release."
+        required: false
+        default: HTMLslide-release-rc-acceptance-completed.md
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: promote-macos-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Verify and publish signed macOS release
+    permissions:
+      actions: read
+      contents: write
+    environment: macos-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Validate promotion inputs
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          RC_CHECKLIST_ASSET: ${{ inputs.rc_checklist_asset }}
+        run: |
+          set -euo pipefail
+
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]] || {
+            echo "::error title=Invalid release tag::Expected a v-prefixed SemVer tag."
+            exit 1
+          }
+          [[ "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || {
+            echo "::error title=Invalid candidate run ID::Expected a positive numeric Actions run ID."
+            exit 1
+          }
+          for value in "$RC_CHECKLIST_ASSET"; do
+            [[ "$value" != */* && "$value" != *\\* && "$value" != .* ]] || {
+              echo "::error title=Unsafe promotion asset name::Asset names must be basename-only values."
+              exit 1
+            }
+          done
+
+      - name: Checkout tagged source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify candidate workflow provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+        run: |
+          set -euo pipefail
+
+          expected_commit="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+          run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CANDIDATE_RUN_ID}")"
+          workflow_name="$(jq -r '.name // empty' <<<"$run_json")"
+          status="$(jq -r '.status // empty' <<<"$run_json")"
+          conclusion="$(jq -r '.conclusion // empty' <<<"$run_json")"
+          head_sha="$(jq -r '.head_sha // empty' <<<"$run_json")"
+          if [[ "$workflow_name" != "Release macOS" || "$status" != "completed" || "$conclusion" != "success" || "$head_sha" != "$expected_commit" ]]; then
+            echo "::error title=Candidate workflow provenance mismatch::Expected a successful Release macOS run for $expected_commit; got name=$workflow_name status=$status conclusion=$conclusion head_sha=$head_sha."
+            exit 1
+          fi
+
+      - name: Download signed notarized candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: htmlslide-signed-notarized-${{ inputs.candidate_run_id }}
+          path: candidate-bundle
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.candidate_run_id }}
+
+      - name: Download completed RC checklist from draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RC_CHECKLIST_ASSET: ${{ inputs.rc_checklist_asset }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p promotion-input
+          gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft | grep -Fxq true || {
+            echo "::error title=Draft release missing::The candidate tag must have a Draft GitHub Release before promotion."
+            exit 1
+          }
+          gh release download "$RELEASE_TAG" \
+            --pattern "$RC_CHECKLIST_ASSET" \
+            --dir promotion-input \
+            --clobber
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        with:
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+
+      - name: Verify candidate bundle and RC checklist
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          RC_CHECKLIST_ASSET: ${{ inputs.rc_checklist_asset }}
+        run: |
+          set -euo pipefail
+
+          expected_commit="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+          pnpm release:promote:verify -- \
+            --bundle-dir candidate-bundle \
+            --checklist "promotion-input/$RC_CHECKLIST_ASSET" \
+            --release-tag "$RELEASE_TAG" \
+            --candidate-run-id "$CANDIDATE_RUN_ID" \
+            --commit "$expected_commit" \
+            --expected-arch arm64 \
+            --output promotion-evidence.json
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+
+          notes="candidate-bundle/RELEASE_NOTES.md"
+          [[ -s "$notes" ]] || {
+            echo "::error title=Missing release notes::The candidate bundle did not contain $notes."
+            exit 1
+          }
+          gh release upload "$RELEASE_TAG" candidate-bundle/* promotion-evidence.json --clobber
+          gh release edit "$RELEASE_TAG" \
+            --draft=false \
+            --latest \
+            --verify-tag \
+            --title "HTMLslide $RELEASE_TAG" \
+            --notes-file "$notes"

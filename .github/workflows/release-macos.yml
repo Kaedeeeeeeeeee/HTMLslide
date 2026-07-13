@@ -7,10 +7,6 @@ on:
         description: "Optional release tag or RC label for acceptance checklist metadata."
         required: false
         type: string
-      rc_checklist_promotion_path:
-        description: "Optional path in the checked-out ref to a completed RC checklist; omitted runs fail closed on the generated TODO template."
-        required: false
-        type: string
   push:
     tags:
       - "v*"
@@ -24,9 +20,7 @@ concurrency:
 
 jobs:
   signed-notarized:
-    name: Build signed notarized macOS artifact
-    permissions:
-      contents: write
+    name: Build signed notarized macOS candidate
     environment: macos-release
     runs-on: macos-26
     timeout-minutes: 90
@@ -281,7 +275,6 @@ jobs:
         shell: bash
         env:
           WORKFLOW_RELEASE_TAG: ${{ github.event.inputs.release_tag || '' }}
-          WORKFLOW_RC_CHECKLIST_PROMOTION_PATH: ${{ github.event.inputs.rc_checklist_promotion_path || '' }}
         run: |
           set -euo pipefail
 
@@ -325,7 +318,8 @@ jobs:
             --channel release \
             --ci-run-url "$run_url" \
             --package-run-url "$run_url" \
-            --artifact-url "htmlslide-signed-notarized-${GITHUB_RUN_NUMBER}" \
+            --artifact-url "htmlslide-signed-notarized-${GITHUB_RUN_ID}" \
+            --candidate-run-id "$GITHUB_RUN_ID" \
             --release-tag "$release_tag" \
             --package-manifest "$manifest" \
             --commit "$GITHUB_SHA" \
@@ -333,25 +327,6 @@ jobs:
 
           generated_checklist="release-artifacts/HTMLslide-release-rc-acceptance.md"
           cp "$generated_checklist" release-artifacts/HTMLslide-release-rc-acceptance-template.md
-
-          if [[ -n "$WORKFLOW_RC_CHECKLIST_PROMOTION_PATH" ]]; then
-            if [[ ! -f "$WORKFLOW_RC_CHECKLIST_PROMOTION_PATH" ]]; then
-              echo "::error title=Missing RC checklist promotion input::The supplied path is not a regular file: $WORKFLOW_RC_CHECKLIST_PROMOTION_PATH"
-              exit 1
-            fi
-
-            repo_root="$(git rev-parse --show-toplevel)"
-            promotion_path="$(cd "$(dirname "$WORKFLOW_RC_CHECKLIST_PROMOTION_PATH")" && pwd)/$(basename "$WORKFLOW_RC_CHECKLIST_PROMOTION_PATH")"
-            case "$promotion_path" in
-              "$repo_root"/*) ;;
-              *)
-                echo "::error title=Unsafe RC checklist promotion input::The supplied checklist must remain inside the checked-out repository."
-                exit 1
-                ;;
-            esac
-
-            cp "$promotion_path" "$generated_checklist"
-          fi
 
           find release-artifacts -type f -print | sort
 
@@ -367,43 +342,43 @@ jobs:
             --team-id "$APPLE_TEAM_ID" \
             --output release-artifacts/HTMLslide-release-bundle-evidence.json
 
-      - name: Verify RC checklist promotion gate (fail closed)
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          checklist="release-artifacts/HTMLslide-release-rc-acceptance.md"
-          if [[ ! -f "$checklist" ]]; then
-            echo "::error title=Missing RC checklist::The release checklist was not generated at $checklist."
-            exit 1
-          fi
-
-          echo "Verifying RC checklist promotion evidence; unresolved TODO placeholders remain a hard failure."
-          manifest="$(find release-artifacts -maxdepth 1 -type f -name 'HTMLslide-*.json' -print | sort | tail -n 1)"
-          if [[ -z "$manifest" || ! -f "$manifest" ]]; then
-            echo "::error title=Missing final release manifest::The uploaded release bundle has no package manifest."
-            exit 1
-          fi
-          pnpm rc:checklist:verify -- \
-            --checklist "$checklist" \
-            --package-manifest "$manifest" \
-            --commit "$GITHUB_SHA"
-
       - name: Generate release notes
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           pnpm release:notes -- --tag "${GITHUB_REF_NAME}" --output release-artifacts/RELEASE_NOTES.md
 
-      - name: Upload signed notarized artifact
+      - name: Upload signed notarized candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: htmlslide-signed-notarized-${{ github.run_number }}
+          name: htmlslide-signed-notarized-${{ github.run_id }}
           path: release-artifacts/*
           if-no-files-found: error
           retention-days: 30
 
-      - name: Attach artifacts to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Delete signing keychain
+        if: always()
+        shell: bash
+        run: |
+          security delete-keychain "$RUNNER_TEMP/htmlslide-signing.keychain-db" >/dev/null 2>&1 || true
+
+  draft-release:
+    name: Create draft GitHub Release for candidate
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: signed-notarized
+    permissions:
+      actions: read
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Download signed notarized candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: htmlslide-signed-notarized-${{ github.run_id }}
+          path: release-artifacts
+
+      - name: Create draft GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -411,16 +386,22 @@ jobs:
           set -euo pipefail
 
           tag="${GITHUB_REF_NAME}"
-          if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" --title "HTMLslide $tag" --notes-file release-artifacts/RELEASE_NOTES.md
-          else
-            gh release edit "$tag" --title "HTMLslide $tag" --notes-file release-artifacts/RELEASE_NOTES.md
+          notes="release-artifacts/RELEASE_NOTES.md"
+          if [[ ! -s "$notes" ]]; then
+            echo "::error title=Missing release notes::The candidate bundle did not contain $notes."
+            exit 1
           fi
 
+          # Rebuilding a tag invalidates only its prior draft and checklist asset.
+          if gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null | grep -Fxq true; then
+            gh release delete "$tag" --yes
+          elif gh release view "$tag" >/dev/null 2>&1; then
+            echo "::error title=Release already published::Refusing to replace the published release for $tag."
+            exit 1
+          fi
+          gh release create "$tag" \
+            --draft \
+            --verify-tag \
+            --title "HTMLslide $tag" \
+            --notes-file "$notes"
           gh release upload "$tag" release-artifacts/* --clobber
-
-      - name: Delete signing keychain
-        if: always()
-        shell: bash
-        run: |
-          security delete-keychain "$RUNNER_TEMP/htmlslide-signing.keychain-db" >/dev/null 2>&1 || true

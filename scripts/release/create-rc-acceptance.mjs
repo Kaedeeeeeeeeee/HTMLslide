@@ -51,6 +51,7 @@ export async function main(args) {
     packageManifestSha256: packageProvenance?.manifestSha256,
     primaryArtifactSha256: packageProvenance?.primaryArtifactSha256,
     packageRunUrl: options.packageRunUrl,
+    candidateRunId: options.candidateRunId,
     releaseTag: options.releaseTag,
     version
   });
@@ -117,6 +118,7 @@ export function renderChecklist(metadata) {
 | Release tag | ${metadata.releaseTag ?? "TODO"} |
 | CI run | ${metadata.ciRunUrl ?? "TODO"} |
 | Package workflow run | ${metadata.packageRunUrl ?? "TODO"} |
+| Candidate run ID | ${metadata.candidateRunId ?? "TODO"} |
 | DMG / artifact URL | ${metadata.artifactUrl ?? "TODO"} |
 | Commit | ${metadata.commit ?? "TODO"} |
 | Package manifest SHA256 | ${metadata.packageManifestSha256 ?? "TODO"} |

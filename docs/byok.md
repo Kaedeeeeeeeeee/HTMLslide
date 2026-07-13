@@ -86,6 +86,6 @@ pnpm rc:byok-evidence -- \
 
 The verifier reads only sanitized run/project artifacts. It does not read Keychain, environment values, or raw API keys. A successful evidence file proves that the named run requested and produced an 8-12 slide deck with matching outline/manifest IDs, current export source/artifact fingerprints, an existing reversible checkpoint, passing authoritative check/export, and no common secret patterns in exported text sources. Compatible providers are bound by a sanitized endpoint hash. It does not prove visual quality, provider billing behavior, or the identity of an arbitrary-format provider key.
 
-`--commit` and `--artifact-url` are recorded as caller-declared candidate labels. The completed RC checklist remains responsible for confirming that those labels identify the packaged artifact actually tested; the verifier does not download the app artifact.
+`--commit` and `--artifact-url` are recorded as candidate labels. The completed RC checklist and promotion verifier must bind those labels to the exact packaged artifact actually tested; the verifier does not download the app artifact itself, while the signed-release promotion workflow downloads and verifies the candidate bundle before publication.
 
 Automated tests use fake fetch implementations and mock providers. They can validate the `rc byok` command contract and its sanitization, but they do not satisfy the real-provider Alpha/RC gate. A real provider run against the exact candidate remains a manual release step.

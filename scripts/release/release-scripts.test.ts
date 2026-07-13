@@ -20,6 +20,7 @@ import {
 import { main as verifyByokEvidence } from "./verify-byok-acceptance.mjs";
 import { main as verifyChecklist } from "./verify-rc-checklist.mjs";
 import { main as verifyExternalAgentEvidence } from "./verify-external-agent-acceptance.mjs";
+import { main as verifyReleasePromotion } from "./promote-release.mjs";
 import {
   main as verifyReleaseBundleMain,
   parseArgs as parseReleaseBundleArgs,
@@ -191,8 +192,9 @@ describe("release evidence scripts", () => {
   });
 
   it("keeps the signed release workflow wired to the shared release contract", async () => {
-    const [workflow, alphaWorkflow] = await Promise.all([
+    const [workflow, promotionWorkflow, alphaWorkflow] = await Promise.all([
       readFile(path.join(root, ".github", "workflows", "release-macos.yml"), "utf8"),
+      readFile(path.join(root, ".github", "workflows", "promote-release.yml"), "utf8"),
       readFile(path.join(root, ".github", "workflows", "alpha-package.yml"), "utf8")
     ]);
 
@@ -205,21 +207,37 @@ describe("release evidence scripts", () => {
     expect(workflow).toContain("--output release-artifacts/HTMLslide-release-bundle-evidence.json");
     expect(workflow).toContain("pnpm test:coverage");
     expect(workflow).toContain("pnpm rc:byok-fixture-smoke");
-    expect(workflow).toContain("rc_checklist_promotion_path");
-    expect(workflow).toContain("pnpm rc:checklist:verify");
-    expect(workflow).toContain('--package-manifest "$manifest"');
-    expect(workflow).toContain('--commit "$GITHUB_SHA"');
-    expect(workflow.indexOf("Verify RC checklist promotion gate")).toBeLessThan(workflow.indexOf("Attach artifacts to GitHub Release"));
+    expect(workflow).toContain("Upload signed notarized candidate");
+    expect(workflow).toContain("Create draft GitHub Release for candidate");
+    expect(workflow).not.toContain("rc_checklist_promotion_path");
+    expect(workflow).not.toContain("Verify RC checklist promotion gate");
+    expect(promotionWorkflow).toContain("candidate_run_id:");
+    expect(promotionWorkflow).toContain("rc_checklist_asset:");
+    expect(promotionWorkflow).toContain("pnpm release:promote:verify");
+    expect(promotionWorkflow).toContain("actions: read");
+    expect(promotionWorkflow).toContain("Verify candidate workflow provenance");
+    expect(promotionWorkflow).toContain("head_sha");
+    expect(promotionWorkflow).toContain("--candidate-run-id");
+    expect(promotionWorkflow).toContain("--commit \"$expected_commit\"");
+    expect(promotionWorkflow).toContain("gh release edit \"$RELEASE_TAG\"");
     const bundleVerifyIndex = workflow.indexOf("pnpm release:bundle:verify");
     const bundleEvidenceOutputIndex = workflow.indexOf("--output release-artifacts/HTMLslide-release-bundle-evidence.json");
     expect(bundleEvidenceOutputIndex).toBeGreaterThan(bundleVerifyIndex);
-    expect(bundleEvidenceOutputIndex).toBeLessThan(workflow.indexOf("Upload signed notarized artifact"));
-    expect(bundleEvidenceOutputIndex).toBeLessThan(workflow.indexOf("Attach artifacts to GitHub Release"));
-    expect(bundleVerifyIndex).toBeLessThan(workflow.indexOf("Upload signed notarized artifact"));
-    expect(bundleVerifyIndex).toBeLessThan(workflow.indexOf("Attach artifacts to GitHub Release"));
+    expect(bundleEvidenceOutputIndex).toBeLessThan(workflow.indexOf("Upload signed notarized candidate"));
+    expect(bundleVerifyIndex).toBeLessThan(workflow.indexOf("Upload signed notarized candidate"));
     expect(alphaWorkflow).toContain("pnpm test:coverage");
     expect(alphaWorkflow).toContain("pnpm rc:byok-fixture-smoke");
     expect(alphaWorkflow).toContain("htmlslide-byok-fixture-evidence.json");
+  });
+
+  it("verifies the release promotion contract against the exact candidate run", async () => {
+    const script = await readFile(path.join(root, "scripts", "release", "promote-release.mjs"), "utf8");
+
+    expect(script).toContain("verifyReleaseBundle");
+    expect(script).toContain("readPackageManifestProvenance");
+    expect(script).toContain("verifyChecklist");
+    expect(script).toContain("Package workflow run does not identify candidate run");
+    expect(script).toContain("Candidate package sourceCommit does not match");
   });
 
   it("validates the signed release manifest, architecture, and artifact hash", async () => {
@@ -759,6 +777,64 @@ describe("release evidence scripts", () => {
     }
   });
 
+  it("verifies release promotion against the downloaded candidate and Draft Release checklist", async () => {
+    const fixture = await createReleaseBundleFixture();
+    const checklistPath = path.join(fixture.root, "completed-release.md");
+    const outputPath = path.join(fixture.root, "promotion-evidence.json");
+    try {
+      const provenance = await readPackageManifestProvenance(fixture.manifestPath, { requireSourceCommit: true });
+      await writeFile(checklistPath, completeChecklist({
+        artifactUrl: "https://github.test/releases/download/v0.1.0/HTMLslide-0.1.0-signed-notarized-arm64.dmg",
+        channel: "release",
+        ciRunUrl: "https://github.test/Kaedeeeeeeeeee/HTMLslide/actions/runs/12345",
+        packageRunUrl: "https://github.test/Kaedeeeeeeeeee/HTMLslide/actions/runs/12345",
+        candidateRunId: "12345",
+        releaseTag: "v0.1.0",
+        commit: provenance.sourceCommit,
+        packageManifestSha256: provenance.manifestSha256,
+        primaryArtifactSha256: provenance.primaryArtifactSha256
+      }), "utf8");
+
+      const result = await verifyReleasePromotion([
+        "--bundle-dir", fixture.bundleDir,
+        "--checklist", checklistPath,
+        "--release-tag", "v0.1.0",
+        "--candidate-run-id", "12345",
+        "--commit", provenance.sourceCommit,
+        "--output", outputPath
+      ]);
+
+      expect(result).toMatchObject({
+        status: "passed",
+        releaseTag: "v0.1.0",
+        candidateRunId: "12345",
+        sourceCommit: provenance.sourceCommit,
+        checklist: { result: "Accepted" }
+      });
+      expect(JSON.parse(await readFile(outputPath, "utf8"))).toMatchObject({
+        command: "release:promote:verify",
+        bundle: { dmg: { sha256: fixture.dmgSha256 } }
+      });
+
+      await expect(verifyReleasePromotion([
+        "--bundle-dir", fixture.bundleDir,
+        "--checklist", checklistPath,
+        "--release-tag", "v0.1.1",
+        "--candidate-run-id", "12345",
+        "--commit", provenance.sourceCommit
+      ])).rejects.toThrow(/does not match package manifest version/iu);
+      await expect(verifyReleasePromotion([
+        "--bundle-dir", fixture.bundleDir,
+        "--checklist", checklistPath,
+        "--release-tag", "v0.1.0",
+        "--candidate-run-id", "99999",
+        "--commit", provenance.sourceCommit
+      ])).rejects.toThrow(/Candidate run ID .* does not match 99999/iu);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     [
       "missing real BYOK evidence",
@@ -1179,6 +1255,7 @@ async function createReleaseBundleFixture() {
   const manifest = {
     appName: "HTMLslide",
     version: "0.1.0",
+    sourceCommit: "f570b88",
     arch: "arm64",
     channel: "release",
     bundleIdentifier: "app.htmlslide",

@@ -344,7 +344,8 @@ describe("macOS alpha packaging contract", () => {
 
     expect(workflow).toContain("runs-on: macos-26");
     expect(workflow).toContain("fetch-depth: 0");
-    expect(workflow).toContain("contents: write");
+    expect(workflow).toContain("contents: read");
+    expect(workflow).toContain("actions: read");
     expect(workflow).toContain("contents: read");
     expect(workflow).toContain("environment: macos-release");
     expect(workflow).toContain("persist-credentials: false");
@@ -385,10 +386,20 @@ describe("macOS alpha packaging contract", () => {
     expect(workflow).toContain("signed-notarized");
     expect(workflow).toContain("release-artifacts/RELEASE_NOTES.md");
     expect(workflow).toContain("release_tag=\"manual-${GITHUB_RUN_NUMBER}\"");
-    expect(workflow).toContain("gh release create \"$tag\" --title \"HTMLslide $tag\" --notes-file release-artifacts/RELEASE_NOTES.md");
-    expect(workflow).toContain("gh release edit \"$tag\" --title \"HTMLslide $tag\" --notes-file release-artifacts/RELEASE_NOTES.md");
-    expect(workflow).toContain("name: htmlslide-signed-notarized-${{ github.run_number }}");
-    expect(workflow).toContain("gh release upload");
+    expect(workflow).toContain("Create draft GitHub Release for candidate");
+    expect(workflow).not.toContain("gh release create \"$tag\" --title \"HTMLslide $tag\" --notes-file release-artifacts/RELEASE_NOTES.md");
+    expect(workflow).not.toContain("Verify RC checklist promotion gate");
+    expect(workflow).toContain("name: htmlslide-signed-notarized-${{ github.run_id }}");
+    expect(workflow).toContain("Upload signed notarized candidate");
+
+    const promotionWorkflow = await readText(".github/workflows/promote-release.yml");
+    expect(promotionWorkflow).toContain("contents: write");
+    expect(promotionWorkflow).toContain("actions: read");
+    expect(promotionWorkflow).toContain("environment: macos-release");
+    expect(promotionWorkflow).toContain("actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4");
+    expect(promotionWorkflow).toContain("gh release download");
+    expect(promotionWorkflow).toContain("gh release edit \"$RELEASE_TAG\"");
+    expect(promotionWorkflow).toContain("--draft=false");
   });
 
   it("keeps CI building the publishable docs site", async () => {
@@ -411,7 +422,8 @@ describe("macOS alpha packaging contract", () => {
       ".github/workflows/ci.yml",
       ".github/workflows/docs-pages.yml",
       ".github/workflows/alpha-package.yml",
-      ".github/workflows/release-macos.yml"
+      ".github/workflows/release-macos.yml",
+      ".github/workflows/promote-release.yml"
     ];
     const workflows = await Promise.all(workflowPaths.map((workflowPath) => readText(workflowPath)));
 
@@ -424,6 +436,7 @@ describe("macOS alpha packaging contract", () => {
       expect(workflow).not.toMatch(/actions\/setup-node@v[1-5]\b/);
       expect(workflow).not.toMatch(/pnpm\/action-setup@v[1-5]\b/);
       expect(workflow).not.toMatch(/actions\/upload-artifact@v[1-6]\b/);
+      expect(workflow).not.toMatch(/actions\/download-artifact@v[1-3]\b/);
     }
 
     for (const workflow of [workflows[0], workflows[2], workflows[3]]) {

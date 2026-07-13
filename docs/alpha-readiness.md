@@ -92,7 +92,7 @@ Generate the evidence template with:
 pnpm rc:checklist -- --channel alpha --ci-run-url <ci-url> --package-run-url <alpha-package-url> --artifact-url <dmg-url> --package-manifest <manifest-json> --commit <commit-sha>
 ```
 
-The generated checklist lives under `dist/acceptance/` and is intentionally not committed. When `--package-manifest` and `--commit` are supplied, it records the exact package manifest and primary DMG fingerprints; promotion verification fails if the checklist is reused with another package. The Alpha Package and Release macOS workflows also upload a prefilled, incomplete RC checklist alongside the candidate artifacts so human testers can complete evidence against the exact run. Attach or paste the completed evidence into the release candidate notes.
+The generated checklist lives under `dist/acceptance/` and is intentionally not committed. When `--package-manifest` and `--commit` are supplied, it records the exact package manifest and primary DMG fingerprints; promotion verification fails if the checklist is reused with another package. The Alpha Package workflow uploads a prefilled, incomplete checklist alongside its candidate artifacts. The signed Release macOS workflow uploads the same template into a Draft GitHub Release; after testing, upload the completed file as `HTMLslide-release-rc-acceptance-completed.md` and use the separate promotion workflow. Attach or paste the completed evidence into the release candidate notes as a secondary record.
 
 For the real-provider manual gate, run the shared acceptance command from a shell that has the key in an environment variable, not in the command line:
 
@@ -113,7 +113,7 @@ pnpm rc:byok-evidence -- --project <deck-path> --provider-validation <validation
 
 That verifier does not replace the unified real-provider acceptance path once `htmlslide rc byok` is available.
 
-The automated command contract proves only orchestration and sanitization with deterministic test inputs. BYOK release evidence is complete only after the unified command succeeds with a real provider against the exact candidate, its sanitized run-bound evidence is attached to the candidate notes, and the completed checklist confirms that the caller-declared commit/artifact labels identify the exact package tested.
+The automated command contract proves only orchestration and sanitization with deterministic test inputs. BYOK release evidence is complete only after the unified command succeeds with a real provider against the exact candidate, its sanitized run-bound evidence is attached to the candidate notes, and the completed checklist plus promotion verifier confirm that the candidate labels identify the exact package tested.
 
 Fake Claude/Codex executables in unit, service, Electron, or packaging tests are automated evidence. They do not satisfy either real-account row above. Manual evidence is valid only for the exact packaged artifact named in the checklist; a result from a source checkout, a different build, or another tester's login does not transfer to the candidate.
 

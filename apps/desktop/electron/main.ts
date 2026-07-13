@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   defaultWorkspacePath,
   addDesktopQaIgnoreRule,
+  assertDesktopAgentProject,
   detectExternalAgentStatuses,
   diffDesktopCheckpoint,
   exportOptionsToCliArgs,
@@ -1135,9 +1136,17 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle("htmlslide:close-audience-window", async () => closeAudienceWindow());
 
-  ipcMain.handle("htmlslide:start-agent-run", (_event, request: DesktopAgentRunRequest) =>
-    agentRunRegistry.start(request)
-  );
+  ipcMain.handle("htmlslide:start-agent-run", async (_event, request: DesktopAgentRunRequest) => {
+    if (!request || typeof request !== "object" || typeof request.projectPath !== "string") {
+      throw new Error("A valid HTMLslide project is required before starting an agent run.");
+    }
+    const projectPath = request.projectPath.trim();
+    if (projectPath.length === 0) {
+      throw new Error("A valid HTMLslide project is required before starting an agent run.");
+    }
+    const resolvedProjectPath = await assertDesktopAgentProject(projectPath);
+    return agentRunRegistry.start({ ...request, projectPath: resolvedProjectPath });
+  });
 
   ipcMain.handle("htmlslide:get-agent-run", (_event, runId: string) =>
     agentRunRegistry.get(runId)

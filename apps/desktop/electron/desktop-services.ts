@@ -1460,6 +1460,12 @@ export async function loadProjectPreview(projectPath: string): Promise<DesktopPr
   };
 }
 
+export async function assertDesktopAgentProject(projectPath: string): Promise<string> {
+  const resolvedProjectPath = path.resolve(projectPath);
+  await loadProjectPreview(resolvedProjectPath);
+  return resolvedProjectPath;
+}
+
 export async function persistDesktopExportOptions(
   projectPath: string,
   options: Partial<DeckExportOptions>

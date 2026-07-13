@@ -20,6 +20,7 @@ import { exportDeck } from "../../../packages/compiler/src/index";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   addDesktopQaIgnoreRule,
+  assertDesktopAgentProject,
   diffDesktopCheckpoint,
   exportOptionsToCliArgs,
   findCliRuntime,
@@ -660,6 +661,22 @@ describe("desktop services", () => {
       status: "ready"
     });
     expect(preview.slides[0]).not.toHaveProperty("html");
+  });
+
+  it("asserts that an external agent target is a valid deck project", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+
+    await expect(assertDesktopAgentProject(projectPath)).resolves.toBe(path.resolve(projectPath));
+  });
+
+  it("rejects an external agent target without a valid deck manifest", async () => {
+    const projectPath = await tempDir();
+
+    await expect(assertDesktopAgentProject(projectPath)).rejects.toMatchObject({
+      code: "PROJECT_NOT_FOUND",
+      name: "ProjectLoadError"
+    });
   });
 
   it("persists export choices and exposes them through project previews", async () => {

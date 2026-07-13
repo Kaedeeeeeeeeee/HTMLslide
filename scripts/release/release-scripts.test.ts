@@ -537,6 +537,8 @@ describe("release evidence scripts", () => {
     expect(checklist).toContain("| DMG / artifact URL | https://example.test/htmlslide-alpha.dmg |");
     expect(checklist).toContain("pnpm docs:build");
     expect(checklist).toContain("pnpm version:check");
+    expect(checklist).toContain("pnpm test:coverage");
+    expect(checklist).toContain("pnpm test:visual:browser");
     expect(checklist).toContain("pnpm security:check");
     expect(checklist).toContain("pnpm e2e:desktop:a11y");
     expect(checklist).toContain("Validate Real Claude/Codex Compatibility And Gemini Boundary");
@@ -702,6 +704,23 @@ describe("release evidence scripts", () => {
       await rm(fixtureRoot, { recursive: true, force: true });
     }
   });
+
+  it.each(["pnpm test:coverage", "pnpm test:visual:browser"])(
+    "rejects a completed RC checklist missing the %s automated gate",
+    async (missingGate) => {
+      const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-rc-checklist-gate-"));
+      const inputPath = path.join(fixtureRoot, "missing-gate.md");
+      try {
+        await writeFile(inputPath, completeChecklist().replace(`- [x] ${missingGate}\n`, ""), "utf8");
+
+        await expect(verifyChecklist(["--checklist", inputPath])).rejects.toThrow(
+          `RC checklist is missing required automated gates: ${missingGate}.`
+        );
+      } finally {
+        await rm(fixtureRoot, { recursive: true, force: true });
+      }
+    }
+  );
 
   it("binds a completed RC checklist to the exact package manifest provenance", async () => {
     const fixture = await createExternalAgentEvidenceFixture();

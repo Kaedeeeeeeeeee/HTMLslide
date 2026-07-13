@@ -135,6 +135,8 @@ export function renderChecklist(metadata) {
 - [ ] pnpm lint
 - [ ] pnpm typecheck
 - [ ] pnpm test
+- [ ] pnpm test:coverage
+- [ ] pnpm test:visual:browser
 - [ ] pnpm perf:smoke
 - [ ] pnpm security:check
 - [ ] pnpm build

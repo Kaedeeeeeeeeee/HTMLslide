@@ -7,6 +7,7 @@ import { readPackageManifestProvenance, validateCommit } from "./rc-provenance.m
 const maxChecklistBytes = 2 * 1024 * 1024;
 const expectedManualItems = 13;
 const allowedManualStatuses = new Set(["pass", "fail", "n/a"]);
+const requiredAutomatedGates = ["pnpm test:coverage", "pnpm test:visual:browser"];
 
 if (isDirectRun()) {
   main(process.argv.slice(2)).catch((error) => {
@@ -95,6 +96,12 @@ export async function verifyChecklist(markdown, metadata = {}) {
   const automatedItems = automatedSection.split("\n").filter((line) => /^- \[[ xX]\] /u.test(line));
   if (automatedItems.length === 0) {
     throw new Error("RC checklist has no automated gate entries.");
+  }
+  const missingRequiredAutomatedGates = requiredAutomatedGates.filter(
+    (command) => !automatedItems.some((line) => line.includes(command))
+  );
+  if (missingRequiredAutomatedGates.length > 0) {
+    throw new Error(`RC checklist is missing required automated gates: ${missingRequiredAutomatedGates.join(", ")}.`);
   }
   const uncheckedAutomated = automatedItems.filter((line) => /^- \[ \] /u.test(line));
   if (uncheckedAutomated.length > 0) {

@@ -234,6 +234,7 @@ export class AgentRunController {
   #timedOut = false;
   #terminalResult: AgentRunResult | undefined;
   #snapshot: AgentRunSnapshot;
+  #checkpointStartup: Promise<void> | undefined;
 
   constructor(input: AgentRunInput, options: AgentOrchestratorOptions = {}) {
     this.#input = input;
@@ -300,12 +301,21 @@ export class AgentRunController {
         this.#timedOut = true;
         const timeoutError = new AgentRunTimeoutError(this.#runTimeoutMs, this.#snapshot.currentStage ?? "brief");
         this.#abortController.abort();
-        resolve(this.#finishFailed({
+        const finishTimeout = (): void => resolve(this.#finishFailed({
           code: "timeout",
           message: timeoutError.message,
           stage: timeoutError.stage,
           timeoutMs: timeoutError.timeoutMs
         }));
+
+        // Checkpoint creation is local work that may still be writing the project
+        // runtime when the deadline fires. Let it settle before exposing the
+        // timeout result, while provider stages still return immediately.
+        if (this.#checkpointStartup !== undefined) {
+          void this.#checkpointStartup.then(finishTimeout, finishTimeout);
+        } else {
+          finishTimeout();
+        }
       }, this.#runTimeoutMs);
     });
 
@@ -325,7 +335,15 @@ export class AgentRunController {
 
     try {
       this.#throwIfCancelled();
-      await this.#createCheckpoint();
+      const checkpointStartup = this.#createCheckpoint();
+      this.#checkpointStartup = checkpointStartup;
+      try {
+        await checkpointStartup;
+      } finally {
+        if (this.#checkpointStartup === checkpointStartup) {
+          this.#checkpointStartup = undefined;
+        }
+      }
 
       const brief = await this.#runStage<NormalizedBrief>("brief", "Normalize the user brief.", {
         brief: this.#input.brief,

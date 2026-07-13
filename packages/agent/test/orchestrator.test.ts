@@ -323,21 +323,11 @@ describe("agent orchestrator", () => {
   });
 
   it("reports an early startup timeout as a brief-stage failure", async () => {
-    let providerStarted = false;
-    let resolveProviderSettled: (() => void) | undefined;
-    const providerSettled = new Promise<void>((resolve) => {
-      resolveProviderSettled = resolve;
-    });
     const baseProvider = createMockProvider({ delayMs: 25 });
     const provider = {
       ...baseProvider,
       complete: async (request: ModelRequest): Promise<ModelResponse> => {
-        providerStarted = true;
-        try {
-          return await baseProvider.complete(request);
-        } finally {
-          resolveProviderSettled?.();
-        }
+        return baseProvider.complete(request);
       }
     };
     const result = await runMockAgent({
@@ -346,9 +336,9 @@ describe("agent orchestrator", () => {
       provider
     });
 
-    if (providerStarted) {
-      await providerSettled;
-    }
+    await access(
+      path.join(projectRoot, ".htmlslide", "checkpoints", "run-startup-timeout", "manifest.json")
+    );
 
     expect(result).toMatchObject({
       ok: false,

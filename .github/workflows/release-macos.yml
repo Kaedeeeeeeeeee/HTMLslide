@@ -348,6 +348,17 @@ jobs:
 
           find release-artifacts -type f -print | sort
 
+      - name: Verify final release artifact bundle
+        shell: bash
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          pnpm release:bundle:verify -- \
+            --bundle-dir release-artifacts \
+            --expected-arch arm64 \
+            --team-id "$APPLE_TEAM_ID"
+
       - name: Verify RC checklist promotion gate (fail closed)
         shell: bash
         run: |

@@ -77,8 +77,13 @@ async function readLatestManifest() {
   const manifestPath = await latestManifestPath();
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   const artifacts = Array.isArray(manifest.artifacts) ? manifest.artifacts.map(String) : [];
-  const dmgPath = artifacts.find((artifact) => artifact.endsWith(".dmg"));
-  const zipPath = artifacts.find((artifact) => artifact.endsWith(".zip"));
+  const resolveManifestArtifact = (artifact) => path.isAbsolute(artifact)
+    ? artifact
+    : path.resolve(path.dirname(manifestPath), artifact);
+  const dmgArtifact = artifacts.find((artifact) => artifact.endsWith(".dmg"));
+  const zipArtifact = artifacts.find((artifact) => artifact.endsWith(".zip"));
+  const dmgPath = dmgArtifact ? resolveManifestArtifact(dmgArtifact) : undefined;
+  const zipPath = zipArtifact ? resolveManifestArtifact(zipArtifact) : undefined;
 
   if (!dmgPath || !existsSync(dmgPath)) {
     fail(`Alpha manifest does not point to an existing DMG: ${manifestPath}`);
@@ -119,11 +124,20 @@ async function readLatestManifest() {
 }
 
 async function assertArtifactMetadata(manifest, artifactPaths, manifestPath) {
-  const expectedMetadata = await buildArtifactMetadata(artifactPaths);
+  const expectedMetadata = await buildArtifactMetadata(artifactPaths, { relativeTo: path.dirname(manifestPath) });
   const actualMetadata = Array.isArray(manifest.artifactMetadata) ? manifest.artifactMetadata : [];
 
   for (const expected of expectedMetadata) {
-    const actual = actualMetadata.find((entry) => entry?.path === expected.path);
+    const expectedPath = path.resolve(path.dirname(manifestPath), expected.path);
+    const actual = actualMetadata.find((entry) => {
+      if (typeof entry?.path !== "string") {
+        return false;
+      }
+      const actualPath = path.isAbsolute(entry.path)
+        ? path.resolve(entry.path)
+        : path.resolve(path.dirname(manifestPath), entry.path);
+      return actualPath === expectedPath;
+    });
     if (
       !actual ||
       actual.fileName !== expected.fileName ||

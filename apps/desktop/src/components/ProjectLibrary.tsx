@@ -519,6 +519,16 @@ function RecentProjects({
         titleId="library-title"
       />
 
+      {!creatingDeck && operationStatus.kind !== "idle" ? (
+        <p
+          aria-live={operationStatus.kind === "failed" ? "assertive" : "polite"}
+          className={operationStatus.kind === "failed" ? "settings-note is-danger" : "settings-note"}
+          role={operationStatus.kind === "failed" ? "alert" : "status"}
+        >
+          {operationStatus.message}
+        </p>
+      ) : null}
+
       {creatingDeck ? (
         <form
           aria-busy={busy}

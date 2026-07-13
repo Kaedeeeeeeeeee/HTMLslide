@@ -726,7 +726,8 @@ const notarization = notarizeDmg(dmgPath, config);
 const zipPath = config.createZip === false ? undefined : createZip({ appPath, artifactBaseName, outputDir });
 const manifestPath = path.join(outputDir, `${artifactBaseName}.json`);
 const artifacts = [dmgPath, zipPath].filter(Boolean);
-const artifactMetadata = await buildArtifactMetadata(artifacts);
+const artifactMetadata = await buildArtifactMetadata(artifacts, { relativeTo: outputDir });
+const manifestArtifacts = artifacts.map((artifactPath) => path.relative(outputDir, artifactPath).split(path.sep).join("/"));
 const securityEvidenceFileName = `release-security-evidence-${version}-${arch}.json`;
 const securityEvidencePath = path.join(outputDir, securityEvidenceFileName);
 const manifest = {
@@ -744,7 +745,7 @@ const manifest = {
   signing,
   notarized: notarization.notarized,
   stapled: notarization.stapled,
-  artifacts,
+  artifacts: manifestArtifacts,
   artifactMetadata,
   ...(channel === "release" ? { securityEvidence: { fileName: securityEvidenceFileName } } : {})
 };

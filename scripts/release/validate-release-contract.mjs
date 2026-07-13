@@ -33,6 +33,7 @@ export const REQUIRED_RELEASE_SCRIPTS = Object.freeze([
   "e2e:desktop:a11y",
   "package:release:macos",
   "release:security:verify",
+  "release:bundle:verify",
   "smoke:package:alpha",
   "release:contract:check",
   "rc:checklist",
@@ -208,14 +209,16 @@ export async function validateReleaseManifest(
   }
 
   const artifactDirectory = path.dirname(resolvedManifestPath);
-  const resolvedReleaseArtifactPath = typeof artifacts[0] === "string" ? path.resolve(artifacts[0]) : "";
+  const resolvedReleaseArtifactPath = typeof artifacts[0] === "string"
+    ? resolveManifestReference(artifacts[0], artifactDirectory)
+    : "";
   for (const artifact of artifacts) {
     if (typeof artifact !== "string" || artifact.length === 0) {
       errors.push("every release artifact must be a non-empty path string.");
       continue;
     }
 
-    const resolvedArtifactPath = path.resolve(artifact);
+    const resolvedArtifactPath = resolveManifestReference(artifact, artifactDirectory);
     if (path.dirname(resolvedArtifactPath) !== artifactDirectory) {
       errors.push(`release artifact must be beside the manifest: ${artifact}.`);
       continue;
@@ -233,7 +236,9 @@ export async function validateReleaseManifest(
       continue;
     }
 
-    const metadata = artifactMetadata.find((entry) => isRecord(entry) && path.resolve(String(entry.path)) === resolvedArtifactPath);
+    const metadata = artifactMetadata.find((entry) =>
+      isRecord(entry) && resolveManifestReference(String(entry.path), artifactDirectory) === resolvedArtifactPath
+    );
     if (!metadata) {
       errors.push(`artifactMetadata is missing ${artifact}.`);
       continue;
@@ -319,7 +324,7 @@ export async function validateReleaseManifest(
 
   return {
     manifestPath: resolvedManifestPath,
-    artifactPath: path.resolve(artifacts[0]),
+    artifactPath: resolvedReleaseArtifactPath,
     arch: expectedArch,
     channel: "release"
   };
@@ -379,6 +384,12 @@ function isReleaseArtifactMetadata(value, expectedFileName) {
     Number.isSafeInteger(value.sizeBytes) &&
     value.sizeBytes >= 0 &&
     sha256Pattern.test(String(value.sha256 ?? ""));
+}
+
+function resolveManifestReference(reference, manifestDirectory) {
+  return path.isAbsolute(reference)
+    ? path.resolve(reference)
+    : path.resolve(manifestDirectory, reference);
 }
 
 async function readJson(filePath) {

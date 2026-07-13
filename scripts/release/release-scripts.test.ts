@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,10 @@ import {
 import { main as verifyByokEvidence } from "./verify-byok-acceptance.mjs";
 import { main as verifyChecklist } from "./verify-rc-checklist.mjs";
 import { main as verifyExternalAgentEvidence } from "./verify-external-agent-acceptance.mjs";
+import {
+  parseArgs as parseReleaseBundleArgs,
+  verifyReleaseBundle
+} from "./verify-release-bundle.mjs";
 import { verifyReleaseSecurity } from "./verify-release-security.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -195,11 +199,15 @@ describe("release evidence scripts", () => {
     expect(workflow).toContain("--expected-arch arm64");
     expect(workflow).toContain("Verify signed release security evidence");
     expect(workflow).toContain("pnpm release:security:verify");
+    expect(workflow).toContain("pnpm release:bundle:verify");
     expect(workflow).toContain("pnpm test:coverage");
     expect(workflow).toContain("pnpm rc:byok-fixture-smoke");
     expect(workflow).toContain("rc_checklist_promotion_path");
     expect(workflow).toContain("pnpm rc:checklist:verify");
     expect(workflow.indexOf("Verify RC checklist promotion gate")).toBeLessThan(workflow.indexOf("Attach artifacts to GitHub Release"));
+    const bundleVerifyIndex = workflow.indexOf("pnpm release:bundle:verify");
+    expect(bundleVerifyIndex).toBeLessThan(workflow.indexOf("Upload signed notarized artifact"));
+    expect(bundleVerifyIndex).toBeLessThan(workflow.indexOf("Attach artifacts to GitHub Release"));
     expect(alphaWorkflow).toContain("pnpm test:coverage");
     expect(alphaWorkflow).toContain("pnpm rc:byok-fixture-smoke");
     expect(alphaWorkflow).toContain("htmlslide-byok-fixture-evidence.json");
@@ -285,6 +293,141 @@ describe("release evidence scripts", () => {
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
+  });
+
+  it("verifies a copied release-artifacts directory without the original checkout path", async () => {
+    const fixture = await createReleaseBundleFixture();
+    const copiedRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-release-bundle-copy-"));
+    const copiedBundleDir = path.join(copiedRoot, "moved-release-artifacts");
+    try {
+      await cp(fixture.bundleDir, copiedBundleDir, { recursive: true });
+
+      const result = await verifyReleaseBundle({
+        bundleDir: copiedBundleDir,
+        expectedArch: "arm64",
+        expectedTeamIdentifier: "TEAM123456"
+      });
+
+      expect(result).toMatchObject({
+        bundleDir: "moved-release-artifacts",
+        manifest: { fileName: fixture.manifestFileName },
+        dmg: { fileName: fixture.dmgFileName },
+        securityEvidence: { fileName: fixture.securityEvidenceFileName },
+        validatedManifest: { arch: "arm64", channel: "release" }
+      });
+      expect(result.manifest.sha256).toMatch(/^[a-f0-9]{64}$/u);
+      expect(result.dmg).toMatchObject({
+        sha256: fixture.dmgSha256,
+        sizeBytes: fixture.dmgSizeBytes
+      });
+      expect(result.validatedManifest.manifestPath).toBe(path.join(copiedBundleDir, fixture.manifestFileName));
+      expect(result.validatedManifest.artifactPath).toBe(path.join(copiedBundleDir, fixture.dmgFileName));
+    } finally {
+      await Promise.all([rm(fixture.root, { recursive: true, force: true }), rm(copiedRoot, { recursive: true, force: true })]);
+    }
+  });
+
+  it("rejects a tampered release DMG", async () => {
+    const fixture = await createReleaseBundleFixture();
+    try {
+      await writeFile(fixture.dmgPath, "tampered release DMG\n", "utf8");
+
+      await expect(verifyReleaseBundle({ bundleDir: fixture.bundleDir })).rejects.toThrow(
+        /artifact metadata SHA-256 mismatch|securityEvidence does not prove/iu
+      );
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["manifest", async (fixture: Awaited<ReturnType<typeof createReleaseBundleFixture>>) => {
+      const manifest = JSON.parse(await readFile(fixture.manifestPath, "utf8")) as { version: string };
+      manifest.version = "0.1.1";
+      await writeFile(fixture.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    }],
+    ["security evidence", async (fixture: Awaited<ReturnType<typeof createReleaseBundleFixture>>) => {
+      const evidence = JSON.parse(await readFile(fixture.securityEvidencePath, "utf8")) as {
+        checks: Array<{ status: string }>;
+      };
+      evidence.checks[0].status = "failed";
+      await writeFile(fixture.securityEvidencePath, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
+    }]
+  ])("rejects tampered %s", async (_name, mutate) => {
+    const fixture = await createReleaseBundleFixture();
+    try {
+      await mutate(fixture);
+
+      await expect(verifyReleaseBundle({ bundleDir: fixture.bundleDir })).rejects.toThrow(
+        /securityEvidence does not prove|arch must be|notarized|stapled/iu
+      );
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["missing manifest", async (fixture: Awaited<ReturnType<typeof createReleaseBundleFixture>>) => {
+      await rm(fixture.manifestPath);
+    }, /No release manifest candidate/iu],
+    ["duplicate manifest", async (fixture: Awaited<ReturnType<typeof createReleaseBundleFixture>>) => {
+      await cp(fixture.manifestPath, path.join(fixture.bundleDir, "duplicate-release-manifest.json"));
+    }, /exactly one release manifest candidate/iu],
+    ["missing DMG", async (fixture: Awaited<ReturnType<typeof createReleaseBundleFixture>>) => {
+      await rm(fixture.dmgPath);
+    }, /exactly one release DMG/iu],
+    ["duplicate DMG", async (fixture: Awaited<ReturnType<typeof createReleaseBundleFixture>>) => {
+      await cp(fixture.dmgPath, path.join(fixture.bundleDir, "duplicate-release.dmg"));
+    }, /exactly one release DMG/iu]
+  ])("rejects a %s", async (_name, mutate, expectedError) => {
+    const fixture = await createReleaseBundleFixture();
+    try {
+      await mutate(fixture);
+
+      await expect(verifyReleaseBundle({ bundleDir: fixture.bundleDir })).rejects.toThrow(expectedError);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["absolute artifact", "artifact", (fixture: Awaited<ReturnType<typeof createReleaseBundleFixture>>) => fixture.dmgPath],
+    ["traversal artifact", "artifact", (fixture: Awaited<ReturnType<typeof createReleaseBundleFixture>>) => `../${fixture.dmgFileName}`],
+    ["absolute security evidence", "security", (fixture: Awaited<ReturnType<typeof createReleaseBundleFixture>>) => fixture.securityEvidencePath],
+    ["traversal security evidence", "security", (fixture: Awaited<ReturnType<typeof createReleaseBundleFixture>>) => `../${fixture.securityEvidenceFileName}`]
+  ])("rejects an unsafe %s reference", async (_name, kind, value) => {
+    const fixture = await createReleaseBundleFixture();
+    try {
+      const manifest = JSON.parse(await readFile(fixture.manifestPath, "utf8")) as {
+        artifacts: string[];
+        securityEvidence: { fileName: string };
+      };
+      if (kind === "artifact") {
+        manifest.artifacts[0] = value(fixture);
+      } else {
+        manifest.securityEvidence.fileName = value(fixture);
+      }
+      await writeFile(fixture.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+
+      await expect(verifyReleaseBundle({ bundleDir: fixture.bundleDir })).rejects.toThrow(
+        /basename-only path without absolute or traversal components/iu
+      );
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("parses release bundle verifier CLI arguments", () => {
+    expect(parseReleaseBundleArgs([
+      "--bundle-dir", "/tmp/release-artifacts",
+      "--expected-arch", "x64",
+      "--team-id", "TEAM123456"
+    ])).toEqual({
+      bundleDir: "/tmp/release-artifacts",
+      expectedArch: "x64",
+      teamId: "TEAM123456"
+    });
+    expect(() => parseReleaseBundleArgs([])).toThrow(/Missing required --bundle-dir/iu);
   });
 
   it("fails the direct signed packaging wrapper before build work when secrets are absent", async () => {
@@ -906,6 +1049,90 @@ function completeChecklist() {
     .replace(/\bTODO\b/gu, "None");
 
   return `${automated}${manual}${result}`;
+}
+
+async function createReleaseBundleFixture() {
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-release-bundle-"));
+  const bundleDir = path.join(fixtureRoot, "release-artifacts");
+  const dmgFileName = "HTMLslide-0.1.0-signed-notarized-arm64.dmg";
+  const manifestFileName = "HTMLslide-0.1.0-signed-notarized-arm64.json";
+  const securityEvidenceFileName = "release-security-evidence-0.1.0-arm64.json";
+  const dmgPath = path.join(bundleDir, dmgFileName);
+  const manifestPath = path.join(bundleDir, manifestFileName);
+  const securityEvidencePath = path.join(bundleDir, securityEvidenceFileName);
+
+  await mkdir(bundleDir, { recursive: true });
+  await writeFile(dmgPath, "deterministic signed notarized DMG fixture\n", "utf8");
+  const dmgMetadata = (await buildArtifactMetadata([dmgPath], { relativeTo: bundleDir }))[0];
+  const manifest = {
+    appName: "HTMLslide",
+    version: "0.1.0",
+    arch: "arm64",
+    channel: "release",
+    bundleIdentifier: "app.htmlslide",
+    browserRuntime: {
+      kind: "chromium-headless-shell",
+      revision: "1234567",
+      version: "128.0.0.0"
+    },
+    documentTypes: ["deckpkg"],
+    signing: "developer-id",
+    notarized: true,
+    stapled: true,
+    artifacts: [dmgFileName],
+    artifactMetadata: [dmgMetadata],
+    securityEvidence: { fileName: securityEvidenceFileName }
+  };
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  const manifestBytes = await readFile(manifestPath);
+  await writeFile(securityEvidencePath, `${JSON.stringify({
+    schemaVersion: "1",
+    checks: [
+      "codesign.app.verify",
+      "codesign.app.display",
+      "spctl.app.execute",
+      "codesign.dmg.verify",
+      "codesign.dmg.display",
+      "xcrun.stapler.validate",
+      "spctl.dmg.open"
+    ].map((tool) => ({ tool, status: "passed" })),
+    signature: {
+      identity: "Developer ID Application: HTMLslide (TEAM123456)",
+      bundleIdentifier: "app.htmlslide",
+      teamIdentifier: "TEAM123456",
+      hardenedRuntime: true
+    },
+    artifacts: {
+      app: {
+        fileName: "HTMLslide.app",
+        sizeBytes: 123,
+        sha256: "c".repeat(64)
+      },
+      dmg: dmgMetadata,
+      manifest: {
+        fileName: manifestFileName,
+        sizeBytes: manifestBytes.byteLength,
+        sha256: createHash("sha256").update(manifestBytes).digest("hex")
+      }
+    }
+  }, null, 2)}\n`, "utf8");
+  await writeFile(path.join(bundleDir, "htmlslide-byok-fixture-evidence.json"), JSON.stringify({
+    kind: "sanitized-evidence",
+    status: "passed"
+  }), "utf8");
+
+  return {
+    root: fixtureRoot,
+    bundleDir,
+    dmgPath,
+    dmgFileName,
+    dmgSha256: dmgMetadata.sha256,
+    dmgSizeBytes: dmgMetadata.sizeBytes,
+    manifestPath,
+    manifestFileName,
+    securityEvidencePath,
+    securityEvidenceFileName
+  };
 }
 
 async function createByokEvidenceFixture() {

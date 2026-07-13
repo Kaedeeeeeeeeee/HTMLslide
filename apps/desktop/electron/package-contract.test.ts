@@ -78,7 +78,8 @@ describe("macOS alpha packaging contract", () => {
     expect(packageScript).toContain("stapler");
     expect(packageScript).toContain("notarized: notarization.notarized");
     expect(packageScript).toContain("artifactMetadata");
-    expect(packageScript).toContain("buildArtifactMetadata(artifacts)");
+    expect(packageScript).toContain("buildArtifactMetadata(artifacts, { relativeTo: outputDir })");
+    expect(packageScript).toContain("const manifestArtifacts = artifacts.map");
     const desktopRuntimeBlock = packageScript.slice(
       packageScript.indexOf("const workspaceRuntimePackages"),
       packageScript.indexOf("async function createDmg")

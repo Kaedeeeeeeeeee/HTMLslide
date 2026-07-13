@@ -1215,6 +1215,22 @@ function registerIpcHandlers(): void {
     return loadProjectPreview(project.path);
   });
 
+  ipcMain.handle("htmlslide:open-deckpkg-dialog", async () => {
+    const configuredDeckpkgPath = process.env.HTMLSLIDE_E2E_OPEN_DECKPKG_PATH
+      ? resolve(process.env.HTMLSLIDE_E2E_OPEN_DECKPKG_PATH)
+      : undefined;
+    if (configuredDeckpkgPath) {
+      return configuredDeckpkgPath;
+    }
+
+    const result = await dialog.showOpenDialog({
+      buttonLabel: "Open deckpkg",
+      filters: [{ name: "HTMLslide deck package", extensions: ["deckpkg"] }],
+      properties: ["openFile"]
+    });
+    return result.canceled ? undefined : result.filePaths[0];
+  });
+
   ipcMain.handle("htmlslide:load-project", async (_event, projectPath: string) => {
     const project = await summarizeDeckProject(projectPath);
     await upsertRecentProject(libraryPath(), project, configuredWorkspacePath());

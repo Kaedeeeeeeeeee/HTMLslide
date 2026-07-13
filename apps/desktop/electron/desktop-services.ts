@@ -1614,7 +1614,7 @@ export async function summarizeDeckProject(projectPath: string): Promise<Desktop
   const title = loadedProject.deck.title.length > 0
     ? loadedProject.deck.title
     : path.basename(root);
-  const missingFiles = await hasMissingSlideFiles(loadedProject);
+  const missingFiles = await hasMissingProjectFiles(loadedProject);
 
   return {
     id: `proj_${stableId(root)}`,
@@ -3962,7 +3962,7 @@ function presenterThumbnailDataUrl(bytes: Uint8Array): string | undefined {
   return `data:image/png;base64,${Buffer.from(bytes).toString("base64")}`;
 }
 
-async function hasMissingSlideFiles(project: LoadedDeckProject): Promise<boolean> {
+async function hasMissingProjectFiles(project: LoadedDeckProject): Promise<boolean> {
   for (const slide of project.slides) {
     if (!(await pathExists(slide.sourcePath))) {
       return true;
@@ -3970,6 +3970,12 @@ async function hasMissingSlideFiles(project: LoadedDeckProject): Promise<boolean
     if (slide.notesPath && !(await pathExists(slide.notesPath))) {
       return true;
     }
+  }
+  if (project.theme?.cssPath && !(await pathExists(project.theme.cssPath))) {
+    return true;
+  }
+  if (project.theme?.tokensPath && !(await pathExists(project.theme.tokensPath))) {
+    return true;
   }
   return false;
 }

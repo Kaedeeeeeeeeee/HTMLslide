@@ -83,6 +83,7 @@ interface ProjectLibraryProps {
   onChooseWorkspace: () => void;
   onChooseSourceFiles: () => Promise<DesktopSourceFileSelection[]>;
   onNewDeck: (draft: NewDeckDraft) => void;
+  onOpenDeckPackage: () => void;
   onOpenFolder: () => void;
   onOpenProject: (projectId: string) => void;
   onRemoveProject: (projectId: string) => void;
@@ -189,6 +190,7 @@ export function ProjectLibrary({
   onChooseSourceFiles,
   onChooseWorkspace,
   onNewDeck,
+  onOpenDeckPackage,
   onOpenFolder,
   onOpenProject,
   onRemoveProject,
@@ -230,6 +232,7 @@ export function ProjectLibrary({
             onChooseSourceFiles={onChooseSourceFiles}
             onChooseWorkspace={onChooseWorkspace}
             onNewDeck={onNewDeck}
+            onOpenDeckPackage={onOpenDeckPackage}
             onOpenFolder={onOpenFolder}
             onOpenProject={onOpenProject}
             onRemoveProject={onRemoveProject}
@@ -308,6 +311,7 @@ function RecentProjects({
   onChooseSourceFiles,
   onChooseWorkspace,
   onNewDeck,
+  onOpenDeckPackage,
   onOpenFolder,
   onOpenProject,
   onRemoveProject,
@@ -322,6 +326,7 @@ function RecentProjects({
   workspacePath?: string;
   onChooseWorkspace: () => void;
   onNewDeck: (draft: NewDeckDraft) => void;
+  onOpenDeckPackage: () => void;
   onOpenFolder: () => void;
   onOpenProject: (projectId: string) => void;
   onRemoveProject: (projectId: string) => void;
@@ -492,6 +497,13 @@ function RecentProjects({
               onClick={onOpenFolder}
             >
               Open Folder
+            </Button>
+            <Button
+              icon={<MonitorPlay />}
+              onClick={onOpenDeckPackage}
+              title="Open an exported HTMLslide deck package"
+            >
+              Open deckpkg
             </Button>
             <Button
               icon={<Import />}
@@ -893,6 +905,13 @@ function RecentProjects({
               onClick={onOpenFolder}
             >
               Open Folder
+            </Button>
+            <Button
+              icon={<MonitorPlay />}
+              onClick={onOpenDeckPackage}
+              title="Open an exported HTMLslide deck package"
+            >
+              Open deckpkg
             </Button>
             <Button
               icon={<Settings />}

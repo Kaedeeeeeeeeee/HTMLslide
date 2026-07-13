@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
   chooseSourceFiles: () => ipcRenderer.invoke("htmlslide:choose-source-files"),
   chooseWorkspace: () => ipcRenderer.invoke("htmlslide:choose-workspace"),
   openProjectDialog: () => ipcRenderer.invoke("htmlslide:open-project-dialog"),
+  openDeckPackageDialog: () => ipcRenderer.invoke("htmlslide:open-deckpkg-dialog"),
   loadProject: (projectPath: string) => ipcRenderer.invoke("htmlslide:load-project", projectPath),
   loadSlidePreview: (projectPath: string, slideId: string) =>
     ipcRenderer.invoke("htmlslide:load-slide-preview", projectPath, slideId),

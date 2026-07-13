@@ -903,6 +903,47 @@ test.describe("HTMLslide desktop smoke", () => {
     await expectNoFrameworkOverlay(page);
   });
 
+  test("opens an exported deck package from the project library", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-deckpkg-dialog-e2e-"));
+    const homeDir = path.join(tempRoot, "home");
+    const userDataDir = path.join(tempRoot, "user-data");
+    const workspaceDir = path.join(tempRoot, "workspace");
+    const projectPath = path.join(workspaceDir, "deckpkg-source");
+    await Promise.all([
+      mkdir(homeDir, { recursive: true }),
+      mkdir(userDataDir, { recursive: true }),
+      mkdir(workspaceDir, { recursive: true }),
+      cp(sampleProjectPath, projectPath, { recursive: true })
+    ]);
+    const deckpkgPath = await exportDeckPackage(projectPath);
+
+    electronApp = await electron.launch({
+      executablePath: electronExecutable,
+      args: [electronMain],
+      env: {
+        ...process.env,
+        ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+        HOME: homeDir,
+        HTMLSLIDE_DEFAULT_WORKSPACE: workspaceDir,
+        HTMLSLIDE_E2E_OPEN_DECKPKG_PATH: deckpkgPath,
+        HTMLSLIDE_USER_DATA_DIR: userDataDir
+      }
+    });
+
+    const page = await electronApp.firstWindow();
+    await page.waitForLoadState("domcontentloaded");
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Skip into No AI mode", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Open deckpkg", exact: true }).click();
+
+    await expect(page.locator(".workspace-toolbar .workspace-title strong")).toHaveText("Valid Full Deck", {
+      timeout: 30_000
+    });
+    await expect(page.getByRole("heading", { name: "Slides" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Present", exact: true })).toBeVisible();
+    await expectNoFrameworkOverlay(page);
+  });
+
   test("creates and generates a deck from the new deck wizard", async () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-desktop-e2e-"));
     const homeDir = path.join(tempRoot, "home");

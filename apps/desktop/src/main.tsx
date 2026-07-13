@@ -1399,6 +1399,28 @@ function App(): React.ReactNode {
       });
   }, [desktopApi, openPreview]);
 
+  const handleOpenDeckPackage = useCallback((): void => {
+    if (!desktopApi) {
+      setOperationStatus({ kind: "failed", message: "Desktop API unavailable" });
+      return;
+    }
+    setOperationStatus({ kind: "running", message: "Choosing deck package" });
+    desktopApi.openDeckPackageDialog()
+      .then((deckpkgPath) => {
+        if (!deckpkgPath) {
+          setOperationStatus({ kind: "idle", message: "Open cancelled" });
+          return;
+        }
+        void openDeckPackagePath(deckpkgPath);
+      })
+      .catch((error: unknown) => {
+        setOperationStatus({
+          kind: "failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
+  }, [desktopApi, openDeckPackagePath]);
+
   const handleChooseSourceFiles = useCallback(async (): Promise<DesktopSourceFileSelection[]> => {
     if (!desktopApi) {
       return [];
@@ -2115,6 +2137,7 @@ function App(): React.ReactNode {
         onChooseWorkspace={handleChooseWorkspace}
         onLibrarySectionChange={setLibrarySection}
         onNewDeck={handleNewDeck}
+        onOpenDeckPackage={handleOpenDeckPackage}
         onOpenFolder={handleOpenFolder}
         onOpenProject={handleOpenProject}
         onRemoveProject={handleRemoveProject}

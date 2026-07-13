@@ -582,6 +582,7 @@ export type HtmlslideDesktopApi = {
   chooseSourceFiles(): Promise<DesktopSourceFileSelection[]>;
   chooseWorkspace(): Promise<string | undefined>;
   openProjectDialog(): Promise<DesktopProjectPreview | undefined>;
+  openDeckPackageDialog(): Promise<string | undefined>;
   loadProject(projectPath: string): Promise<DesktopProjectPreview>;
   loadSlidePreview(projectPath: string, slideId: string): Promise<DesktopSlidePreviewDocument>;
   saveSlideNotes(projectPath: string, slideId: string, content: string): Promise<DesktopSaveSlideNotesResult>;

@@ -670,6 +670,22 @@ describe("desktop services", () => {
     expect(preview.slides[0]).not.toHaveProperty("html");
   });
 
+  it("marks projects with missing theme assets as missing files", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const manifestPath = path.join(projectPath, "deck.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+    manifest.theme = {
+      css: "theme/theme.css",
+      tokens: "theme/tokens.json"
+    };
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+    await expect(summarizeDeckProject(projectPath)).resolves.toMatchObject({
+      status: "Missing files"
+    });
+  });
+
   it("asserts that an external agent target is a valid deck project", async () => {
     const projectPath = await tempDir();
     await writeDeck(projectPath);

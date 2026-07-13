@@ -1768,7 +1768,7 @@ describe("CLI project helpers", { timeout: 20_000 }, () => {
 
       const reportPath = path.join(project.projectPath, ".htmlslide", "reports", "latest-agent-run.json");
       const reportText = await readFile(reportPath, "utf8");
-      const report = JSON.parse(reportText) as Record<string, any>;
+      const report = JSON.parse(reportText) as Record<string, unknown>;
       expect(report).toMatchObject({
         kind: "htmlslide-agent-run-report",
         schemaVersion: "0.1.0",
@@ -1872,7 +1872,7 @@ describe("CLI project helpers", { timeout: 20_000 }, () => {
       const report = JSON.parse(await readFile(
         path.join(project.projectPath, ".htmlslide", "reports", "latest-agent-run.json"),
         "utf8"
-      )) as Record<string, any>;
+      )) as Record<string, unknown>;
       expect(report).toMatchObject({
         ok: false,
         status: "failed",
@@ -1918,7 +1918,7 @@ describe("CLI project helpers", { timeout: 20_000 }, () => {
       const report = JSON.parse(await readFile(
         path.join(project.projectPath, ".htmlslide", "reports", "latest-agent-run.json"),
         "utf8"
-      )) as Record<string, any>;
+      )) as Record<string, unknown>;
       expect(report).toMatchObject({
         ok: false,
         status: "failed",

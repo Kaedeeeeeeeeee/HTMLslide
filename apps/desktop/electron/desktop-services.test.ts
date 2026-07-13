@@ -22,10 +22,13 @@ import { exportDeck } from "../../../packages/compiler/src/index";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   addDesktopQaIgnoreRule,
+  acceptDesktopAgentChanges,
   assertDesktopAgentProject,
   diffDesktopCheckpoint,
   exportOptionsToCliArgs,
   findCliRuntime,
+  getDesktopAgentReview,
+  getLatestDesktopAgentReview,
   getDesktopCliIntegration,
   getDesktopOfficialSkills,
   getDesktopProjectAgentSkills,
@@ -1505,6 +1508,32 @@ describe("desktop services", () => {
       expect.arrayContaining(["slides/002-workflow.html", "slides/003-review.html", "theme/theme.css"])
     );
 
+    const acceptedReview = await acceptDesktopAgentChanges({
+      projectPath,
+      runId: "run-desktop-test"
+    });
+    expect(acceptedReview).toMatchObject({
+      kind: "htmlslide-agent-review",
+      status: "accepted",
+      runId: "run-desktop-test",
+      checkpointId: "checkpoint-run-desktop-test"
+    });
+    await expect(readFile(path.join(projectPath, ".htmlslide", "reports", "agent-review-run-desktop-test.json"), "utf8"))
+      .resolves.toContain('"status": "accepted"');
+    await expect(getDesktopAgentReview({
+      projectPath,
+      runId: "run-desktop-test"
+    })).resolves.toMatchObject({
+      runId: "run-desktop-test",
+      checkpointId: "checkpoint-run-desktop-test",
+      status: "accepted"
+    });
+    await expect(getLatestDesktopAgentReview(projectPath)).resolves.toMatchObject({
+      runId: "run-desktop-test",
+      checkpointId: "checkpoint-run-desktop-test",
+      status: "accepted"
+    });
+
     await expect(revertDesktopCheckpoint({
       projectPath,
       runId: "run-desktop-test"
@@ -1526,6 +1555,11 @@ describe("desktop services", () => {
     const restoredDeck = JSON.parse(await readFile(path.join(projectPath, "deck.json"), "utf8"));
     expect(restoredDeck.title).toBe("Desktop Test Deck");
     expect(restoredDeck.slides).toHaveLength(1);
+    await expect(getDesktopAgentReview({
+      projectPath,
+      runId: "run-desktop-test"
+    })).resolves.toBeUndefined();
+    await expect(getLatestDesktopAgentReview(projectPath)).resolves.toBeUndefined();
   });
 
   it("maps desktop export choices to explicit CLI flags", () => {

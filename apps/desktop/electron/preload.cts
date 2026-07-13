@@ -98,6 +98,11 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
   },
   diffCheckpoint: (request: { projectPath: string; runId?: string; checkpointId?: string }) =>
     ipcRenderer.invoke("htmlslide:diff-checkpoint", request),
+  getAgentReview: (request: { projectPath: string; runId?: string; checkpointId?: string }) =>
+    ipcRenderer.invoke("htmlslide:get-agent-review", request),
+  getLatestAgentReview: (projectPath: string) => ipcRenderer.invoke("htmlslide:get-latest-agent-review", projectPath),
+  acceptAgentChanges: (request: { projectPath: string; runId?: string; checkpointId?: string }) =>
+    ipcRenderer.invoke("htmlslide:accept-agent-changes", request),
   revertCheckpoint: (request: { projectPath: string; runId?: string; checkpointId?: string; confirmed?: boolean }) =>
     ipcRenderer.invoke("htmlslide:revert-checkpoint", request)
 });

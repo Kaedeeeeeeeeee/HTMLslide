@@ -404,6 +404,15 @@ export type DesktopCheckpointRequest = {
   confirmed?: boolean;
 };
 
+export type DesktopAgentReviewState = {
+  schemaVersion: "0.1.0";
+  kind: "htmlslide-agent-review";
+  status: "accepted";
+  runId: string;
+  checkpointId: string;
+  acceptedAt: string;
+};
+
 export type DesktopCheckpointRevertResult = FileCopyCheckpointRevertResult & {
   project?: DesktopProjectPreview;
 };
@@ -609,6 +618,9 @@ export type HtmlslideDesktopApi = {
   retryAgentRun(runId: string): Promise<DesktopAgentRunSnapshot>;
   onAgentRunUpdate(handler: (snapshot: DesktopAgentRunSnapshot) => void): () => void;
   diffCheckpoint(request: DesktopCheckpointRequest): Promise<FileCopyCheckpointDiff>;
+  getAgentReview(request: DesktopCheckpointRequest): Promise<DesktopAgentReviewState | undefined>;
+  getLatestAgentReview(projectPath: string): Promise<DesktopAgentReviewState | undefined>;
+  acceptAgentChanges(request: DesktopCheckpointRequest): Promise<DesktopAgentReviewState>;
   revertCheckpoint(request: DesktopCheckpointRequest): Promise<DesktopCheckpointRevertResult>;
 };
 

@@ -7,11 +7,14 @@ import { fileURLToPath } from "node:url";
 import {
   defaultWorkspacePath,
   addDesktopQaIgnoreRule,
+  acceptDesktopAgentChanges,
   assertDesktopAgentProject,
   detectExternalAgentStatuses,
   diffDesktopCheckpoint,
   exportOptionsToCliArgs,
   findCliRuntime,
+  getDesktopAgentReview,
+  getLatestDesktopAgentReview,
   getDesktopCliIntegration,
   getDesktopOfficialSkills,
   installDesktopProjectAgentSkills,
@@ -1448,6 +1451,22 @@ function registerIpcHandlers(): void {
     "htmlslide:diff-checkpoint",
     async (_event, request: { projectPath: string; runId?: string; checkpointId?: string }) =>
       diffDesktopCheckpoint(request)
+  );
+
+  ipcMain.handle(
+    "htmlslide:get-agent-review",
+    async (_event, request: { projectPath: string; runId?: string; checkpointId?: string }) =>
+      getDesktopAgentReview(request)
+  );
+
+  ipcMain.handle("htmlslide:get-latest-agent-review", async (_event, projectPath: string) =>
+    getLatestDesktopAgentReview(projectPath)
+  );
+
+  ipcMain.handle(
+    "htmlslide:accept-agent-changes",
+    async (_event, request: { projectPath: string; runId?: string; checkpointId?: string }) =>
+      acceptDesktopAgentChanges(request)
   );
 
   ipcMain.handle(

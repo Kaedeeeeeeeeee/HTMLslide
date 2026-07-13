@@ -95,6 +95,8 @@ External agents may edit source areas described by the project-structure spec. B
 
 For desktop headless runs, the review and revert boundary is restricted to deck source covered by the checkpoint: `deck.json`, `slides/`, `notes/`, `theme/`, and `assets/`. Generic manifest entries outside that boundary fail the run even if the command exits successfully. Built-in adapters discard temporary changes outside the allowed source set and never apply them to the real project.
 
+After the run completes, `Accept changes` persists the review decision under `.htmlslide/reports/agent-review-<run-id>.json` and closes the review panel. The source checkpoint remains available for a later `Revert changes` action; reverting removes the matching acceptance record. Reopening the project must preserve the accepted/revertable state, so acceptance is not a renderer-only session flag.
+
 Forbidden writes fail the run even when the command exits successfully. The app should then offer checkpoint revert and show the path.
 
 ## Detector Helpers

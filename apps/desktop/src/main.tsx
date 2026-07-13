@@ -690,6 +690,47 @@ function App(): React.ReactNode {
     }));
   }, []);
 
+  const restoreAgentReview = useCallback(
+    (projectPath: string, diff: FileCopyCheckpointDiff, open: boolean): void => {
+      if (!desktopApi || projectPath.startsWith("~")) {
+        return;
+      }
+      void desktopApi.getAgentReview({
+        projectPath,
+        runId: diff.checkpoint.runId,
+        checkpointId: diff.checkpoint.id
+      })
+        .then((review) => {
+          if (!review) {
+            return;
+          }
+          setDiffReview((current) => {
+            if (
+              !current ||
+              current.runId !== review.runId ||
+              current.checkpointId !== review.checkpointId
+            ) {
+              return current;
+            }
+            return {
+              ...current,
+              accepted: true,
+              open,
+              statusMessage: open
+                ? "Changes were already accepted; this checkpoint remains available for revert."
+                : "Changes accepted for this project; checkpoint remains available for revert."
+            };
+          });
+          updateCommandActionStatus("review", {
+            kind: "success",
+            message: "Changes accepted; revert available"
+          });
+        })
+        .catch(() => undefined);
+    },
+    [desktopApi, updateCommandActionStatus]
+  );
+
   const seedMockAgentRun = useCallback((summary: string): void => {
     const runId = `mock-${Date.now()}`;
     const createdAt = nowIso();
@@ -783,6 +824,9 @@ function App(): React.ReactNode {
             })
           : undefined
       );
+      if (result.checkpointDiff) {
+        restoreAgentReview(result.projectPath, result.checkpointDiff, false);
+      }
       setRunning(false);
       setQaCheckStatus(
         result.check
@@ -844,7 +888,7 @@ function App(): React.ReactNode {
         message: cancelled ? "Run cancelled" : result.ok ? "Ready for review" : "Review required"
       });
     },
-    [updateCommandActionStatus]
+    [restoreAgentReview, updateCommandActionStatus]
   );
 
   const applyAgentRunSnapshot = useCallback(
@@ -1292,6 +1336,40 @@ function App(): React.ReactNode {
       disposed = true;
     };
   }, [activeProject, activeProjectIsDeckPackage, applyAgentRunSnapshot, desktopApi]);
+
+  useEffect(() => {
+    if (!desktopApi || !activeProject || activeProject.path.startsWith("~") || activeProjectIsDeckPackage) {
+      return;
+    }
+    let disposed = false;
+    const projectPath = activeProject.path;
+    void desktopApi.getLatestAgentReview(projectPath)
+      .then(async (review) => {
+        if (!review) {
+          return;
+        }
+        const diff = await desktopApi.diffCheckpoint({
+          projectPath,
+          runId: review.runId,
+          checkpointId: review.checkpointId
+        });
+        if (disposed) {
+          return;
+        }
+        setDiffReview({
+          ...checkpointDiffToReview(diff, {
+            open: false,
+            statusMessage: "Changes accepted; checkpoint remains available for revert."
+          }),
+          accepted: true
+        });
+        updateCommandActionStatus("review", { kind: "success", message: "Changes accepted; revert available" });
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+    };
+  }, [activeProject, activeProjectIsDeckPackage, desktopApi, updateCommandActionStatus]);
 
   const handleOpenProject = useCallback(
     (projectId: string): void => {
@@ -1989,6 +2067,7 @@ function App(): React.ReactNode {
           open: true,
           statusMessage: "Checkpoint diff refreshed from project files."
         }));
+        restoreAgentReview(activeProject.path, diff, true);
         setOperationStatus({ kind: "success", message: "Checkpoint diff loaded" });
       })
       .catch((error: unknown) => {
@@ -2004,25 +2083,52 @@ function App(): React.ReactNode {
         );
         setOperationStatus({ kind: "failed", message });
       });
-  }, [activeProject, activeProjectIsDeckPackage, desktopApi, diffReview]);
+  }, [activeProject, activeProjectIsDeckPackage, desktopApi, diffReview, restoreAgentReview]);
 
   const handleCloseDiff = useCallback((): void => {
     setDiffReview((current) => current ? { ...current, open: false } : current);
   }, []);
 
   const handleAcceptDiff = useCallback((): void => {
-    setDiffReview((current) =>
-      current
-        ? {
-            ...current,
-            open: false,
-            statusMessage: "Changes accepted for this workspace session."
-          }
-        : current
-    );
-    setOperationStatus({ kind: "success", message: "Agent changes accepted" });
-    updateCommandActionStatus("review", { kind: "success", message: "Changes accepted" });
-  }, [updateCommandActionStatus]);
+    if (diffReview?.accepted) {
+      return;
+    }
+    if (!diffReview?.runId && !diffReview?.checkpointId) {
+      setOperationStatus({ kind: "failed", message: "No agent checkpoint is available" });
+      return;
+    }
+    if (!desktopApi || !activeProject || activeProject.path.startsWith("~") || activeProjectIsDeckPackage) {
+      setOperationStatus({ kind: "failed", message: "Open a local deck project before accepting changes" });
+      return;
+    }
+
+    setDiffReview((current) => current ? { ...current, statusMessage: "Saving accepted review decision..." } : current);
+    setOperationStatus({ kind: "running", message: "Saving review decision" });
+    desktopApi.acceptAgentChanges({
+      projectPath: activeProject.path,
+      runId: diffReview.runId,
+      checkpointId: diffReview.checkpointId
+    })
+      .then(() => {
+        setDiffReview((current) =>
+          current
+            ? {
+                ...current,
+                accepted: true,
+                open: false,
+                statusMessage: "Changes accepted for this project; checkpoint remains available for revert."
+              }
+            : current
+        );
+        setOperationStatus({ kind: "success", message: "Agent changes accepted" });
+        updateCommandActionStatus("review", { kind: "success", message: "Changes accepted; revert available" });
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        setDiffReview((current) => current ? { ...current, statusMessage: message } : current);
+        setOperationStatus({ kind: "failed", message });
+      });
+  }, [activeProject, activeProjectIsDeckPackage, desktopApi, diffReview, updateCommandActionStatus]);
 
   const handleRevertDiff = useCallback((): void => {
     if (!diffReview?.runId && !diffReview?.checkpointId) {
@@ -2070,6 +2176,7 @@ function App(): React.ReactNode {
           current
             ? {
                 ...current,
+                accepted: false,
                 open: false,
                 reverting: false,
                 canRevert: false,

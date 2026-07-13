@@ -544,6 +544,15 @@ export type DesktopCheckpointRequest = {
   confirmed?: boolean;
 };
 
+export type DesktopAgentReviewState = {
+  schemaVersion: typeof AGENT_RUN_REPORT_SCHEMA_VERSION;
+  kind: "htmlslide-agent-review";
+  status: "accepted";
+  runId: string;
+  checkpointId: string;
+  acceptedAt: string;
+};
+
 export type DesktopCheckpointRevertResult = FileCopyCheckpointRevertResult & {
   project?: DesktopProjectPreview;
 };
@@ -3574,6 +3583,59 @@ export async function diffDesktopCheckpoint(request: DesktopCheckpointRequest): 
   });
 }
 
+export async function acceptDesktopAgentChanges(
+  request: DesktopCheckpointRequest
+): Promise<DesktopAgentReviewState> {
+  const diff = await diffDesktopCheckpoint(request);
+  const review = createDesktopAgentReviewState(diff, request);
+  await writeDesktopAgentReview(request.projectPath, review);
+  return review;
+}
+
+export async function getDesktopAgentReview(
+  request: DesktopCheckpointRequest
+): Promise<DesktopAgentReviewState | undefined> {
+  const diff = await diffDesktopCheckpoint(request);
+  const review = await readDesktopAgentReview(request.projectPath, diff.checkpoint.runId);
+  if (review === undefined) {
+    return undefined;
+  }
+  if (review.checkpointId !== diff.checkpoint.id) {
+    return undefined;
+  }
+  return review;
+}
+
+export async function getLatestDesktopAgentReview(
+  projectPath: string
+): Promise<DesktopAgentReviewState | undefined> {
+  const reportsPath = await ensureProjectRuntimeDirectory(projectPath, [".htmlslide", "reports"]);
+  const entries = await fs.readdir(reportsPath, { withFileTypes: true });
+  const reviews: DesktopAgentReviewState[] = [];
+
+  for (const entry of entries) {
+    if (!entry.name.startsWith("agent-review-") || !entry.name.endsWith(".json")) {
+      continue;
+    }
+    const reviewPath = path.join(reportsPath, entry.name);
+    if (entry.isSymbolicLink() || !entry.isFile()) {
+      throw new Error(`HTMLslide agent review must be a regular file: ${reviewPath}`);
+    }
+    let value: unknown;
+    try {
+      value = JSON.parse(await fs.readFile(reviewPath, "utf8"));
+    } catch (error) {
+      throw new Error(`HTMLslide agent review is invalid: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (!isDesktopAgentReviewState(value)) {
+      throw new Error(`HTMLslide agent review is invalid: ${reviewPath}`);
+    }
+    reviews.push(value);
+  }
+
+  return reviews.sort((left, right) => right.acceptedAt.localeCompare(left.acceptedAt))[0];
+}
+
 export async function revertDesktopCheckpoint(
   request: DesktopCheckpointRequest
 ): Promise<DesktopCheckpointRevertResult> {
@@ -3587,11 +3649,101 @@ export async function revertDesktopCheckpoint(
     runId: request.runId,
     checkpointId: request.checkpointId
   });
+  await removeDesktopAgentReview(projectPath, reverted.checkpoint.runId, reverted.checkpoint.id);
 
   return {
     ...reverted,
     project: await loadProjectPreview(projectPath).catch(() => undefined)
   };
+}
+
+function createDesktopAgentReviewState(
+  diff: FileCopyCheckpointDiff,
+  request: DesktopCheckpointRequest
+): DesktopAgentReviewState {
+  if (request.runId !== undefined && request.runId !== diff.checkpoint.runId) {
+    throw new Error("Agent review run id does not match the checkpoint.");
+  }
+  if (request.checkpointId !== undefined && request.checkpointId !== diff.checkpoint.id) {
+    throw new Error("Agent review checkpoint id does not match the checkpoint.");
+  }
+  return {
+    schemaVersion: AGENT_RUN_REPORT_SCHEMA_VERSION,
+    kind: "htmlslide-agent-review",
+    status: "accepted",
+    runId: diff.checkpoint.runId,
+    checkpointId: diff.checkpoint.id,
+    acceptedAt: new Date().toISOString()
+  };
+}
+
+async function writeDesktopAgentReview(projectPath: string, review: DesktopAgentReviewState): Promise<void> {
+  const reportsPath = await ensureProjectRuntimeDirectory(projectPath, [".htmlslide", "reports"]);
+  await writeRuntimeFileAtomic(
+    path.join(reportsPath, `agent-review-${safeAgentRunReportId(review.runId)}.json`),
+    `${JSON.stringify(review, null, 2)}\n`
+  );
+}
+
+async function readDesktopAgentReview(
+  projectPath: string,
+  runId: string
+): Promise<DesktopAgentReviewState | undefined> {
+  const reportsPath = await ensureProjectRuntimeDirectory(projectPath, [".htmlslide", "reports"]);
+  const reviewPath = path.join(reportsPath, `agent-review-${safeAgentRunReportId(runId)}.json`);
+  let reviewStat;
+  try {
+    reviewStat = await fs.lstat(reviewPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+  if (!reviewStat.isFile() || reviewStat.isSymbolicLink()) {
+    throw new Error(`HTMLslide agent review must be a regular file: ${reviewPath}`);
+  }
+
+  let value: unknown;
+  try {
+    value = JSON.parse(await fs.readFile(reviewPath, "utf8"));
+  } catch (error) {
+    throw new Error(`HTMLslide agent review is invalid: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!isDesktopAgentReviewState(value) || value.runId !== runId) {
+    throw new Error(`HTMLslide agent review does not match run ${runId}.`);
+  }
+  return value;
+}
+
+async function removeDesktopAgentReview(projectPath: string, runId: string, checkpointId: string): Promise<void> {
+  const review = await readDesktopAgentReview(projectPath, runId);
+  if (review === undefined) {
+    return;
+  }
+  if (review.checkpointId !== checkpointId) {
+    return;
+  }
+  const reportsPath = await ensureProjectRuntimeDirectory(projectPath, [".htmlslide", "reports"]);
+  await fs.rm(path.join(reportsPath, `agent-review-${safeAgentRunReportId(runId)}.json`), { force: true });
+}
+
+function isDesktopAgentReviewState(value: unknown): value is DesktopAgentReviewState {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return (
+    candidate.schemaVersion === AGENT_RUN_REPORT_SCHEMA_VERSION &&
+    candidate.kind === "htmlslide-agent-review" &&
+    candidate.status === "accepted" &&
+    typeof candidate.runId === "string" &&
+    candidate.runId.length > 0 &&
+    typeof candidate.checkpointId === "string" &&
+    candidate.checkpointId.length > 0 &&
+    typeof candidate.acceptedAt === "string" &&
+    candidate.acceptedAt.length > 0
+  );
 }
 
 export function findCliRuntime(startPath: string, resourcesPath?: string): CliRuntime | undefined {

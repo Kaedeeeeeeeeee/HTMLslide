@@ -1365,6 +1365,21 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(access(path.join(projectPath, "exports", "generic-agent-demo.pdf"))).resolves.toBeUndefined();
     await expect(access(path.join(projectPath, "exports", "generic-agent-demo.deckpkg"))).resolves.toBeUndefined();
 
+    await page.getByRole("button", { name: "Accept changes", exact: true }).click();
+    await expect(page.getByText("Agent changes accepted")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("heading", { name: "Review changes" })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Back to Projects", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+    const reopenedProject = page.locator("article.project-card").filter({ hasText: projectPath });
+    await expect(reopenedProject).not.toHaveCount(0);
+    await reopenedProject.first().getByRole("button", { name: "Open Generic Agent Demo", exact: true }).click();
+    await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Generic Agent Demo" })).toBeVisible();
+    await page.getByLabel("View diff").click();
+    const reopenedDiffReview = page.locator(".agent-diff-review");
+    await expect(reopenedDiffReview.getByRole("button", { name: "Changes accepted", exact: true })).toBeDisabled();
+    await expect(reopenedDiffReview.getByRole("button", { name: "Revert changes", exact: true })).toBeEnabled();
+
     page.once("dialog", async (dialog) => {
       await dialog.accept();
     });

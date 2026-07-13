@@ -116,6 +116,10 @@ Each shared agent run creates a reversible file-copy checkpoint before the `brie
 
 File-copy checkpoints cover `deck.json`, `slides/`, `notes/`, `theme/`, and `assets/`. The snapshot records both existing paths and source-root membership so revert can restore modified/deleted files and remove only files added by the agent run. Checkpoint metadata and diffs must not expose provider source content across desktop IPC.
 
+## Review Acceptance
+
+After a successful desktop run, `Accept changes` records a project-local review decision at `.htmlslide/reports/agent-review-<run-id>.json`. The record contains only the schema version, run id, checkpoint id, accepted status, and timestamp. It is written atomically and is not an export artifact. Acceptance closes the review panel but keeps the checkpoint reversible, so the user can still inspect the diff or revert the accepted run later. Reverting the checkpoint removes the matching acceptance record. Reopening the same project restores the accepted state instead of presenting the run as pending review again.
+
 ## Mock Provider
 
 The mock provider is deterministic and performs no network calls. By default it:

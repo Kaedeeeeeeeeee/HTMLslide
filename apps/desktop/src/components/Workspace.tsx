@@ -186,6 +186,7 @@ export interface AgentDiffReview {
   unchangedFiles: readonly string[];
   textDiffs: readonly AgentTextDiff[];
   canRevert: boolean;
+  accepted?: boolean;
   statusMessage?: string;
   reverting?: boolean;
 }
@@ -2907,13 +2908,13 @@ function DiffReviewPanel({
               View diff
             </Button>
             <Button
-              disabled={!onAccept || review.reverting}
+              disabled={!onAccept || review.accepted || review.reverting}
               icon={<CheckCircle2 />}
               onClick={onAccept}
               size="sm"
               variant="primary"
             >
-              Accept changes
+              {review.accepted ? "Changes accepted" : "Accept changes"}
             </Button>
             <Button
               disabled={!review.canRevert || !onRevert || review.reverting}

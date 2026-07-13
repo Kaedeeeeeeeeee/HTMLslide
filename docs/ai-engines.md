@@ -27,7 +27,7 @@ The connection guide separates detection and authentication from run readiness. 
 
 ### Local Execution And Permissions
 
-Claude Code and Codex CLI run locally in an OS-temporary copy of the deck source using the user's existing CLI login. HTMLslide assembles fixed argv arrays and does not execute interpolated shell text. Only checkpoint-derived changes under `deck.json`, `slides/`, `notes/`, `theme/`, and `assets/` are copied back; unrelated temporary changes are discarded.
+Claude Code, Codex CLI, and Generic command adapters run locally in an OS-temporary copy of the deck source using the user's selected command and login. HTMLslide assembles fixed argv arrays and does not execute interpolated shell text. Only checkpoint-derived changes under `deck.json`, `slides/`, `notes/`, `theme/`, and `assets/` are copied back; unrelated temporary changes are discarded. Generic commands must also account for every changed source file in their write manifest.
 
 The Claude adapter allows only `Read`, `Glob`, `Grep`, `Edit`, and `Write`; empty setting sources and strict MCP mode prevent user/project settings, MCP servers, skills, plugins, hooks, browser integration, Bash, and network tools from broadening the run while preserving existing login. The Codex adapter uses an ephemeral `workspace-write` run and ignores user config. HTMLslide verifies the required command flags before marking either adapter ready. These controls reduce access, but external agents remain user-authorized local tooling rather than complete OS sandboxes.
 

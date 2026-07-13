@@ -21,8 +21,10 @@ export type MockProviderOptions = {
   id?: string;
   label?: string;
   failStages?: AgentRunStage[];
+  hangStages?: AgentRunStage[];
   delayMs?: number | ((stage: AgentRunStage) => number);
   checkResults?: AgentCheckResult[];
+  exportResult?: AgentExportResult;
 };
 
 const mockTitle = "Mock HTMLslide Deck";
@@ -200,16 +202,20 @@ export class MockModelProvider implements ModelProvider {
   readonly id: string;
   readonly label: string;
   readonly #failStages: Set<AgentRunStage>;
+  readonly #hangStages: Set<AgentRunStage>;
   readonly #delayMs: number | ((stage: AgentRunStage) => number);
   readonly #checkResults?: AgentCheckResult[];
+  readonly #exportResult?: AgentExportResult;
   readonly #checkCallsByRun = new Map<string, number>();
 
   constructor(options: MockProviderOptions = {}) {
     this.id = options.id ?? "htmlslide-mock";
     this.label = options.label ?? "HTMLslide Mock Provider";
     this.#failStages = new Set(options.failStages ?? []);
+    this.#hangStages = new Set(options.hangStages ?? []);
     this.#delayMs = options.delayMs ?? 0;
     this.#checkResults = options.checkResults;
+    this.#exportResult = options.exportResult;
   }
 
   async validateCredentials() {
@@ -221,6 +227,10 @@ export class MockModelProvider implements ModelProvider {
   }
 
   async complete(request: ModelRequest): Promise<ModelResponse> {
+    if (this.#hangStages.has(request.stage)) {
+      return new Promise<ModelResponse>(() => undefined);
+    }
+
     const delay = typeof this.#delayMs === "function" ? this.#delayMs(request.stage) : this.#delayMs;
     await waitFor(delay, request.signal, request.stage);
 
@@ -379,6 +389,10 @@ export class MockModelProvider implements ModelProvider {
   }
 
   #exportOutput(): AgentExportResult {
+    if (this.#exportResult !== undefined) {
+      return this.#exportResult;
+    }
+
     return {
       artifacts: [
         {

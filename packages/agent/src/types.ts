@@ -383,7 +383,8 @@ export type AgentRunOutputs = {
 export type AgentRunErrorInfo = {
   message: string;
   stage?: AgentRunStage;
-  code: "provider-error" | "check-failed" | "cancelled" | "invalid-output" | "unknown";
+  code: "provider-error" | "check-failed" | "export-failed" | "timeout" | "cancelled" | "invalid-output" | "unknown";
+  timeoutMs?: number;
 };
 
 export type AgentRunSnapshot = {
@@ -465,6 +466,7 @@ export type AgentRunInput = {
   targetSlideCount?: number;
   runId?: string;
   maxRepairRounds?: number;
+  runTimeoutMs?: number;
   metadata?: JsonObject;
   speakerNotesMode?: SpeakerNotesMode;
   chooseVisualDirection?: (directions: VisualDirection[]) => Promise<string> | string;
@@ -478,6 +480,7 @@ export type AgentRunInput = {
 export type AgentOrchestratorOptions = {
   clock?: () => Date;
   defaultMaxRepairRounds?: number;
+  defaultRunTimeoutMs?: number;
   onEvent?: (event: AgentRunEvent) => void | Promise<void>;
   onLog?: (log: AgentRunLog) => void | Promise<void>;
 };

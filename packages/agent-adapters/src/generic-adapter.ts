@@ -4,6 +4,12 @@ import path from "node:path";
 import { assertPathInsideProject, validateReportedFileWritesOnDisk } from "./boundary.js";
 import { AgentAdapterFailureError, createAgentAdapterFailure, toAgentAdapterFailure } from "./failures.js";
 import { runCommand } from "./runner.js";
+import {
+  collectSensitiveValues,
+  createCommandOutputRedactor,
+  sanitizeAgentAdapterText,
+  sanitizeRenderedCommand
+} from "./sanitization.js";
 import { renderCommandTemplate } from "./template.js";
 import type {
   AgentAdapterRunFailure,
@@ -20,6 +26,8 @@ export async function runGenericAgentAdapter(options: GenericAgentRunOptions): P
     promptFile: options.promptFile,
     ...options.variables
   };
+  const sensitiveValues = collectSensitiveValues(process.env, variables, options.env);
+  const outputRedactor = createCommandOutputRedactor(sensitiveValues);
 
   let renderedCommand: RenderedCommand | undefined;
   let stdout: string | undefined;
@@ -39,28 +47,44 @@ export async function runGenericAgentAdapter(options: GenericAgentRunOptions): P
       args: renderedCommand.args,
       cwd: projectRoot,
       env: options.env,
-      onOutput: options.onOutput,
+      onOutput: (chunk) => {
+        const safeChunk = outputRedactor.push(chunk);
+        if (safeChunk.text.length > 0) {
+          options.onOutput?.(safeChunk);
+        }
+      },
       signal: options.signal,
       timeoutMs: options.timeoutMs ?? options.adapter.timeoutMs
     });
 
     stdout = commandResult.stdout;
     stderr = commandResult.stderr;
+    for (const chunk of outputRedactor.flush()) {
+      if (chunk.text.length > 0) {
+        options.onOutput?.(chunk);
+      }
+    }
+    const safeCommand = sanitizeRenderedCommand(renderedCommand, sensitiveValues);
+    const safeStdout = sanitizeAgentAdapterText(stdout, sensitiveValues);
+    const safeStderr = sanitizeAgentAdapterText(stderr, sensitiveValues);
+    if (safeCommand === undefined) {
+      throw new Error("Agent command was not rendered.");
+    }
 
     if (commandResult.cancelled === true || options.signal?.aborted === true) {
       return createRunFailure(options, projectRoot, {
-        command: renderedCommand,
-        stdout,
-        stderr,
+        command: safeCommand,
+        stdout: safeStdout,
+        stderr: safeStderr,
         failure: createAgentAdapterFailure("cancelled")
       });
     }
 
     if (commandResult.timedOut === true) {
       return createRunFailure(options, projectRoot, {
-        command: renderedCommand,
-        stdout,
-        stderr,
+        command: safeCommand,
+        stdout: safeStdout,
+        stderr: safeStderr,
         failure: createAgentAdapterFailure("run-timeout", {
           detail: `Timeout: ${options.timeoutMs ?? options.adapter.timeoutMs}ms.`
         })
@@ -69,12 +93,12 @@ export async function runGenericAgentAdapter(options: GenericAgentRunOptions): P
 
     if (commandResult.exitCode !== 0) {
       return createRunFailure(options, projectRoot, {
-        command: renderedCommand,
-        stdout,
-        stderr,
+        command: safeCommand,
+        stdout: safeStdout,
+        stderr: safeStderr,
         failure: createAgentAdapterFailure("command-failed", {
-          command: [renderedCommand.command, ...renderedCommand.args].join(" "),
-          detail: stderr || stdout,
+          command: [safeCommand?.command, ...(safeCommand?.args ?? [])].filter(Boolean).join(" "),
+          detail: safeStderr || safeStdout,
           exitCode: commandResult.exitCode
         })
       });
@@ -87,20 +111,25 @@ export async function runGenericAgentAdapter(options: GenericAgentRunOptions): P
       ok: true,
       status: "completed",
       adapter: options.adapter,
-      command: renderedCommand,
+      command: safeCommand,
       cwd: projectRoot,
-      stdout,
-      stderr,
+      stdout: safeStdout ?? "",
+      stderr: safeStderr ?? "",
       reportedWrites: normalizedWrites
     };
   } catch (error) {
     const failure = toAgentAdapterFailure(error);
     return createRunFailure(options, projectRoot, {
-      command: renderedCommand,
-      stdout,
-      stderr,
+      command: sanitizeRenderedCommand(renderedCommand, sensitiveValues),
+      stdout: sanitizeAgentAdapterText(stdout, sensitiveValues),
+      stderr: sanitizeAgentAdapterText(stderr, sensitiveValues),
       reportedWrites,
-      failure
+      failure: {
+        ...failure,
+        message: sanitizeAgentAdapterText(failure.message, sensitiveValues) ?? failure.message,
+        detail: sanitizeAgentAdapterText(failure.detail, sensitiveValues),
+        command: sanitizeAgentAdapterText(failure.command, sensitiveValues)
+      }
     });
   }
 }

@@ -922,6 +922,12 @@ describe("CLI project helpers", { timeout: 20_000 }, () => {
       expect(removed.action).toBe("removed");
       await expectMissing(path.join(binDir, "htmlslide"));
 
+      const afterDoctor = await doctor({ targetDir: binDir, htmlslideHomeDir: homeDir });
+      expect(afterDoctor.checks.find((check) => check.id === "cli-shim")).toMatchObject({
+        status: "info",
+        suggestedFix: "Run htmlslide setup install-cli."
+      });
+
       const unchanged = await uninstallCliShim({ targetDir: binDir, htmlslideHomeDir: homeDir });
       expect(unchanged.action).toBe("unchanged");
     } finally {
@@ -1077,6 +1083,49 @@ describe("CLI project helpers", { timeout: 20_000 }, () => {
     ).rejects.toMatchObject({
       code: EXIT_CODES.agentFailed,
       stdout: expect.stringContaining('"code": "AGENT_PROVIDER_API_KEY_ENV_MISSING"')
+    });
+  });
+
+  it("does not echo an invalid API key environment variable name", async () => {
+    const opaqueName = "opaque-credential-DO-NOT-PRINT";
+    const failure = await runCli([
+      "agent",
+      "validate-provider",
+      "--provider",
+      "openai",
+      "--model",
+      "gpt-htmlslide-test",
+      "--api-key-env",
+      opaqueName,
+      "--json"
+    ]).then(
+      () => undefined,
+      (error: unknown) => error
+    );
+
+    expect(failure).toMatchObject({
+      code: EXIT_CODES.agentFailed,
+      stdout: expect.stringContaining('"code": "AGENT_PROVIDER_API_KEY_ENV_INVALID"')
+    });
+    expect(String((failure as { stdout?: unknown })?.stdout ?? "")).not.toContain(opaqueName);
+  });
+
+  it.each([
+    "https://user:password@provider.example.test/v1",
+    "https://provider.example.test/v1?token=secret",
+    "https://provider.example.test/v1#secret"
+  ])("rejects a compatible provider URL containing credentials or URL metadata: %s", async (baseUrl) => {
+    await expect(
+      validateAgentProviderCredentials({
+        apiKeyEnv: "HTMLSLIDE_TEST_COMPATIBLE_KEY",
+        baseUrl,
+        env: { HTMLSLIDE_TEST_COMPATIBLE_KEY: "compatible-provider-secret" },
+        fetch: async () => new Response(JSON.stringify({ id: "unused" }), { status: 200 }),
+        model: "llama-htmlslide-test",
+        provider: "compatible"
+      })
+    ).rejects.toMatchObject({
+      code: "AGENT_PROVIDER_BASE_URL_INVALID"
     });
   });
 

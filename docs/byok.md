@@ -47,6 +47,8 @@ The command accepts an environment variable name, not a raw API key value. Save 
 7. Generate.
 8. Review diff, Check, Export, and Presenter output.
 
+Each agent run has a hard ten-minute deadline by default. A provider that ignores cancellation is reported as a failed `timeout` run rather than being allowed to continue into later stages. A run is successful only when the authoritative Check is passed with zero errors, Export returns at least one artifact, and the review stage completes; Check or Export failures are never reported as successful BYOK runs.
+
 For release-candidate evidence, request an explicit 8-12 slide count in New Deck, complete the desktop run, then bind the provider validation to the exact run and exports:
 
 ```bash

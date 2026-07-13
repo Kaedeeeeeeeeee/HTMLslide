@@ -2869,50 +2869,62 @@ export async function runDesktopExternalAgent(
   const runDirectory = path.join(projectPath, ".htmlslide", "runs", runId);
   const writeManifest = path.join(runDirectory, "writes.json");
   const builtIn = selectedAgentId !== "generic";
-  let builtInWorkspace: string | undefined;
-  if (builtIn) {
-    const candidate = await fs.mkdtemp(path.join(os.tmpdir(), "htmlslide-agent-workspace-"));
-    try {
-      await copyBuiltInAgentWorkspace(projectPath, candidate);
-      await createFileCopyCheckpoint({
-        projectRoot: candidate,
-        runId
-      });
-      builtInWorkspace = candidate;
-    } catch (error) {
-      await cleanupBuiltInAgentWorkspace(candidate);
-      return externalAgentFailureResult({
-        addEvent,
-        addLog,
-        error: error instanceof Error ? error.message : String(error),
-        events,
-        logs,
-        projectPath,
-        runId,
-        stage: "brief"
-      });
-    }
+  const agentWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "htmlslide-agent-workspace-"));
+  try {
+    await copyBuiltInAgentWorkspace(projectPath, agentWorkspace);
+    await createFileCopyCheckpoint({
+      projectRoot: agentWorkspace,
+      runId
+    });
+  } catch (error) {
+    await cleanupBuiltInAgentWorkspace(agentWorkspace);
+    return externalAgentFailureResult({
+      addEvent,
+      addLog,
+      error: error instanceof Error ? error.message : String(error),
+      events,
+      logs,
+      projectPath,
+      runId,
+      stage: "brief"
+    });
   }
-  const agentProjectPath = builtInWorkspace ?? projectPath;
+  const agentProjectPath = agentWorkspace;
   const promptFile = builtIn
     ? path.join(agentProjectPath, ".htmlslide-task.md")
     : path.join(runDirectory, "prompt.md");
+  const agentPromptFile = builtIn
+    ? promptFile
+    : path.join(agentProjectPath, ".htmlslide-task.md");
+  const agentWriteManifest = builtIn
+    ? undefined
+    : path.join(agentProjectPath, ".htmlslide", "runs", runId, "writes.json");
 
-  if (builtInWorkspace === undefined) {
-    await fs.mkdir(runDirectory, { recursive: true });
-  }
   try {
-    await fs.writeFile(promptFile, externalAgentPrompt({
+    await fs.mkdir(runDirectory, { recursive: true });
+    const prompt = externalAgentPrompt({
       brief: brief.length > 0 ? brief : "Create or revise this HTMLslide deck.",
-      projectPath: agentProjectPath,
+      projectPath: builtIn ? agentProjectPath : projectPath,
       speakerNotesMode: request.speakerNotesMode,
-      writeManifest: selectedAgentId === "generic" ? writeManifest : undefined
-    }), "utf8");
+      writeManifest: builtIn ? undefined : writeManifest
+    });
+    await fs.writeFile(promptFile, prompt, "utf8");
+    if (agentPromptFile !== promptFile) {
+      await fs.mkdir(path.dirname(agentPromptFile), { recursive: true });
+      await fs.writeFile(agentPromptFile, externalAgentPrompt({
+        brief: brief.length > 0 ? brief : "Create or revise this HTMLslide deck.",
+        projectPath: agentProjectPath,
+        speakerNotesMode: request.speakerNotesMode,
+        writeManifest: agentWriteManifest
+      }), "utf8");
+    }
     if (!builtIn) {
+      await fs.mkdir(path.dirname(agentWriteManifest ?? writeManifest), { recursive: true });
       await fs.writeFile(writeManifest, `${JSON.stringify({ writes: [] }, null, 2)}\n`, "utf8");
+      await fs.writeFile(agentWriteManifest ?? writeManifest, `${JSON.stringify({ writes: [] }, null, 2)}\n`, "utf8");
     }
   } catch (error) {
-    await cleanupBuiltInAgentWorkspace(builtInWorkspace);
+    await cleanupBuiltInAgentWorkspace(agentWorkspace);
     return externalAgentFailureResult({
       addEvent,
       addLog,
@@ -2926,7 +2938,7 @@ export async function runDesktopExternalAgent(
   }
 
   if (options.signal?.aborted) {
-    await cleanupBuiltInAgentWorkspace(builtInWorkspace);
+    await cleanupBuiltInAgentWorkspace(agentWorkspace);
     return externalAgentCancellationResult({
       addEvent,
       addLog,
@@ -2967,33 +2979,40 @@ export async function runDesktopExternalAgent(
     };
     rawAdapter = await runGenericAgentAdapter({
       adapter: adapterConfig,
-      projectRoot: projectPath,
-      promptFile,
+      projectRoot: agentProjectPath,
+      promptFile: agentPromptFile,
       variables: {
-        writeManifest
+        writeManifest: agentWriteManifest ?? writeManifest
       },
       signal: options.signal,
       onOutput,
       runner: options.agentRunner,
       timeoutMs: options.timeoutMs,
-      readReportedFileWrites: () => readJsonFileWriteManifest(projectPath, writeManifest)
+      readReportedFileWrites: () => readJsonFileWriteManifest(agentProjectPath, agentWriteManifest ?? writeManifest)
     });
   } else {
     rawAdapter = await runBuiltInExternalAgentAdapter({
       kind: selectedAgentId satisfies BuiltInExternalAgentKind,
       projectRoot: agentProjectPath,
-      promptFile,
+      promptFile: agentPromptFile,
       signal: options.signal,
       onOutput,
       runner: options.agentRunner,
       timeoutMs: options.timeoutMs ?? 120_000
     });
   }
-  const adapter = sanitizeAgentAdapterRunResult(rawAdapter);
+  const adapter = sanitizeAgentAdapterRunResult(
+    rebaseAgentAdapterResultPaths(rawAdapter, agentProjectPath, projectPath)
+  );
+  const rawReportedWrites = rawAdapter.ok ? rawAdapter.reportedWrites : [];
   outputBuffer.flush();
 
+  if (!builtIn && agentWriteManifest !== undefined) {
+    await fs.copyFile(agentWriteManifest, writeManifest).catch(() => undefined);
+  }
+
   if (!adapter.ok) {
-    await cleanupBuiltInAgentWorkspace(builtInWorkspace);
+    await cleanupBuiltInAgentWorkspace(agentWorkspace);
     const error = adapter.failure.detail ?? adapter.failure.message;
     addEvent("build", adapter.status === "cancelled" ? "cancelled" : "failed", adapter.failure.message, adapter.status === "cancelled" ? "run-cancelled" : "stage-failed", {
       nextAction: adapter.failure.remediation
@@ -3015,13 +3034,39 @@ export async function runDesktopExternalAgent(
     };
   }
 
-  if (builtInWorkspace !== undefined) {
+  if (agentWorkspace !== undefined) {
     try {
-      await assertBuiltInAgentWorkspaceHasNoSymlinks(builtInWorkspace);
+      await assertBuiltInAgentWorkspaceHasNoSymlinks(agentWorkspace);
       const stagedDiff = await diffFileCopyCheckpoint({
-        projectRoot: builtInWorkspace,
+        projectRoot: agentWorkspace,
         runId
       });
+      if (!builtIn) {
+        const unreportedWrites = findUnreportedSourceWrites(
+          agentWorkspace,
+          stagedDiff,
+          rawReportedWrites
+        );
+        if (unreportedWrites.length > 0) {
+          const error = `Generic external agent changed source files without reporting them: ${unreportedWrites.join(", ")}.`;
+          addEvent("build", "failed", error, "stage-failed", {
+            filesChanged: unreportedWrites,
+            nextAction: "Review the checkpoint diff and retry with a complete write manifest"
+          });
+          addLog("error", error, "build", { filesChanged: unreportedWrites });
+          return {
+            ok: false,
+            providerId: "external-agent",
+            projectPath,
+            stages: summarizeAgentStages(events),
+            events,
+            logs,
+            adapter,
+            error,
+            summary: summarizeDesktopExternalAgentRun(runId, events, undefined, undefined, unreportedWrites)
+          };
+        }
+      }
       const liveProjectDiff = await diffFileCopyCheckpoint({ projectRoot: projectPath, runId });
       const concurrentChanges = checkpointChangedPaths(liveProjectDiff);
       if (concurrentChanges.length > 0) {
@@ -3067,7 +3112,7 @@ export async function runDesktopExternalAgent(
           summary: summarizeDesktopExternalAgentRun(runId, events, undefined, undefined, [])
         };
       }
-      await applyBuiltInAgentWorkspaceDiff(projectPath, builtInWorkspace, stagedDiff);
+      await applyBuiltInAgentWorkspaceDiff(projectPath, agentWorkspace, stagedDiff);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const partialDiff = await diffFileCopyCheckpoint({ projectRoot: projectPath, runId });
@@ -3100,7 +3145,7 @@ export async function runDesktopExternalAgent(
         summary: summarizeDesktopExternalAgentRun(runId, events, undefined, undefined, partialFilesChanged)
       };
     } finally {
-      await cleanupBuiltInAgentWorkspace(builtInWorkspace);
+      await cleanupBuiltInAgentWorkspace(agentWorkspace);
     }
   }
 
@@ -4504,6 +4549,55 @@ async function waitForDesktopAgentOperation<T>(
   });
 }
 
+function rebaseAgentAdapterResultPaths(
+  adapter: AgentAdapterRunResult,
+  workspacePath: string,
+  projectPath: string
+): AgentAdapterRunResult {
+  const workspaceRoot = path.resolve(workspacePath);
+  const projectRoot = path.resolve(projectPath);
+  const rebasePath = (value: string): string => {
+    const absolute = path.resolve(value);
+    const relative = path.relative(workspaceRoot, absolute);
+    if (relative === "" || (relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative))) {
+      return path.resolve(projectRoot, relative);
+    }
+    return value;
+  };
+  const rebaseText = (value: string): string => value.split(workspaceRoot).join(projectRoot);
+  const reportedWrites = adapter.reportedWrites?.map(rebasePath);
+
+  if (adapter.ok) {
+    return {
+      ...adapter,
+      command: {
+        ...adapter.command,
+        args: adapter.command.args.map(rebaseText)
+      },
+      cwd: projectRoot,
+      ...(reportedWrites === undefined ? {} : { reportedWrites })
+    };
+  }
+
+  const command = adapter.command === undefined
+    ? undefined
+    : {
+        ...adapter.command,
+        args: adapter.command.args.map(rebaseText)
+      };
+  return {
+    ...adapter,
+    command,
+    cwd: projectRoot,
+    ...(reportedWrites === undefined ? {} : { reportedWrites }),
+    failure: {
+      ...adapter.failure,
+      ...(adapter.failure.path === undefined ? {} : { path: rebasePath(adapter.failure.path) }),
+      ...(adapter.failure.command === undefined ? {} : { command: rebaseText(adapter.failure.command) })
+    }
+  };
+}
+
 function sanitizeAgentAdapterRunResult(adapter: AgentAdapterRunResult): AgentAdapterRunResult {
   const builtIn = adapter.adapter.kind === "claude-code" || adapter.adapter.kind === "codex-cli";
   if (adapter.ok) {
@@ -5486,6 +5580,17 @@ function checkpointChangedPaths(diff: FileCopyCheckpointDiff): string[] {
     ...diff.added.map((file) => file.path),
     ...diff.deleted.map((file) => file.path)
   ]).sort((left, right) => left.localeCompare(right));
+}
+
+function findUnreportedSourceWrites(
+  projectPath: string,
+  diff: FileCopyCheckpointDiff,
+  reportedWrites: readonly string[]
+): string[] {
+  const reported = new Set(reportedWrites.map((filePath) => path.resolve(projectPath, filePath)));
+  return checkpointChangedPaths(diff).filter((relativePath) =>
+    !reported.has(path.resolve(projectPath, relativePath))
+  );
 }
 
 function resolveBuiltInAgentSourcePath(projectPath: string, relativePath: string): string {

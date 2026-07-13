@@ -4,6 +4,12 @@ import { assertPathInsideProject, validateReportedFileWritesOnDisk } from "./bou
 import { claudeCliCapabilities, codexCliCapabilities } from "./detectors.js";
 import { createAgentAdapterFailure, toAgentAdapterFailure } from "./failures.js";
 import { runCommand } from "./runner.js";
+import {
+  collectSensitiveValues,
+  createCommandOutputRedactor,
+  sanitizeAgentAdapterText,
+  sanitizeRenderedCommand
+} from "./sanitization.js";
 import type {
   AgentAdapterDescriptor,
   AgentAdapterRunFailure,
@@ -117,6 +123,8 @@ export async function runBuiltInExternalAgentAdapter(
   let stdout: string | undefined;
   let stderr: string | undefined;
   let reportedWrites: readonly string[] | undefined;
+  const sensitiveValues = collectSensitiveValues(process.env);
+  const outputRedactor = createCommandOutputRedactor(sensitiveValues);
 
   try {
     command = buildBuiltInExternalAgentCommand({
@@ -133,26 +141,42 @@ export async function runBuiltInExternalAgentAdapter(
       cwd: projectRoot,
       signal: options.signal,
       timeoutMs: options.timeoutMs,
-      onOutput: options.onOutput
+      onOutput: (chunk) => {
+        const safeChunk = outputRedactor.push(chunk);
+        if (safeChunk.text.length > 0) {
+          options.onOutput?.(safeChunk);
+        }
+      }
     });
 
     stdout = commandResult.stdout;
     stderr = commandResult.stderr;
+    for (const chunk of outputRedactor.flush()) {
+      if (chunk.text.length > 0) {
+        options.onOutput?.(chunk);
+      }
+    }
+    const safeCommand = sanitizeRenderedCommand(command, sensitiveValues);
+    const safeStdout = sanitizeAgentAdapterText(stdout, sensitiveValues);
+    const safeStderr = sanitizeAgentAdapterText(stderr, sensitiveValues);
+    if (safeCommand === undefined) {
+      throw new Error("Agent command was not rendered.");
+    }
 
     if (commandResult.cancelled === true || options.signal?.aborted === true) {
       return createRunFailure(adapter, projectRoot, {
-        command,
-        stdout,
-        stderr,
+        command: safeCommand,
+        stdout: safeStdout,
+        stderr: safeStderr,
         failure: createAgentAdapterFailure("cancelled")
       });
     }
 
     if (commandResult.timedOut === true) {
       return createRunFailure(adapter, projectRoot, {
-        command,
-        stdout,
-        stderr,
+        command: safeCommand,
+        stdout: safeStdout,
+        stderr: safeStderr,
         failure: createAgentAdapterFailure("run-timeout", {
           detail: `Timeout: ${options.timeoutMs}ms.`
         })
@@ -161,12 +185,12 @@ export async function runBuiltInExternalAgentAdapter(
 
     if (commandResult.exitCode !== 0) {
       return createRunFailure(adapter, projectRoot, {
-        command,
-        stdout,
-        stderr,
+        command: safeCommand,
+        stdout: safeStdout,
+        stderr: safeStderr,
         failure: createAgentAdapterFailure("command-failed", {
-          command: [command.command, ...command.args].join(" "),
-          detail: stderr || stdout,
+          command: [safeCommand?.command, ...(safeCommand?.args ?? [])].filter(Boolean).join(" "),
+          detail: safeStderr || safeStdout,
           exitCode: commandResult.exitCode
         })
       });
@@ -179,19 +203,27 @@ export async function runBuiltInExternalAgentAdapter(
       ok: true,
       status: "completed",
       adapter,
-      command,
+      command: safeCommand,
       cwd: projectRoot,
-      stdout,
-      stderr,
+      stdout: safeStdout ?? "",
+      stderr: safeStderr ?? "",
       reportedWrites: normalizedWrites
     };
   } catch (error) {
     return createRunFailure(adapter, projectRoot, {
-      command,
-      stdout,
-      stderr,
+      command: sanitizeRenderedCommand(command, sensitiveValues),
+      stdout: sanitizeAgentAdapterText(stdout, sensitiveValues),
+      stderr: sanitizeAgentAdapterText(stderr, sensitiveValues),
       reportedWrites,
-      failure: toAgentAdapterFailure(error)
+      failure: (() => {
+        const failure = toAgentAdapterFailure(error);
+        return {
+          ...failure,
+          message: sanitizeAgentAdapterText(failure.message, sensitiveValues) ?? failure.message,
+          detail: sanitizeAgentAdapterText(failure.detail, sensitiveValues),
+          command: sanitizeAgentAdapterText(failure.command, sensitiveValues)
+        };
+      })()
     });
   }
 }

@@ -122,7 +122,7 @@ export function coerceStageOutput(stage: AgentRunStage, output: JsonObject): unk
       } satisfies AgentRepairResult;
     case "export":
       return {
-        artifacts: expectArray(output, "artifacts").map((artifact, index) => {
+        artifacts: expectNonEmptyArray(output, "artifacts").map((artifact, index) => {
           const record = expectRecord(artifact, `artifacts[${index}]`);
           return {
             type: expectEnum(record, "type", ["pdf", "html", "deckpkg", "thumbnails", "speaker-notes"]),
@@ -223,7 +223,7 @@ export function schemaForStage(stage: AgentRunStage): JsonObject {
         artifacts: arraySchema(objectSchema({
           type: enumSchema(["pdf", "html", "deckpkg", "thumbnails", "speaker-notes"]),
           path: stringSchema()
-        }))
+        }), true)
       });
     case "review":
       return objectSchema({

@@ -1,4 +1,10 @@
-import { AgentRunCancelledError, AgentRunFailureError, errorMessage, isCancellationError } from "./errors.js";
+import {
+  AgentRunCancelledError,
+  AgentRunFailureError,
+  AgentRunTimeoutError,
+  errorMessage,
+  isCancellationError
+} from "./errors.js";
 import { createFileCopyCheckpoint } from "./checkpoint.js";
 import { DEFAULT_SPEAKER_NOTES_MODE, normalizeSpeakerNotesMode, type SpeakerNotesMode } from "@htmlslide/core";
 import type {
@@ -38,6 +44,8 @@ export const defaultAgentStages: AgentRunStage[] = [
   "export",
   "review"
 ];
+
+export const DEFAULT_AGENT_RUN_TIMEOUT_MS = 10 * 60 * 1000;
 
 export const agentRunStateTransitions: Record<AgentRunState, AgentRunState[]> = {
   idle: ["briefing", "cancelled"],
@@ -87,7 +95,36 @@ const emptyOutputs = (speakerNotesMode: SpeakerNotesMode): AgentRunOutputs => ({
   speakerNotesMode
 });
 
-const checkHasErrors = (check: AgentCheckResult): boolean => check.summary.errors > 0;
+const checkHasErrors = (check: AgentCheckResult): boolean =>
+  check.status !== "passed" || check.summary.errors > 0;
+
+const checkFailureMessage = (check: AgentCheckResult, repairAttempts: number): string =>
+  `Check failed with status "${check.status === "passed" ? "passed" : "failed"}": ${check.summary.errors} error(s), ` +
+  `${check.summary.warnings} warning(s), and ${check.summary.info} info item(s) ` +
+  `after ${repairAttempts} repair attempt(s).`;
+
+const validateExportResult = (exportResult: AgentExportResult): void => {
+  if (
+    typeof exportResult !== "object" ||
+    exportResult === null ||
+    !Array.isArray(exportResult.artifacts) ||
+    exportResult.artifacts.length === 0
+  ) {
+    throw new AgentRunFailureError({
+      code: "export-failed",
+      message: "Export returned no artifacts.",
+      stage: "export"
+    });
+  }
+};
+
+const normalizeRunTimeoutMs = (value: number | undefined, fallback: number | undefined): number => {
+  const timeoutMs = value ?? fallback ?? DEFAULT_AGENT_RUN_TIMEOUT_MS;
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new RangeError("Agent run timeout must be a finite number greater than zero.");
+  }
+  return Math.max(1, Math.floor(timeoutMs));
+};
 
 const firstVisualDirectionId = (directions: VisualDirection[]): string => {
   const first = directions[0];
@@ -186,6 +223,7 @@ export class AgentRunController {
   readonly #events: AgentRunEvent[] = [];
   readonly #logs: AgentRunLog[] = [];
   readonly #maxRepairRounds: number;
+  readonly #runTimeoutMs: number;
   readonly #onEvent: AgentOrchestratorOptions["onEvent"];
   readonly #onLog: AgentOrchestratorOptions["onLog"];
   readonly #speakerNotesMode: SpeakerNotesMode;
@@ -193,12 +231,15 @@ export class AgentRunController {
   #sequence = 0;
   #cancelled = false;
   #cancelEventEmitted = false;
+  #timedOut = false;
+  #terminalResult: AgentRunResult | undefined;
   #snapshot: AgentRunSnapshot;
 
   constructor(input: AgentRunInput, options: AgentOrchestratorOptions = {}) {
     this.#input = input;
     this.#clock = options.clock ?? (() => new Date());
     this.#maxRepairRounds = input.maxRepairRounds ?? options.defaultMaxRepairRounds ?? 3;
+    this.#runTimeoutMs = normalizeRunTimeoutMs(input.runTimeoutMs, options.defaultRunTimeoutMs);
     this.#onEvent = options.onEvent;
     this.#onLog = options.onLog;
     this.#speakerNotesMode = normalizeSpeakerNotesMode(input.speakerNotesMode ?? DEFAULT_SPEAKER_NOTES_MODE);
@@ -215,7 +256,7 @@ export class AgentRunController {
       events: this.#events,
       logs: this.#logs
     };
-    this.done = this.#execute();
+    this.done = this.#executeWithTimeout();
   }
 
   cancel(reason = "Run cancelled by user."): void {
@@ -223,18 +264,19 @@ export class AgentRunController {
       return;
     }
 
+    const safeReason = errorMessage(reason);
     this.#cancelled = true;
     this.#snapshot.status = "cancelled";
     this.#snapshot.state = "cancelled";
     this.#snapshot.cancelledAt = this.#now();
-    this.#snapshot.cancellationReason = reason;
+    this.#snapshot.cancellationReason = safeReason;
     this.#snapshot.error = {
       code: "cancelled",
-      message: reason,
+      message: safeReason,
       stage: this.#snapshot.currentStage
     };
     this.#abortController.abort();
-    this.#emitCancelled(reason);
+    this.#emitCancelled(safeReason);
   }
 
   getStatus(): AgentRunSnapshot {
@@ -244,6 +286,36 @@ export class AgentRunController {
       events: [...this.#events],
       logs: [...this.#logs]
     };
+  }
+
+  async #executeWithTimeout(): Promise<AgentRunResult> {
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timeoutResult = new Promise<AgentRunResult>((resolve) => {
+      timeoutHandle = setTimeout(() => {
+        if (this.#snapshot.status === "cancelled") {
+          resolve(this.#finishCancelled(this.#snapshot.cancellationReason ?? "Run cancelled by user."));
+          return;
+        }
+
+        this.#timedOut = true;
+        const timeoutError = new AgentRunTimeoutError(this.#runTimeoutMs, this.#snapshot.currentStage);
+        this.#abortController.abort();
+        resolve(this.#finishFailed({
+          code: "timeout",
+          message: timeoutError.message,
+          stage: timeoutError.stage,
+          timeoutMs: timeoutError.timeoutMs
+        }));
+      }, this.#runTimeoutMs);
+    });
+
+    try {
+      return await Promise.race([this.#execute(), timeoutResult]);
+    } finally {
+      if (timeoutHandle !== undefined) {
+        clearTimeout(timeoutHandle);
+      }
+    }
   }
 
   async #execute(): Promise<AgentRunResult> {
@@ -310,14 +382,14 @@ export class AgentRunController {
         throw new AgentRunFailureError({
           code: "check-failed",
           stage: "check",
-          message: `Check still has ${latestCheck.summary.errors} error(s) after ${this.#snapshot.repairAttempts} repair attempt(s).`
+          message: checkFailureMessage(latestCheck, this.#snapshot.repairAttempts)
         });
       }
 
       const exportResult = await this.#runStage<AgentExportResult>("export", "Export checked deck artifacts.", {
         build,
         check: latestCheck
-      });
+      }, validateExportResult);
       this.#snapshot.outputs.export = exportResult;
 
       const review = await this.#runStage<AgentReviewResult>("review", "Prepare human review summary.", {
@@ -332,7 +404,7 @@ export class AgentRunController {
       this.#snapshot.completedAt = this.#now();
       this.#emit("run-completed", "review", "succeeded", "Agent run completed.");
 
-      return {
+      const result: AgentRunResult = {
         ok: true,
         status: "succeeded",
         runId: this.runId,
@@ -341,14 +413,23 @@ export class AgentRunController {
         events: [...this.#events],
         logs: [...this.#logs]
       };
+      this.#terminalResult = result;
+      return result;
     } catch (error) {
+      if (this.#timedOut) {
+        return this.#finishFailed(this.#timeoutErrorInfo());
+      }
+
       if (this.#cancelled || isCancellationError(error)) {
         return this.#finishCancelled(errorMessage(error));
       }
 
       const info =
         error instanceof AgentRunFailureError
-          ? error.info
+          ? {
+              ...error.info,
+              message: errorMessage(error.info.message)
+            }
           : ({
               code: "unknown",
               message: errorMessage(error),
@@ -454,15 +535,25 @@ export class AgentRunController {
       }
 
       if (error instanceof AgentRunFailureError) {
-        this.#emit("stage-failed", stage, "failed", error.info.message);
-        this.#log("error", error.info.message, stage);
-        throw error;
+        const info: AgentRunErrorInfo = {
+          ...error.info,
+          message: errorMessage(error.info.message)
+        };
+        this.#emit("stage-failed", stage, "failed", info.message);
+        this.#log("error", info.message, stage);
+        throw new AgentRunFailureError(info);
       }
 
+      const code: AgentRunErrorInfo["code"] = stage === "check"
+        ? "check-failed"
+        : stage === "export"
+          ? "export-failed"
+          : "provider-error";
+      const detail = errorMessage(error);
       const info: AgentRunErrorInfo = {
-        code: "provider-error",
+        code,
         stage,
-        message: errorMessage(error)
+        message: `${this.#input.provider.label} failed during ${stage}${detail ? `: ${detail}` : "."}`
       };
       this.#emit("stage-failed", stage, "failed", info.message);
       this.#log("error", info.message, stage);
@@ -485,14 +576,28 @@ export class AgentRunController {
     }
   }
 
+  #timeoutErrorInfo(): AgentRunErrorInfo {
+    const timeoutError = new AgentRunTimeoutError(this.#runTimeoutMs, this.#snapshot.currentStage);
+    return {
+      code: "timeout",
+      message: timeoutError.message,
+      stage: timeoutError.stage,
+      timeoutMs: timeoutError.timeoutMs
+    };
+  }
+
   #finishFailed(error: AgentRunErrorInfo): AgentRunResult {
+    if (this.#terminalResult !== undefined) {
+      return this.#terminalResult;
+    }
+
     this.#transition("failed");
     this.#snapshot.status = "failed";
     this.#snapshot.completedAt = this.#now();
     this.#snapshot.error = error;
     this.#emit("run-failed", error.stage ?? this.#snapshot.currentStage ?? "review", "failed", error.message);
 
-    return {
+    const result: AgentRunResult = {
       ok: false,
       status: "failed",
       runId: this.runId,
@@ -502,9 +607,15 @@ export class AgentRunController {
       events: [...this.#events],
       logs: [...this.#logs]
     };
+    this.#terminalResult = result;
+    return result;
   }
 
   #finishCancelled(message: string): AgentRunResult {
+    if (this.#terminalResult !== undefined) {
+      return this.#terminalResult;
+    }
+
     this.#snapshot.status = "cancelled";
     this.#snapshot.state = "cancelled";
     this.#snapshot.cancelledAt ??= this.#now();
@@ -516,7 +627,7 @@ export class AgentRunController {
     };
     this.#emitCancelled(message);
 
-    return {
+    const result: AgentRunResult = {
       ok: false,
       status: "cancelled",
       runId: this.runId,
@@ -526,6 +637,8 @@ export class AgentRunController {
       events: [...this.#events],
       logs: [...this.#logs]
     };
+    this.#terminalResult = result;
+    return result;
   }
 
   #emitCancelled(message: string): void {

@@ -4,5 +4,6 @@ export * from "./detectors.js";
 export * from "./failures.js";
 export * from "./generic-adapter.js";
 export * from "./runner.js";
+export * from "./sanitization.js";
 export * from "./template.js";
 export * from "./types.js";

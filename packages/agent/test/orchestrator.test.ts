@@ -285,6 +285,126 @@ describe("agent orchestrator", () => {
     ).toEqual(["brief", "outline", "visual-direction", "build", "check", "repair", "check", "export", "review"]);
   });
 
+  it("completes a successful deterministic provider run only after export and review", async () => {
+    const result = await runMockAgent({
+      runId: "run-byok-success",
+      provider: createMockProvider({
+        checkResults: [createMockPassedCheck()]
+      })
+    });
+
+    expect(result).toMatchObject({ ok: true, status: "succeeded" });
+    expect(result.outputs.export?.artifacts).not.toHaveLength(0);
+    expect(result.outputs.review).toBeDefined();
+    expect(result.events.at(-1)).toMatchObject({ type: "run-completed", status: "succeeded" });
+  });
+
+  it("hard-fails a run when a provider ignores the abort signal past the deadline", async () => {
+    const result = await runMockAgent({
+      runId: "run-byok-timeout",
+      runTimeoutMs: 25,
+      provider: createMockProvider({
+        hangStages: ["brief"]
+      })
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe("failed");
+    if (!result.ok) {
+      expect(result.error).toEqual({
+        code: "timeout",
+        message: "Agent run timed out after 25ms.",
+        stage: "brief",
+        timeoutMs: 25
+      });
+    }
+    expect(result.events.at(-1)).toMatchObject({ type: "run-failed", status: "failed", stage: "brief" });
+    expect(result.events.some((event) => event.type === "run-completed")).toBe(false);
+  });
+
+  it("does not mark the run successful when check status is failed without counted errors", async () => {
+    const failedCheck = {
+      ...createMockPassedCheck(),
+      status: "failed" as const
+    };
+    const result = await runMockAgent({
+      runId: "run-byok-check-failed",
+      maxRepairRounds: 0,
+      provider: createMockProvider({
+        checkResults: [failedCheck]
+      })
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe("failed");
+    if (!result.ok) {
+      expect(result.error).toMatchObject({
+        code: "check-failed",
+        stage: "check"
+      });
+      expect(result.error.message).toContain('status "failed"');
+      expect(result.error.message).toContain("after 0 repair attempt(s)");
+    }
+    expect(result.outputs.checks).toHaveLength(1);
+    expect(result.outputs.export).toBeUndefined();
+    expect(result.outputs.review).toBeUndefined();
+    expect(result.events.some((event) => event.type === "run-completed")).toBe(false);
+  });
+
+  it("does not mark the run or report successful when export returns no artifacts", async () => {
+    const result = await runMockAgent({
+      runId: "run-byok-export-failed",
+      provider: createMockProvider({
+        checkResults: [createMockPassedCheck()],
+        exportResult: { artifacts: [] }
+      })
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe("failed");
+    if (!result.ok) {
+      expect(result.error).toEqual({
+        code: "export-failed",
+        message: "Export returned no artifacts.",
+        stage: "export"
+      });
+    }
+    expect(result.outputs.export).toBeUndefined();
+    expect(result.outputs.review).toBeUndefined();
+    expect(result.events.at(-1)).toMatchObject({ type: "run-failed", status: "failed", stage: "export" });
+    expect(result.events.some((event) => event.type === "run-completed")).toBe(false);
+  });
+
+  it("sanitizes provider diagnostics in failed run results", async () => {
+    const secret = "sk-byok-orchestrator-secret123";
+    const baseProvider = createMockProvider({
+      checkResults: [createMockPassedCheck()]
+    });
+    const provider = {
+      id: baseProvider.id,
+      label: baseProvider.label,
+      validateCredentials: () => baseProvider.validateCredentials(),
+      complete: async (request: ModelRequest): Promise<ModelResponse> => {
+        if (request.stage === "export") {
+          throw new Error(`Export provider failed for ${secret}.`);
+        }
+        return baseProvider.complete(request);
+      }
+    };
+
+    const result = await runMockAgent({
+      runId: "run-byok-safe-error",
+      provider
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("export-failed");
+      expect(result.error.message).toContain("sk-[redacted]");
+      expect(result.error.message).not.toContain(secret);
+    }
+  });
+
   it("stops the repair loop after a successful check", async () => {
     const result = await runAgent(
       {

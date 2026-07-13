@@ -1024,6 +1024,40 @@ const agentError = (
 const agentProviderKinds: AgentProviderKind[] = ["openai", "anthropic", "compatible"];
 const envNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 
+const normalizeCompatibleProviderBaseUrl = (value: string | undefined): string => {
+  const trimmed = value?.trim() ?? "";
+  if (trimmed.length === 0) {
+    return "";
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw agentError(
+      "AGENT_PROVIDER_BASE_URL_INVALID",
+      "Compatible provider base URL must be an absolute HTTP(S) URL.",
+      "Rerun with --base-url set to a URL such as https://api.example.com/v1."
+    );
+  }
+
+  if (
+    (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+    parsed.username.length > 0 ||
+    parsed.password.length > 0 ||
+    parsed.search.length > 0 ||
+    parsed.hash.length > 0
+  ) {
+    throw agentError(
+      "AGENT_PROVIDER_BASE_URL_INVALID",
+      "Compatible provider base URL must not contain credentials, query parameters, or fragments.",
+      "Use an HTTPS API root without embedded credentials, query parameters, or fragments."
+    );
+  }
+
+  return parsed.toString().replace(/\/+$/u, "");
+};
+
 const normalizeAgentProviderKind = (provider: string): AgentProviderKind => {
   const normalized = provider.trim().toLowerCase();
   if (agentProviderKinds.includes(normalized as AgentProviderKind)) {
@@ -1126,13 +1160,14 @@ export const validateAgentProviderCredentials = async (
   if (!envNamePattern.test(apiKeyEnv)) {
     throw agentError(
       "AGENT_PROVIDER_API_KEY_ENV_INVALID",
-      `Invalid API key environment variable name: ${apiKeyEnv}.`,
-      "Use a shell environment variable name such as OPENAI_API_KEY or ANTHROPIC_API_KEY.",
-      { apiKeyEnv }
+      "Invalid API key environment variable name.",
+      "Use a shell environment variable name such as OPENAI_API_KEY or ANTHROPIC_API_KEY."
     );
   }
 
-  const baseUrl = options.baseUrl?.trim().replace(/\/+$/u, "");
+  const baseUrl = provider === "compatible"
+    ? normalizeCompatibleProviderBaseUrl(options.baseUrl)
+    : options.baseUrl?.trim().replace(/\/+$/u, "");
   if (provider === "compatible" && (!baseUrl || baseUrl.length === 0)) {
     throw agentError(
       "AGENT_PROVIDER_BASE_URL_REQUIRED",

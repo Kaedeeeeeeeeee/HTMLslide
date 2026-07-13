@@ -11,6 +11,9 @@ describe("provider structured planning output", () => {
   it("declares non-empty outline and visual-direction arrays", () => {
     expect(schemaProperty("outline", "slides").minItems).toBe(1);
     expect(schemaProperty("visual-direction", "directions").minItems).toBe(1);
+    const exportSchema = schemaForStage("export") as Record<string, unknown>;
+    const exportProperties = exportSchema.properties as Record<string, Record<string, unknown>>;
+    expect(exportProperties.artifacts?.minItems).toBe(1);
     const directionItem = (schemaProperty("visual-direction", "directions").items ?? {}) as Record<string, unknown>;
     expect(directionItem.required).not.toContain("sampleSlides");
   });

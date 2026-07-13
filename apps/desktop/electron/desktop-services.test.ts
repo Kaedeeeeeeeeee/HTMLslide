@@ -3020,6 +3020,56 @@ function requireArg(args, name) {
     }
   });
 
+  it("stops a generic run when source changes are missing from its write manifest", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const commandTemplate = "fake-agent --project \"{{projectPath}}\" --prompt-file \"{{promptFile}}\" --writes-manifest \"{{writeManifest}}\"";
+    const cliCalls: string[][] = [];
+
+    const result = await runDesktopExternalAgent(
+      {
+        brief: "Edit the deck without a complete manifest.",
+        projectPath,
+        runId: "run-external-unreported-write"
+      },
+      {
+        agentRunner: async (invocation) => {
+          const args = new Map<string, string>();
+          for (let index = 0; index < invocation.args.length; index += 2) {
+            const key = invocation.args[index];
+            const value = invocation.args[index + 1];
+            if (key !== undefined && value !== undefined) {
+              args.set(key, value);
+            }
+          }
+          await writeFile(
+            path.join(invocation.cwd, "slides", "001-title.html"),
+            '<section class="slide" data-slide-id="001-title"><h1>Unreported edit</h1></section>\n',
+            "utf8"
+          );
+          await mkdir(path.join(invocation.cwd, "exports"), { recursive: true });
+          await writeFile(path.join(invocation.cwd, "exports", "discarded.txt"), "discarded", "utf8");
+          await writeFile(args.get("--writes-manifest") ?? "", JSON.stringify({ writes: [] }), "utf8");
+          return { exitCode: 0, stdout: "done", stderr: "" };
+        },
+        cliRunner: async (args) => {
+          cliCalls.push(args);
+          throw new Error(`CLI must not run after an unreported source write: ${args.join(" ")}`);
+        },
+        settings: externalAgentSettings(commandTemplate)
+      }
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("without reporting them");
+    expect(result.adapter?.ok).toBe(true);
+    expect(result.check).toBeUndefined();
+    expect(result.export).toBeUndefined();
+    expect(cliCalls).toEqual([]);
+    expect(result.summary.filesChanged).toEqual(["slides/001-title.html"]);
+    await expect(access(path.join(projectPath, "exports", "discarded.txt"))).rejects.toThrow();
+  });
+
   it("passes external cancellation to the adapter and streams redacted logs without CLI follow-up", async () => {
     const projectPath = await tempDir();
     await writeDeck(projectPath);

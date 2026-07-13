@@ -10,6 +10,7 @@ import {
   COMMAND_CAPTURE_TRUNCATION_MARKER,
   createBuiltInExternalAgentDescriptor,
   createCapabilitySet,
+  createCommandOutputRedactor,
   detectClaudeCli,
   detectCodexCli,
   detectGeminiCli,
@@ -18,6 +19,8 @@ import {
   runBuiltInExternalAgentAdapter,
   runCommand,
   runGenericAgentAdapter,
+  sanitizeAgentAdapterText,
+  sanitizeRenderedCommand,
   validateReportedFileWrites,
   type CommandRunner,
   type GenericAgentAdapterConfig
@@ -157,6 +160,40 @@ describe("external agent detector helpers", () => {
     expect(result.capabilities.headlessRun).toBe(false);
     expect(result.capabilities.openExternal).toBe(true);
     expect(invocations).toEqual(["fake-gemini --version"]);
+  });
+});
+
+describe("external agent output sanitization", () => {
+  it("redacts common credentials, bearer values, and named secret values", () => {
+    const secret = "custom-secret-value-123";
+    const sanitized = sanitizeAgentAdapterText(
+      `api_key=${secret} Authorization: Bearer ${secret} sk-providersecret123456789`,
+      [secret]
+    );
+
+    expect(sanitized).toBe("api_key=[redacted] Authorization: Bearer [redacted] [redacted]");
+  });
+
+  it("redacts sensitive option values without hiding unrelated arguments", () => {
+    expect(sanitizeRenderedCommand({
+      command: "agent",
+      args: ["--project", "/tmp/deck", "--api-key", "custom-secret-value-123", "--mode", "review"]
+    }, ["custom-secret-value-123"])).toEqual({
+      command: "agent",
+      args: ["--project", "/tmp/deck", "--api-key", "[redacted]", "--mode", "review"]
+    });
+  });
+
+  it("keeps a secret split across output chunks out of the streamed result", () => {
+    const secret = "opaque-secret-value-123456";
+    const redactor = createCommandOutputRedactor([secret]);
+    const first = redactor.push({ stream: "stdout", text: `api_key=${secret.slice(0, 8)}` });
+    const second = redactor.push({ stream: "stdout", text: `${secret.slice(8)}\nnext` });
+    const flushed = redactor.flush();
+    const text = [first, second, ...flushed].map((chunk) => chunk.text).join("");
+
+    expect(text).toContain("api_key=[redacted]");
+    expect(text).not.toContain(secret);
   });
 });
 
@@ -495,6 +532,72 @@ process.exit(17);
     expect(result.failure.type).toBe("command-failed");
     expect(result.failure.exitCode).toBe(17);
     expect(result.stderr).toContain("fake command failed");
+  });
+
+  it("sanitizes command, output, failure detail, and streamed chunks at the adapter boundary", async () => {
+    const project = await createFakeProject("sanitized-output");
+    const secret = "custom-secret-value-123";
+    const chunks: Array<{ stream: "stdout" | "stderr"; text: string }> = [];
+
+    const result = await runGenericAgentAdapter({
+      adapter: createFakeAdapter("fake-agent --api-key {{apiKey}} --mode review"),
+      projectRoot: project.projectRoot,
+      promptFile: project.promptFile,
+      variables: { apiKey: secret },
+      onOutput: (chunk) => chunks.push(chunk),
+      runner: async (invocation) => {
+        invocation.onOutput?.({ stream: "stderr", text: `token=${secret}` });
+        return {
+          exitCode: 17,
+          stdout: `Bearer ${secret}`,
+          stderr: `api_key=${secret}`
+        };
+      }
+    });
+
+    expect(result.ok).toBe(false);
+    expect(JSON.stringify(result)).not.toContain(secret);
+    expect(chunks).toEqual([{ stream: "stderr", text: "token=[redacted]" }]);
+    if (!result.ok) {
+      expect(result.failure.type).toBe("command-failed");
+      expect(result.failure.command).toContain("[redacted]");
+      expect(result.failure.detail).toBe("api_key=[redacted]");
+      expect(result.stdout).toBe("Bearer [redacted]");
+      expect(result.stderr).toBe("api_key=[redacted]");
+    }
+  });
+
+  it("redacts opaque credentials inherited from the parent environment across chunks", async () => {
+    const project = await createFakeProject("inherited-secret");
+    const envName = "HTMLSLIDE_TEST_OPAQUE_TOKEN";
+    const secret = "opaque-inherited-secret-value-123456";
+    const previous = process.env[envName];
+    process.env[envName] = secret;
+    const chunks: Array<{ stream: "stdout" | "stderr"; text: string }> = [];
+
+    try {
+      const result = await runGenericAgentAdapter({
+        adapter: createFakeAdapter("fake-agent --mode review"),
+        projectRoot: project.projectRoot,
+        promptFile: project.promptFile,
+        onOutput: (chunk) => chunks.push(chunk),
+        runner: async (invocation) => {
+          invocation.onOutput?.({ stream: "stdout", text: `token=${secret.slice(0, 12)}` });
+          invocation.onOutput?.({ stream: "stdout", text: `${secret.slice(12)}\n` });
+          return { exitCode: 0, stdout: `token=${secret}`, stderr: "" };
+        }
+      });
+
+      expect(result.ok).toBe(true);
+      expect(JSON.stringify(result)).not.toContain(secret);
+      expect(chunks.map((chunk) => chunk.text).join("")).not.toContain(secret);
+    } finally {
+      if (previous === undefined) {
+        delete process.env[envName];
+      } else {
+        process.env[envName] = previous;
+      }
+    }
   });
 
   it("times out long-running fake commands", async () => {

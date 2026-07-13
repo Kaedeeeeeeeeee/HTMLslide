@@ -20,6 +20,7 @@ import { main as verifyByokEvidence } from "./verify-byok-acceptance.mjs";
 import { main as verifyChecklist } from "./verify-rc-checklist.mjs";
 import { main as verifyExternalAgentEvidence } from "./verify-external-agent-acceptance.mjs";
 import {
+  main as verifyReleaseBundleMain,
   parseArgs as parseReleaseBundleArgs,
   verifyReleaseBundle
 } from "./verify-release-bundle.mjs";
@@ -200,12 +201,17 @@ describe("release evidence scripts", () => {
     expect(workflow).toContain("Verify signed release security evidence");
     expect(workflow).toContain("pnpm release:security:verify");
     expect(workflow).toContain("pnpm release:bundle:verify");
+    expect(workflow).toContain("--output release-artifacts/HTMLslide-release-bundle-evidence.json");
     expect(workflow).toContain("pnpm test:coverage");
     expect(workflow).toContain("pnpm rc:byok-fixture-smoke");
     expect(workflow).toContain("rc_checklist_promotion_path");
     expect(workflow).toContain("pnpm rc:checklist:verify");
     expect(workflow.indexOf("Verify RC checklist promotion gate")).toBeLessThan(workflow.indexOf("Attach artifacts to GitHub Release"));
     const bundleVerifyIndex = workflow.indexOf("pnpm release:bundle:verify");
+    const bundleEvidenceOutputIndex = workflow.indexOf("--output release-artifacts/HTMLslide-release-bundle-evidence.json");
+    expect(bundleEvidenceOutputIndex).toBeGreaterThan(bundleVerifyIndex);
+    expect(bundleEvidenceOutputIndex).toBeLessThan(workflow.indexOf("Upload signed notarized artifact"));
+    expect(bundleEvidenceOutputIndex).toBeLessThan(workflow.indexOf("Attach artifacts to GitHub Release"));
     expect(bundleVerifyIndex).toBeLessThan(workflow.indexOf("Upload signed notarized artifact"));
     expect(bundleVerifyIndex).toBeLessThan(workflow.indexOf("Attach artifacts to GitHub Release"));
     expect(alphaWorkflow).toContain("pnpm test:coverage");
@@ -421,13 +427,63 @@ describe("release evidence scripts", () => {
     expect(parseReleaseBundleArgs([
       "--bundle-dir", "/tmp/release-artifacts",
       "--expected-arch", "x64",
-      "--team-id", "TEAM123456"
+      "--team-id", "TEAM123456",
+      "--output", "/tmp/release-evidence.json"
     ])).toEqual({
       bundleDir: "/tmp/release-artifacts",
       expectedArch: "x64",
-      teamId: "TEAM123456"
+      teamId: "TEAM123456",
+      output: "/tmp/release-evidence.json"
     });
     expect(() => parseReleaseBundleArgs([])).toThrow(/Missing required --bundle-dir/iu);
+  });
+
+  it("writes deterministic sanitized release bundle evidence without absolute paths", async () => {
+    const fixture = await createReleaseBundleFixture();
+    const outputPath = path.join(fixture.root, "evidence", "release-bundle.json");
+    try {
+      await verifyReleaseBundleMain([
+        "--bundle-dir", fixture.bundleDir,
+        "--expected-arch", "arm64",
+        "--team-id", "TEAM123456",
+        "--output", outputPath
+      ]);
+
+      const [outputText, manifestBytes, securityEvidenceBytes] = await Promise.all([
+        readFile(outputPath, "utf8"),
+        readFile(fixture.manifestPath),
+        readFile(fixture.securityEvidencePath)
+      ]);
+      const expected = {
+        bundleDir: path.basename(fixture.bundleDir),
+        manifest: {
+          fileName: fixture.manifestFileName,
+          sizeBytes: manifestBytes.byteLength,
+          sha256: createHash("sha256").update(manifestBytes).digest("hex")
+        },
+        dmg: {
+          fileName: fixture.dmgFileName,
+          sizeBytes: fixture.dmgSizeBytes,
+          sha256: fixture.dmgSha256
+        },
+        securityEvidence: {
+          fileName: fixture.securityEvidenceFileName,
+          sizeBytes: securityEvidenceBytes.byteLength,
+          sha256: createHash("sha256").update(securityEvidenceBytes).digest("hex")
+        },
+        validatedManifest: {
+          arch: "arm64",
+          channel: "release"
+        }
+      };
+
+      expect(outputText).toBe(`${JSON.stringify(expected, null, 2)}\n`);
+      expect(outputText).not.toContain(fixture.root);
+      expect(outputText).not.toContain("manifestPath");
+      expect(outputText).not.toContain("artifactPath");
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
   });
 
   it("fails the direct signed packaging wrapper before build work when secrets are absent", async () => {

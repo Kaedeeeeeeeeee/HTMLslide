@@ -29,6 +29,7 @@ These gates are expected before each alpha candidate:
 | Desktop accessibility smoke | First-run, Project Library, New Deck gating, QA Panel, presenter, Settings, and official skills chrome pass WCAG A/AA axe checks plus role semantics. | `pnpm e2e:desktop:a11y`, `CI` |
 | Built-in external adapter contract | Fake Claude/Codex runners verify fixed argv, isolated temporary cwd, command-contract probing, permission flags, bounded metadata-only logs, process-group cancellation, conflict-safe source application, checkpoint diff, and Check/Export gating. Shared external-run E2E covers retry; the built-in Codex E2E covers review and revert. | `pnpm test`, `pnpm e2e:desktop`, `CI` |
 | Alpha package | Unsigned DMG/ZIP/manifest plus artifact SHA-256 metadata and a prefilled RC acceptance template are created. The app contains private `browser-runtime.json` plus Chromium, and package smoke forces packaged CLI rendering through that runtime before packaged app and MCP checks. | `pnpm verify:package:alpha`, `Alpha Package` |
+| Relocatable release bundle | The final copied release-artifacts directory is revalidated for one release manifest, one DMG, bundle-relative references, security evidence, and matching SHA-256 metadata before upload or GitHub Release publication. | `pnpm release:bundle:verify`, `Release macOS` |
 | Remote CI | Main branch CI and Docs Pages complete for the candidate commit. | GitHub Actions `CI`, `Docs Pages` |
 
 ## Automated Alpha Coverage

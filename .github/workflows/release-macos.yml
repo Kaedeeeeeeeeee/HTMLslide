@@ -357,7 +357,8 @@ jobs:
           pnpm release:bundle:verify -- \
             --bundle-dir release-artifacts \
             --expected-arch arm64 \
-            --team-id "$APPLE_TEAM_ID"
+            --team-id "$APPLE_TEAM_ID" \
+            --output release-artifacts/HTMLslide-release-bundle-evidence.json
 
       - name: Verify RC checklist promotion gate (fail closed)
         shell: bash

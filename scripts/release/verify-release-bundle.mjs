@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstat, readdir, readFile, stat } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
@@ -95,7 +95,7 @@ export async function verifyReleaseBundle({ bundleDir, expectedArch = "arm64", e
 
 export function parseArgs(args) {
   const parsed = {};
-  const allowed = new Set(["bundleDir", "expectedArch", "teamId"]);
+  const allowed = new Set(["bundleDir", "expectedArch", "teamId", "output"]);
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -120,6 +120,9 @@ export function parseArgs(args) {
   if (typeof parsed.bundleDir !== "string" || parsed.bundleDir.trim().length === 0) {
     throw new Error("Missing required --bundle-dir value.");
   }
+  if (parsed.output !== undefined && parsed.output.trim().length === 0) {
+    throw new Error("Missing value for --output.");
+  }
   return parsed;
 }
 
@@ -130,10 +133,47 @@ export async function main(args = process.argv.slice(2)) {
     expectedArch: options.expectedArch ?? "arm64",
     expectedTeamIdentifier: options.teamId
   });
+  if (options.output !== undefined) {
+    const outputPath = path.resolve(options.output);
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, `${JSON.stringify(await sanitizeVerificationResult(result), null, 2)}\n`, "utf8");
+  }
   process.stdout.write(
     `Release bundle verified: ${result.bundleDir}/${result.dmg.fileName} (${result.dmg.sizeBytes} bytes); manifest ${result.manifest.fileName}; security evidence ${result.securityEvidence.fileName}.\n`
   );
   return result;
+}
+
+async function sanitizeVerificationResult(result) {
+  const manifestPath = result.validatedManifest.manifestPath;
+  const securityEvidencePath = path.join(path.dirname(manifestPath), result.securityEvidence.fileName);
+  const [manifestMetadata, securityEvidenceMetadata] = await Promise.all([
+    fileMetadata(manifestPath),
+    fileMetadata(securityEvidencePath)
+  ]);
+
+  return {
+    bundleDir: result.bundleDir,
+    manifest: {
+      fileName: manifestMetadata.fileName,
+      sizeBytes: manifestMetadata.sizeBytes,
+      sha256: manifestMetadata.sha256
+    },
+    dmg: {
+      fileName: result.dmg.fileName,
+      sizeBytes: result.dmg.sizeBytes,
+      sha256: result.dmg.sha256
+    },
+    securityEvidence: {
+      fileName: securityEvidenceMetadata.fileName,
+      sizeBytes: securityEvidenceMetadata.sizeBytes,
+      sha256: securityEvidenceMetadata.sha256
+    },
+    validatedManifest: {
+      arch: result.validatedManifest.arch,
+      channel: result.validatedManifest.channel
+    }
+  };
 }
 
 async function readBundleEntries(bundleDir) {

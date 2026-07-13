@@ -248,6 +248,15 @@ test.describe("HTMLslide desktop accessibility smoke", () => {
     await expect(choicePanel).toBeVisible({ timeout: 30_000 });
     const choices = choicePanel.getByRole("button", { name: /Choose .* visual direction/ });
     await expect(choices).toHaveCount(2);
+    await expect(choices.first()).toBeFocused();
+    const panelBounds = await choicePanel.boundingBox();
+    const choiceBounds = await choices.evaluateAll((elements) => elements.map((element) => {
+      const rect = element.getBoundingClientRect();
+      return { bottom: rect.bottom, top: rect.top };
+    }));
+    expect(panelBounds).not.toBeNull();
+    const panelBottom = (panelBounds?.y ?? 0) + (panelBounds?.height ?? 0);
+    expect(choiceBounds.every((bounds) => bounds.top >= (panelBounds?.y ?? 0) && bounds.bottom <= panelBottom)).toBe(true);
     await choices.nth(1).focus();
     await expect(choices.nth(1)).toBeFocused();
     await expectNoAccessibilityViolations(page, "visual direction choices");

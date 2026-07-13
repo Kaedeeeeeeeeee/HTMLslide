@@ -58,6 +58,36 @@ async function chooseVisualDirection(page: Page, index = 0): Promise<void> {
   await expect(choicePanel).toBeHidden({ timeout: 30_000 });
 }
 
+async function ensureAudienceWindow(electronApp: ElectronApplication, presenter: Page): Promise<Page> {
+  const findAudienceWindow = async (): Promise<Page | undefined> => {
+    for (const candidate of electronApp.windows()) {
+      if (candidate === presenter) {
+        continue;
+      }
+      if (await candidate.locator(".audience-slide-frame").count().catch(() => 0)) {
+        return candidate;
+      }
+    }
+    return undefined;
+  };
+
+  try {
+    await expect.poll(async () => Boolean(await findAudienceWindow()), { timeout: 4_000 }).toBe(true);
+    const autoOpenedAudience = await findAudienceWindow();
+    if (autoOpenedAudience) {
+      return autoOpenedAudience;
+    }
+  } catch {
+    // A single-display rehearsal keeps the explicit Open audience action.
+  }
+
+  const audienceWindowPromise = electronApp.waitForEvent("window");
+  await presenter.getByRole("button", { name: "Open audience", exact: true }).click();
+  const openedAudience = await audienceWindowPromise;
+  await expect.poll(async () => Boolean(await findAudienceWindow()), { timeout: 10_000 }).toBe(true);
+  return (await findAudienceWindow()) ?? openedAudience;
+}
+
 function collectBrowserErrors(page: Page): string[] {
   const browserErrors: string[] = [];
   page.on("console", (message) => {
@@ -1879,9 +1909,7 @@ fetch("${previewNetworkOrigin}/fetch");
     await expect(presenter.getByLabel("Presenter target display")).toBeVisible();
     await expect(presenter.locator(".presenter-notes").getByText("今天我们把 HTML 作为源码")).toBeVisible();
 
-    const audienceWindowPromise = electronApp.waitForEvent("window");
-    await presenter.getByRole("button", { name: "Open audience", exact: true }).click();
-    const audiencePage = await audienceWindowPromise;
+    const audiencePage = await ensureAudienceWindow(electronApp, presenter);
     await audiencePage.waitForLoadState("domcontentloaded");
     const audienceFrame = audiencePage.frameLocator(".audience-slide-frame");
     await expect(audiencePage.getByLabel("HTMLslide audience window")).toBeVisible();
@@ -2088,9 +2116,7 @@ fetch("${previewNetworkOrigin}/fetch");
     await expect(presenter.getByLabel("Presenter target display")).toBeVisible();
     await expect(presenter.locator(".presenter-notes").getByText("今天我们把 HTML 作为源码")).toBeVisible();
 
-    const audiencePromise = electronApp.waitForEvent("window");
-    await presenter.getByRole("button", { name: "Open audience", exact: true }).click();
-    const audiencePage = await audiencePromise;
+    const audiencePage = await ensureAudienceWindow(electronApp, presenter);
     await audiencePage.waitForLoadState("domcontentloaded");
     const audienceFrame = audiencePage.frameLocator(".audience-slide-frame");
     await expect(audiencePage.locator(".audience-slide-frame")).toBeVisible();

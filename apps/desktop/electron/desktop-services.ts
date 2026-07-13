@@ -1540,12 +1540,14 @@ export async function loadDesktopPresenterDeck(
   );
 
   if (exportResult && !exportResult.ok) {
+    const issues = desktopPresenterIssuesFromCliResult(exportResult);
     return {
       ok: false,
       source: "invalid",
       origin: "project-export",
       projectPath: root,
-      error: exportResult.error ?? firstNonEmptyLine(exportResult.stderr) ?? `Export exited with ${exportResult.exitCode}.`
+      error: exportResult.error ?? firstNonEmptyLine(exportResult.stderr) ?? `Export exited with ${exportResult.exitCode}.`,
+      ...(issues.length > 0 ? { issues } : {})
     };
   }
 
@@ -1615,6 +1617,28 @@ function deckpkgPathFromExportResult(result: CliRunResult | undefined): string |
   const artifacts = asRecord(asRecord(result?.json)?.artifacts);
   const deckpkg = artifacts?.deckpkg;
   return typeof deckpkg === "string" && deckpkg.length > 0 ? deckpkg : undefined;
+}
+
+function desktopPresenterIssuesFromCliResult(result: CliRunResult): DesktopPresenterDeckIssue[] {
+  const issues = asRecord(result.json)?.issues;
+  if (!Array.isArray(issues)) {
+    return [];
+  }
+
+  return issues.flatMap((value) => {
+    const issue = asRecord(value);
+    if (!issue || typeof issue.type !== "string" || typeof issue.message !== "string") {
+      return [];
+    }
+
+    return [{
+      severity: typeof issue.severity === "string" ? issue.severity : "error",
+      type: issue.type,
+      message: issue.message,
+      ...(typeof issue.path === "string" ? { path: issue.path } : {}),
+      ...(typeof issue.slideId === "string" ? { slideId: issue.slideId } : {})
+    }];
+  });
 }
 
 export function normalizeDesktopExportOptions(value: unknown): DesktopExportOptions | undefined {

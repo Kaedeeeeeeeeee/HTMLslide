@@ -241,6 +241,14 @@ export const defaultNewDeckExportSelection = (): NewDeckExportSelection => ({
   thumbnails: true
 });
 
+export function shouldAutoOpenAudienceWindow(
+  displayCount: number,
+  audienceWindowOpen: boolean,
+  autoOpenAttempted: boolean
+): boolean {
+  return displayCount > 1 && !audienceWindowOpen && !autoOpenAttempted;
+}
+
 export function newDeckExportSelectionFromOutputs(
   outputs: readonly NewDeckOutputFormat[]
 ): NewDeckExportSelection {

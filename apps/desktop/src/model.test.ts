@@ -13,7 +13,8 @@ import {
   filterQaIssues,
   formatProjectOpenedAt,
   getNextStageIndex,
-  newDeckTargetSlideCount
+  newDeckTargetSlideCount,
+  shouldAutoOpenAudienceWindow
 } from "./model";
 import type { AgentRunEventLike, AgentRunLogLike, AgentStage, QaIssue } from "./model";
 
@@ -258,6 +259,13 @@ describe("desktop model helpers", () => {
       speakerNotes: true,
       thumbnails: false
     });
+  });
+
+  it("auto-opens audience only once when a second display is available", () => {
+    expect(shouldAutoOpenAudienceWindow(1, false, false)).toBe(false);
+    expect(shouldAutoOpenAudienceWindow(2, true, false)).toBe(false);
+    expect(shouldAutoOpenAudienceWindow(2, false, true)).toBe(false);
+    expect(shouldAutoOpenAudienceWindow(2, false, false)).toBe(true);
   });
 
   it("builds a structured agent brief from a new deck draft", () => {

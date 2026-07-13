@@ -12,6 +12,10 @@ Before a first presentation, test keyboard next/previous navigation plus black s
 
 The desktop app can open a no-chrome Audience window and sync navigation, black screen, and white screen state from the presenter session.
 
+When more than one display is detected, Presenter opens Audience once on the preferred external/non-primary display. With
+one display, it stays in rehearsal mode. The `Open audience` control remains available to retry after a failed automatic
+open or to reopen a window that was closed manually.
+
 Use the Audience window for a dry run before relying on a projector. If the window does not open or stops syncing, fall back to single-screen rehearsal and include presenter diagnostics in the bug report.
 
 ## Dual-screen

@@ -3502,7 +3502,19 @@ function requireArg(args, name) {
         exitCode: 2,
         stdout: "",
         stderr: "Export failed because the deck has blocking QA issues.",
-        error: "Export failed"
+        error: "Export failed",
+        json: {
+          status: "failed",
+          issues: [
+            {
+              severity: "error",
+              type: "missing-notes",
+              message: "Slide has no speaker notes file.",
+              path: "notes/001-title.md",
+              slideId: "001-title"
+            }
+          ]
+        }
       };
     };
 
@@ -3523,6 +3535,18 @@ function requireArg(args, name) {
       projectPath,
       source: "invalid"
     });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues).toEqual([
+        {
+          severity: "error",
+          type: "missing-notes",
+          message: "Slide has no speaker notes file.",
+          path: "notes/001-title.md",
+          slideId: "001-title"
+        }
+      ]);
+    }
     expect(calls).toEqual([
       ["export", projectPath, "--no-pdf", "--no-html", "--deckpkg", "--no-thumbnails", "--json"]
     ]);

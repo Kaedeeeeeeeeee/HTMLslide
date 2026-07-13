@@ -97,7 +97,9 @@ HTMLslide.
 
 The desktop Presenter console also reads Electron display metadata and exposes a target-display selector with primary,
 internal/external, scale, and resolution details. The selector can open a separate audience BrowserWindow on the selected
-display. The renderer session remains the source of truth: slide navigation, jump, black screen, and white screen changes
+display. When Presenter detects more than one display, it automatically opens Audience once on the preferred non-primary
+display; a single-display session stays in rehearsal mode, and the button remains available to reopen Audience after a
+manual close or an automatic open failure. The renderer session remains the source of truth: slide navigation, jump, black screen, and white screen changes
 are pushed to the audience window as sanitized slide payloads. When source HTML is available, the audience window renders
 the slide fragment full bleed. Package-backed sessions extract per-slide HTML from `deck.html`, render the single-slide
 document in sandboxed frames for Presenter and Audience views, and keep the package's validated PNG thumbnails as the
@@ -129,5 +131,6 @@ Dual-screen presenter mode is a desktop integration layer over the same package/
 
 - audience view renders a no-chrome BrowserWindow on the selected display and follows the presenter session.
 - presenter console renders current/next previews, notes, timer, progress, display selection, and controls.
+- more than one detected display triggers one automatic Audience open on the preferred non-primary display; one-display sessions remain rehearsal-only until the user opens Audience.
 - automated Electron smoke coverage verifies window creation, slide sync, and black/white screen sync without requiring a physical second monitor.
 - physical dual-screen placement, fullscreen transitions, screen swap, and reconnect behavior remain release-candidate manual validation items.

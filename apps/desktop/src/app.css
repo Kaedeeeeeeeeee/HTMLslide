@@ -1485,6 +1485,10 @@ svg {
   grid-template-rows: auto minmax(0, 1fr) minmax(340px, 40vh);
 }
 
+.workspace-shell--awaiting-choice {
+  grid-template-rows: auto minmax(0, 1fr) minmax(380px, 48vh);
+}
+
 .workspace-toolbar {
   align-items: center;
   background: rgba(255, 255, 255, 0.88);
@@ -2093,6 +2097,10 @@ svg {
   grid-template-rows: minmax(92px, 0.8fr) auto auto;
 }
 
+.agent-console--awaiting-choice {
+  grid-template-rows: minmax(92px, 0.35fr) minmax(250px, 1fr) auto;
+}
+
 .agent-console__timeline {
   display: grid;
   gap: 8px;
@@ -2108,6 +2116,7 @@ svg {
   display: grid;
   gap: 8px;
   min-width: 0;
+  min-height: 0;
   overflow: auto;
   padding: 10px;
 }
@@ -2119,9 +2128,11 @@ svg {
 }
 
 .visual-direction-choice__grid {
+  align-items: start;
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 360px));
+  justify-content: start;
   min-width: 0;
 }
 
@@ -2132,6 +2143,7 @@ svg {
   color: var(--hs-text);
   cursor: pointer;
   display: grid;
+  align-self: start;
   gap: 8px;
   min-width: 0;
   padding: 8px;
@@ -3271,6 +3283,10 @@ svg {
     grid-template-rows: auto minmax(0, 1fr) minmax(390px, 44vh);
   }
 
+  .workspace-shell--awaiting-choice {
+    grid-template-rows: auto minmax(0, 1fr) minmax(360px, 48vh);
+  }
+
   .agent-diff-review__body {
     grid-template-columns: minmax(150px, 0.35fr) minmax(0, 1fr);
   }
@@ -3510,6 +3526,11 @@ svg {
 
   .agent-console {
     max-height: 360px;
+  }
+
+  .workspace-shell--awaiting-choice .agent-console--awaiting-choice {
+    max-height: none;
+    min-height: 440px;
   }
 
   .agent-console--with-diff {

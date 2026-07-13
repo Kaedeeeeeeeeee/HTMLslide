@@ -72,7 +72,8 @@ import {
   buildRuntimeStages,
   countIssuesBySeverity,
   defaultNewDeckExportSelection,
-  filterQaIssues
+  filterQaIssues,
+  shouldAutoOpenAudienceWindow
 } from "../model";
 import type {
   AgentRunEventLike,
@@ -365,6 +366,7 @@ export function Workspace({
   const selectedSlideIssues = filterQaIssues(qaIssues, "all", selectedSlideId);
   const selectedIssues = filterQaIssues(qaIssues, qaFilter, selectedSlideId);
   const issueCounts = countIssuesBySeverity(qaIssues);
+  const awaitingVisualDirection = String(agentRunStatus) === "awaiting-user-choice" && pendingVisualDirections.length > 0;
   const selectedIssueCounts = countIssuesBySeverity(selectedSlideIssues);
   const runtimeStages =
     agentRunEvents.length > 0
@@ -573,7 +575,11 @@ export function Workspace({
   );
 
   return (
-    <main className={diffReview?.open ? "workspace-shell workspace-shell--with-diff" : "workspace-shell"}>
+    <main className={[
+      "workspace-shell",
+      diffReview?.open ? "workspace-shell--with-diff" : "",
+      awaitingVisualDirection ? "workspace-shell--awaiting-choice" : ""
+    ].filter(Boolean).join(" ")}>
       <Toolbar
         canRetry={agentCanRetry}
         generationEnabled={generationEnabled}
@@ -720,6 +726,7 @@ function PresenterMode({
   const [displayResolutionReady, setDisplayResolutionReady] = useState(false);
   const [audienceWindowState, setAudienceWindowState] = useState<DesktopAudienceWindowState>({ open: false });
   const [audienceWindowError, setAudienceWindowError] = useState<string | undefined>();
+  const autoAudienceOpenAttemptedRef = useRef(false);
 
   useEffect(() => {
     const focusFrame = window.requestAnimationFrame(() => shellRef.current?.focus());
@@ -795,6 +802,7 @@ function PresenterMode({
       setDisplayError(undefined);
       setSelectedDisplayId(preferredDisplay?.id);
       setDisplayResolutionReady(true);
+      window.requestAnimationFrame(() => shellRef.current?.focus());
     } catch (error: unknown) {
       if (requestId !== displayRefreshRequestIdRef.current) {
         return;
@@ -804,6 +812,7 @@ function PresenterMode({
       setPresenterDisplays([]);
       setSelectedDisplayId(undefined);
       setDisplayError(error instanceof Error ? error.message : String(error));
+      window.requestAnimationFrame(() => shellRef.current?.focus());
     }
   }, [listPresenterDisplays]);
 
@@ -924,6 +933,15 @@ function PresenterMode({
       });
   }, [audienceWindowRequest, audienceWindowState.open, updateAudienceWindow]);
 
+  useEffect(() => {
+    if (!audienceWindowState.open) {
+      return;
+    }
+
+    const focusFrame = window.requestAnimationFrame(() => shellRef.current?.focus());
+    return () => window.cancelAnimationFrame(focusFrame);
+  }, [audienceWindowState.open]);
+
   const handleOpenAudienceWindow = useCallback((): void => {
     if (!openAudienceWindow) {
       setAudienceWindowError("Audience window is unavailable in this runtime.");
@@ -940,6 +958,27 @@ function PresenterMode({
         setAudienceWindowError(error instanceof Error ? error.message : String(error));
       });
   }, [audienceWindowRequest, openAudienceWindow]);
+
+  useEffect(() => {
+    if (!displayResolutionReady || !openAudienceWindow || !shouldAutoOpenAudienceWindow(
+      presenterDisplays.length,
+      audienceWindowState.open,
+      autoAudienceOpenAttemptedRef.current
+    )) {
+      return;
+    }
+
+    autoAudienceOpenAttemptedRef.current = true;
+    openAudienceWindow(audienceWindowRequest)
+      .then((state) => {
+        setAudienceWindowState(state);
+        setAudienceWindowError(undefined);
+        window.requestAnimationFrame(() => shellRef.current?.focus());
+      })
+      .catch((error: unknown) => {
+        setAudienceWindowError(error instanceof Error ? error.message : String(error));
+      });
+  }, [audienceWindowRequest, audienceWindowState.open, displayResolutionReady, openAudienceWindow, presenterDisplays.length]);
 
   const handleCloseAudienceWindow = useCallback((): void => {
     closeAudienceWindow?.()
@@ -2318,6 +2357,7 @@ function AgentRunConsole({
   pendingVisualDirections
 }: AgentRunConsoleProps): ReactNode {
   const logDetailsRefs = useRef(new Map<string, HTMLDetailsElement>());
+  const visualDirectionChoiceRef = useRef<HTMLElement | null>(null);
   const [selectedDirectionId, setSelectedDirectionId] = useState<string>();
   const hasLogs = stages.some((stage) => Boolean(stage.runId) && stage.logs.length > 0);
   const awaitingVisualDirection =
@@ -2331,7 +2371,15 @@ function AgentRunConsole({
   useEffect(() => {
     if (!awaitingVisualDirection) {
       setSelectedDirectionId(undefined);
+      return;
     }
+
+    const focusFrame = window.requestAnimationFrame(() => {
+      visualDirectionChoiceRef.current
+        ?.querySelector<HTMLButtonElement>("button:not([disabled])")
+        ?.focus();
+    });
+    return () => window.cancelAnimationFrame(focusFrame);
   }, [awaitingVisualDirection]);
 
   const handleVisualDirectionSelect = (directionId: string): void => {
@@ -2364,7 +2412,11 @@ function AgentRunConsole({
 
   return (
     <footer
-      className={diffReview?.open ? "agent-console agent-console--with-diff" : "agent-console"}
+      className={[
+        "agent-console",
+        diffReview?.open ? "agent-console--with-diff" : "",
+        awaitingVisualDirection ? "agent-console--awaiting-choice" : ""
+      ].filter(Boolean).join(" ")}
       data-agent-run-id={runId}
       data-agent-run-status={runStatus}
     >
@@ -2412,6 +2464,7 @@ function AgentRunConsole({
         <VisualDirectionChoicePanel
           directions={pendingVisualDirections}
           onSelect={handleVisualDirectionSelect}
+          panelRef={visualDirectionChoiceRef}
           selectedDirectionId={selectedDirectionId}
         />
       ) : null}
@@ -2533,20 +2586,22 @@ const agentEngineLabels: Record<DesktopAgentEngine, string> = {
 function VisualDirectionChoicePanel({
   directions,
   onSelect,
+  panelRef,
   selectedDirectionId
 }: {
   directions: readonly VisualDirection[];
   onSelect: (directionId: string) => void;
+  panelRef: { current: HTMLElement | null };
   selectedDirectionId?: string;
 }): ReactNode {
   return (
-    <section aria-describedby="visual-direction-choice-description" aria-label="Visual direction choices" className="visual-direction-choice">
+    <section aria-describedby="visual-direction-choice-description" aria-label="Visual direction choices" className="visual-direction-choice" ref={panelRef}>
       <PanelHeader
         actions={<StatusPill tone="warning">Waiting for choice</StatusPill>}
         eyebrow="Visual direction"
-        title="Choose a direction before build"
+        title="Choose a visual direction to continue"
       />
-      <p id="visual-direction-choice-description">
+      <p aria-live="polite" id="visual-direction-choice-description">
         Review the generated directions, then choose one to continue building the deck source.
       </p>
       <div className="visual-direction-choice__grid">

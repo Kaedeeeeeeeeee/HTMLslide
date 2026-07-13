@@ -3,6 +3,8 @@ import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+const fixtureSchemaVersion = "0.1.0";
+
 export async function createByokEvidenceFixture() {
   const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-byok-evidence-"));
   const projectPath = path.join(fixtureRoot, "deck");
@@ -24,7 +26,7 @@ export async function createByokEvidenceFixture() {
     writeFile(path.join(projectPath, slide.notes), `# ${slide.title}\n`, "utf8")
   ]));
   await writeFile(path.join(projectPath, "deck.json"), JSON.stringify({
-    schemaVersion: "0.1.0",
+    schemaVersion: fixtureSchemaVersion,
     id: "fixture-byok-deck",
     title: "Fixture BYOK Deck",
     language: "en-US",
@@ -73,7 +75,7 @@ export async function createByokEvidenceFixture() {
   artifacts.sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)));
   const exportManifestPath = path.join(exportsPath, "export-manifest.json");
   await writeFile(exportManifestPath, JSON.stringify({
-    schemaVersion: "0.1.0",
+    schemaVersion: fixtureSchemaVersion,
     compilerVersion: "0.1.0",
     hashAlgorithm: "sha256",
     sourceDigest,
@@ -109,7 +111,7 @@ export async function createByokEvidenceFixture() {
   const checkpointDeckDigest = createHash("sha256").update(checkpointDeck).digest("hex");
   await writeFile(path.join(checkpointRoot, "snapshot", "deck.json"), checkpointDeck, "utf8");
   await writeFile(path.join(checkpointRoot, "manifest.json"), JSON.stringify({
-    schemaVersion: "0.1.0",
+    schemaVersion: fixtureSchemaVersion,
     id: "checkpoint-run-fixture-provider",
     runId: "run-fixture-provider",
     projectRoot: projectPath,
@@ -130,7 +132,7 @@ export async function createByokEvidenceFixture() {
 
   const reportPath = path.join(reportsPath, "agent-run-run-fixture-provider.json");
   const reportPayload = JSON.stringify({
-    schemaVersion: "0.1.0",
+    schemaVersion: fixtureSchemaVersion,
     kind: "htmlslide-agent-run-report",
     runId: "run-fixture-provider",
     providerId: "htmlslide-byok",

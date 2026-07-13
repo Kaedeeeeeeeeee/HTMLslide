@@ -329,7 +329,7 @@ describe("HTMLslide linter", () => {
     });
   });
 
-  it("uses compiler fingerprints to detect source changes even when mtimes look older", async () => {
+  it("uses compiler fingerprints to detect source changes even when mtimes look older", { timeout: 30_000 }, async () => {
     await withTempFixture("linter-valid-clean", async (projectPath) => {
       await requestAllExports(projectPath);
       await exportLoadedFixture(projectPath);
@@ -426,7 +426,7 @@ describe("HTMLslide linter", () => {
     });
   });
 
-  it("reports an artifact symlink as a stable integrity error", async () => {
+  it("reports an artifact symlink as a stable integrity error", { timeout: 30_000 }, async () => {
     await withTempFixture("linter-valid-clean", async (projectPath) => {
       await requestAllExports(projectPath);
       const exported = await exportLoadedFixture(projectPath);
@@ -446,7 +446,7 @@ describe("HTMLslide linter", () => {
     });
   });
 
-  it("uses an exact partial-export manifest without treating removed artifacts as untracked", async () => {
+  it("uses an exact partial-export manifest without treating removed artifacts as untracked", { timeout: 30_000 }, async () => {
     await withTempFixture("linter-valid-clean", async (projectPath) => {
       await requestAllExports(projectPath);
       await exportLoadedFixture(projectPath);

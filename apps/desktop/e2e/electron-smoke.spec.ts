@@ -2065,6 +2065,10 @@ fetch("${previewNetworkOrigin}/fetch");
     await page.keyboard.press("Escape");
     await expect(presenter).toBeHidden();
 
+    await page.getByRole("button", { name: "Back to Projects", exact: true }).click();
+    const libraryCard = page.locator(".project-card").filter({ hasText: "Valid Full Deck" });
+    await expect(libraryCard.getByText("Ready", { exact: true })).toBeVisible();
+
     await expectNoFrameworkOverlay(page);
     expect(browserErrors).toEqual([]);
   });

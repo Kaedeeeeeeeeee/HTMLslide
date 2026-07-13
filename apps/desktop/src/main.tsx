@@ -470,6 +470,8 @@ function App(): React.ReactNode {
 
   const openPreview = useCallback((preview: DesktopProjectPreview): void => {
     const next = projectPreviewToState(preview);
+    latestOpenRequestPathRef.current = next.project.path;
+    openRequestEpochRef.current += 1;
     setDirectPresenterOpen(undefined);
     setProjectPreviews((current) => ({
       ...current,
@@ -1722,6 +1724,27 @@ function App(): React.ReactNode {
       });
   }, [desktopApi]);
 
+  const updateProjectStatus = useCallback((projectPath: string, status: ProjectSummary["status"]): void => {
+    setProjects((current) => current.map((project) =>
+      project.path === projectPath ? { ...project, status } : project
+    ));
+    setProjectPreviews((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const [projectId, preview] of Object.entries(current)) {
+        if (preview.project.path !== projectPath || preview.project.status === status) {
+          continue;
+        }
+        next[projectId] = {
+          ...preview,
+          project: { ...preview.project, status }
+        };
+        changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, []);
+
   const runProjectCheck = useCallback(async (): Promise<boolean> => {
     if (!desktopApi || !activeProject || activeProject.path.startsWith("~") || activeProjectIsDeckPackage) {
       setInspectorTab("qa");
@@ -1738,6 +1761,7 @@ function App(): React.ReactNode {
       const report = result.json as DesktopCheckReport | undefined;
       setQaIssues(reportToIssues(report));
       setQaCheckStatus(result.ok ? "passed" : "failed");
+      updateProjectStatus(activeProject.path, result.ok ? "Ready" : "Needs check");
       const nextStatus: OperationStatus = {
         kind: result.ok ? "success" : "failed",
         message: result.ok ? "Check passed" : report?.status === "failed" ? "Check found issues" : result.error ?? "Check failed"
@@ -1758,7 +1782,7 @@ function App(): React.ReactNode {
     } finally {
       setPreviewRevision((current) => current + 1);
     }
-  }, [activeProject, activeProjectIsDeckPackage, desktopApi, updateCommandActionStatus]);
+  }, [activeProject, activeProjectIsDeckPackage, desktopApi, updateCommandActionStatus, updateProjectStatus]);
 
   const runCheck = useCallback((): void => {
     void runProjectCheck();
@@ -1817,6 +1841,7 @@ function App(): React.ReactNode {
     try {
       const result = await desktopApi.exportProject(activeProject.path, exportOptions);
       const report = result.json as DesktopCheckReport | undefined;
+      updateProjectStatus(activeProject.path, result.ok ? "Ready" : "Export failed");
       if (!result.ok && report?.status === "failed") {
         setQaIssues(reportToIssues(report));
         setInspectorTab("qa");
@@ -1838,7 +1863,7 @@ function App(): React.ReactNode {
     } finally {
       setPreviewRevision((current) => current + 1);
     }
-  }, [activeProject, activeProjectIsDeckPackage, desktopApi, runProjectCheck, updateCommandActionStatus]);
+  }, [activeProject, activeProjectIsDeckPackage, desktopApi, runProjectCheck, updateCommandActionStatus, updateProjectStatus]);
 
   const loadPresenterDeck = useCallback(async (): Promise<PresenterDeck | null> => {
     if (directPresenterOpen && activeProject?.path === directPresenterOpen.deckpkgPath) {

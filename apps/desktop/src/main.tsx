@@ -4,6 +4,7 @@ import "./app.css";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { PresenterDeck } from "@htmlslide/presenter/session";
+import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { Onboarding } from "./components/Onboarding";
 import { ProjectLibrary } from "./components/ProjectLibrary";
 import { Workspace, type AgentDiffReview } from "./components/Workspace";
@@ -2393,7 +2394,9 @@ if (!root) {
 }
 
 createRoot(root).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
+  <AppErrorBoundary>
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
+  </AppErrorBoundary>
 );

@@ -211,7 +211,7 @@ export function ProjectLibrary({
       </aside>
 
       <section className="library-main">
-        {activeSection === "recent" ? (
+        <div hidden={activeSection !== "recent"}>
           <RecentProjects
             aiEngineSettings={aiEngineSettings}
             externalAgentStatuses={externalAgentStatuses}
@@ -225,7 +225,7 @@ export function ProjectLibrary({
             projects={projects}
             workspacePath={workspacePath}
           />
-        ) : null}
+        </div>
 
         {activeSection === "ai-engines" ? (
           <AiEngineSettingsPanel

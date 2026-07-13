@@ -553,6 +553,11 @@ test.describe("HTMLslide desktop smoke", () => {
     await newDeckPanel.getByRole("button", { name: /No AI/ }).click();
     await newDeckPanel.getByLabel("Deck title").fill("Investor Update");
     await expect(newDeckPanel.getByLabel("Folder")).toHaveValue("investor-update");
+    await templatesNav.click();
+    await expect(page.getByRole("heading", { name: "Templates", exact: true })).toBeVisible();
+    await recentNav.click();
+    await expect(page.getByLabel("Deck title")).toHaveValue("Investor Update");
+    await expect(page.getByLabel("Folder")).toHaveValue("investor-update");
     await newDeckPanel.getByRole("button", { name: "Add files", exact: true }).click();
     await expect(newDeckPanel.getByText("research.csv", { exact: true })).toBeVisible();
     await newDeckPanel.getByRole("button", { name: "Paste text", exact: true }).click();

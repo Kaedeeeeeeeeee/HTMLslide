@@ -226,6 +226,15 @@ describe("CLI project helpers", { timeout: 20_000 }, () => {
     expect(report.checks).toContainEqual(expect.objectContaining({ id: "chromium", status: "passed" }));
   });
 
+  it("exposes the run-bound real-provider RC acceptance command", async () => {
+    const { stdout } = await runCli(["rc", "byok", "--help"]);
+    expect(stdout).toContain("--project <path>");
+    expect(stdout).toContain("--api-key-env <name>");
+    expect(stdout).toContain("--target-slide-count <count>");
+    expect(stdout).toContain("run-bound");
+    expect(stdout).toContain("sanitized evidence");
+  });
+
   it("fails doctor when the CLI shim path is occupied by an unmanaged command", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-doctor-"));
     try {

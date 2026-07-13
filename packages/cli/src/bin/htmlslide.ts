@@ -46,6 +46,7 @@ import {
   validateAgentProviderCredentials,
   validateDeckPackageForPresentation
 } from "../index.js";
+import { runRcByokAcceptance } from "../rc-acceptance.js";
 
 try {
   await configureCliBrowserRuntime();
@@ -105,6 +106,19 @@ type AgentValidateProviderCommandOptions = JsonOption & {
   baseUrl?: string;
   model: string;
   provider: string;
+};
+
+type RcByokCommandOptions = JsonOption & {
+  apiKeyEnv: string;
+  artifactUrl?: string;
+  baseUrl?: string;
+  commit?: string;
+  model: string;
+  project: string;
+  provider: string;
+  speakerNotes?: string;
+  targetSlideCount?: string;
+  task: string;
 };
 
 type RepairCommandOptions = JsonOption & {
@@ -902,6 +916,43 @@ agentCommand
       if (result.status === "failed") {
         process.exit(result.exitCode);
       }
+    } catch (error) {
+      fail(error, json);
+    }
+  });
+
+const rcCommand = program.command("rc").description("Run release-candidate acceptance workflows.");
+
+rcCommand
+  .command("byok")
+  .requiredOption("--provider <provider>", "provider id: openai, anthropic, or compatible")
+  .requiredOption("--model <model>", "provider model id")
+  .requiredOption("--api-key-env <name>", "environment variable that contains the provider API key")
+  .requiredOption("--task <task>", "brief for the real provider-backed deck run")
+  .option("--project <path>", "deck project path", process.cwd())
+  .option("--base-url <url>", "OpenAI-compatible provider API root")
+  .option("--target-slide-count <count>", "target slide count from 8 through 12", "8")
+  .option("--speaker-notes <mode>", "speaker notes mode: none, bullet-notes, full-script, or rehearsal-cues")
+  .option("--commit <commit>", "caller-declared candidate commit for evidence binding")
+  .option("--artifact-url <url-or-label>", "caller-declared candidate artifact URL or local label")
+  .option("--json", "print machine-readable JSON")
+  .description("Validate a real provider, generate a deck, check/export it, and write run-bound sanitized evidence.")
+  .action(async (options: RcByokCommandOptions) => {
+    const json = Boolean(options.json ?? program.opts<JsonOption>().json);
+    try {
+      const result = await runRcByokAcceptance({
+        apiKeyEnv: options.apiKeyEnv,
+        artifactUrl: options.artifactUrl,
+        baseUrl: options.baseUrl,
+        commit: options.commit,
+        model: options.model,
+        projectPath: options.project,
+        provider: options.provider,
+        speakerNotesMode: options.speakerNotes,
+        targetSlideCount: options.targetSlideCount === undefined ? undefined : Number(options.targetSlideCount),
+        task: options.task
+      });
+      writeResult(result, json);
     } catch (error) {
       fail(error, json);
     }

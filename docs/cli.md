@@ -20,6 +20,7 @@ htmlslide mcp --list-tools --json
 htmlslide mcp demo --status --json
 umask 077
 htmlslide agent validate-provider --provider openai --model <openai-model-id> --api-key-env OPENAI_API_KEY --json > /path/to/provider-validation.json
+htmlslide rc byok --project /path/to/generated-deck --provider openai --model <openai-model-id> --api-key-env OPENAI_API_KEY --task "Create an 8-slide product update" --target-slide-count 8 --json
 htmlslide doctor --json
 ```
 
@@ -80,6 +81,27 @@ htmlslide agent validate-provider --provider compatible --model <compatible-mode
 ```
 
 The command reads the provider key only from the named environment variable. It prints the variable name, provider, model, and sanitized credential status; it does not print the key value.
+
+## Release-candidate BYOK acceptance
+
+For a real provider-backed acceptance run, use the one-step command from a shell that has the provider key in the named environment variable:
+
+```bash
+htmlslide rc byok \
+  --project /path/to/generated-deck \
+  --provider openai \
+  --model <openai-model-id> \
+  --api-key-env OPENAI_API_KEY \
+  --task "Create an 8-slide product update" \
+  --target-slide-count 8 \
+  --commit <candidate-commit> \
+  --artifact-url <candidate-artifact-url> \
+  --json
+```
+
+The command validates the provider before generation, runs the real provider-backed agent, forces PDF/deckpkg/thumbnail export, and requires the authoritative Check to pass with zero errors. It writes `provider-validation.json` and `evidence.json` under `.htmlslide/reports/rc-evidence-<run-id>/`. Those files contain only relative paths, byte sizes, SHA-256 digests, run metadata, and pass/fail checks; API key values and absolute machine paths are never recorded. The command is evidence generation for the exact candidate under test, not a fake-provider test and not a claim of real Claude Code, Codex, Gemini, or physical dual-screen support.
+
+The lower-level `pnpm rc:byok-evidence` command remains available for verifying a separately completed desktop run and its existing sanitized report.
 
 ## Setup commands
 

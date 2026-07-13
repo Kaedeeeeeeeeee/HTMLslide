@@ -30,6 +30,7 @@ These gates are expected before each alpha candidate:
 | Built-in external adapter contract | Fake Claude/Codex runners verify fixed argv, isolated temporary cwd, command-contract probing, permission flags, bounded metadata-only logs, process-group cancellation, conflict-safe source application, checkpoint diff, and Check/Export gating. Shared external-run E2E covers retry; the built-in Codex E2E covers review and revert. | `pnpm test`, `pnpm e2e:desktop`, `CI` |
 | Alpha package | Unsigned DMG/ZIP/manifest plus artifact SHA-256 metadata and a prefilled RC acceptance template are created. The app contains private `browser-runtime.json` plus Chromium, and package smoke forces packaged CLI rendering through that runtime before packaged app and MCP checks. | `pnpm verify:package:alpha`, `Alpha Package` |
 | Relocatable release bundle | The final copied release-artifacts directory is revalidated for one release manifest, one DMG, bundle-relative references, security evidence, and matching SHA-256 metadata before upload or GitHub Release publication. | `pnpm release:bundle:verify`, `Release macOS` |
+| RC BYOK command contract | The shared `htmlslide rc byok` argument shape, provider-validation-first ordering, fixture-safe JSON contract, and run-bound evidence path are covered by deterministic/fake-provider tests. This proves the command contract only, not live provider success. | CLI contract tests, `CI` |
 | Remote CI | Main branch CI and Docs Pages complete for the candidate commit. | GitHub Actions `CI`, `Docs Pages` |
 
 ## Automated Alpha Coverage
@@ -48,6 +49,7 @@ These gates are expected before each alpha candidate:
 | Project Library shows recent projects | Electron E2E covers recent project management. |
 | Local Mock provider completes the flow | Agent tests, CLI tests, and Electron E2E cover deterministic mock generation. |
 | BYOK source writes/check/export path | Provider adapters use fake fetch tests; Electron E2E covers a local OpenAI-compatible fake provider through AI Engines, New Deck, source writes, check, export, and sanitized run reports without real credentials. |
+| Shared RC BYOK command contract | Deterministic provider fixtures cover accepted arguments, provider validation before generation, PDF/deckpkg/thumbnail export ordering, sanitized JSON, and `.htmlslide/reports/rc-evidence-<run-id>/` binding. Fake-provider coverage does not satisfy the real-provider gate. |
 | Generate outline, choose visual direction, and build full deck | Core orchestrator tests cover the selection state; desktop Local Mock and BYOK E2E pause before Build, expose direction cards, and verify the selected direction is used in the final report. External-agent commands keep their command-owned flow. |
 | Check finds overflow | Linter fixtures and Electron QA panel E2E cover text overflow issues. |
 | Check finds missing asset | Linter fixtures and Electron QA panel E2E cover missing asset issues. |
@@ -76,7 +78,7 @@ These items require human evidence for the exact artifact before an alpha build 
 | --- | --- |
 | Clean macOS install | Completed checklist from `pnpm rc:checklist` on a clean account or isolated machine. |
 | Gatekeeper behavior | Screenshot or note confirming expected unsigned alpha warning or signed release behavior. |
-| Real BYOK provider | At least one real provider account with sanitized `htmlslide agent validate-provider --json` output plus passing `pnpm rc:byok-evidence` evidence for the exact 8-12 slide desktop run and candidate artifact. |
+| Real BYOK provider | The exact packaged candidate must run the shared `htmlslide rc byok` command with a real `openai`, `anthropic`, or `compatible` provider. Evidence must show provider validation first, real generation, Check, PDF/deckpkg/thumbnail export, and sanitized run-bound files under `.htmlslide/reports/rc-evidence-<run-id>/`. A fake-provider test or the command contract alone does not satisfy this row. |
 | Real Claude Code compatibility claim | The exact packaged RC runs a deck edit through the tester's own authenticated Claude Code installation; evidence includes detected version/auth state, permission summary, completed edit, cancellation behavior, diff review, Check/Export result, revert result, and secret-safety review. |
 | Real Codex compatibility claim | The exact packaged RC runs a deck edit through the tester's own authenticated Codex installation; evidence includes detected version and `codex login status`, sandbox/permission summary, completed edit, cancellation behavior, diff review, Check/Export result, revert result, and secret-safety review. |
 | Gemini CLI status | Detection may be recorded, but Gemini remains detection-only. A headless editing claim is not permitted until a separate non-interactive authentication and permission contract is implemented, tested, and manually validated. |
@@ -92,20 +94,26 @@ pnpm rc:checklist -- --channel alpha --ci-run-url <ci-url> --package-run-url <al
 
 The generated checklist lives under `dist/acceptance/` and is intentionally not committed. The Alpha Package and Release macOS workflows also upload a prefilled, incomplete RC checklist alongside the candidate artifacts so human testers can complete evidence against the exact run. Attach or paste the completed evidence into the release candidate notes.
 
-For BYOK evidence, run provider validation from a shell that has the key in an environment variable, not in the command line:
+For the real-provider manual gate, run the shared acceptance command from a shell that has the key in an environment variable, not in the command line:
 
 ```bash
 umask 077
-htmlslide agent validate-provider --provider openai --model <model-id> --api-key-env OPENAI_API_KEY --json > /path/to/provider-validation.json
+htmlslide rc byok --project <deck-path> --provider openai|anthropic|compatible --model <model-id> --api-key-env <ENV_NAME> --task <brief> --target-slide-count <8-12> --json
 ```
 
-Save the JSON output, generate an explicit 8-12 slide deck in the desktop candidate, then verify the exact run:
+Optional candidate binding and run controls are `--base-url <url>`, `--commit <commit>`, `--artifact-url <url>`, and `--speaker-notes <mode>`. Use the command from the exact candidate binary being tested.
+
+The command writes sanitized run-bound evidence under `.htmlslide/reports/rc-evidence-<run-id>/`. The named environment variable and any desktop Keychain-backed credential remain outside the project; API key values are never written to the evidence.
+
+For implementation-level verification of an already captured run, the lower-level verifier remains available:
 
 ```bash
 pnpm rc:byok-evidence -- --project <deck-path> --provider-validation <validation.json> --run-id <run-id> --commit <commit> --artifact-url <artifact-url>
 ```
 
-The provider JSON alone proves only credential/model reachability. BYOK release evidence is complete only when the verifier passes, its sanitized JSON is attached to the candidate notes, and the completed checklist confirms that the caller-declared commit/artifact labels identify the exact package tested.
+That verifier does not replace the unified real-provider acceptance path once `htmlslide rc byok` is available.
+
+The automated command contract proves only orchestration and sanitization with deterministic test inputs. BYOK release evidence is complete only after the unified command succeeds with a real provider against the exact candidate, its sanitized run-bound evidence is attached to the candidate notes, and the completed checklist confirms that the caller-declared commit/artifact labels identify the exact package tested.
 
 Fake Claude/Codex executables in unit, service, Electron, or packaging tests are automated evidence. They do not satisfy either real-account row above. Manual evidence is valid only for the exact packaged artifact named in the checklist; a result from a source checkout, a different build, or another tester's login does not transfer to the candidate.
 

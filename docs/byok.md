@@ -36,6 +36,30 @@ htmlslide agent validate-provider --provider compatible --model <compatible-mode
 
 The command accepts an environment variable name, not a raw API key value. Save its sanitized JSON output to a local file. Do not paste API keys into terminal history, issue reports, screenshots, project files, or `.htmlslide/reports/`.
 
+## Shared RC BYOK Acceptance Path
+
+The shared CLI acceptance path is `htmlslide rc byok`:
+
+```bash
+htmlslide rc byok --project <deck-path> --provider openai|anthropic|compatible --model <model-id> --api-key-env <ENV_NAME> --task <brief> --target-slide-count <8-12> --json
+```
+
+The optional flags are `--base-url <url>` for a compatible provider, `--commit <commit>` and `--artifact-url <url>` for candidate binding, and `--speaker-notes <mode>` for the requested notes mode. The provider value must be one of `openai`, `anthropic`, or `compatible`, and the target slide count must be an integer from 8 through 12.
+
+The command is part of the current candidate CLI. Manual evidence must still use the exact packaged candidate under test.
+
+The planned run order is fixed:
+
+1. Validate the provider and selected model first.
+2. Run a real provider-backed deck generation for the requested task.
+3. Run the authoritative Check.
+4. Export PDF, deckpkg, and thumbnails.
+5. Write sanitized, run-bound evidence under `.htmlslide/reports/rc-evidence-<run-id>/`.
+
+The API key remains outside the project: the CLI receives an environment variable name, and the desktop credential path remains environment/Keychain-backed. Keys and raw provider responses are never written to the evidence directory. The JSON result and evidence may contain sanitized provider/model metadata, run identifiers, artifact fingerprints, and caller-declared candidate labels, but not key values.
+
+This command is required evidence for the manual real-provider Alpha/RC row. It is not a fake-provider test, and a successful run does not by itself prove Claude Code or Codex compatibility, physical dual-screen presenter support, visual quality, or release signing/notarization.
+
 ## Provider Flow
 
 1. Open AI Engines.
@@ -64,4 +88,4 @@ The verifier reads only sanitized run/project artifacts. It does not read Keycha
 
 `--commit` and `--artifact-url` are recorded as caller-declared candidate labels. The completed RC checklist remains responsible for confirming that those labels identify the packaged artifact actually tested; the verifier does not download the app artifact.
 
-Automated tests use fake fetch implementations and mock providers. A real provider run and its successful `rc:byok-evidence` output remain a manual release step.
+Automated tests use fake fetch implementations and mock providers. They can validate the `rc byok` command contract and its sanitization, but they do not satisfy the real-provider Alpha/RC gate. A real provider run against the exact candidate remains a manual release step.

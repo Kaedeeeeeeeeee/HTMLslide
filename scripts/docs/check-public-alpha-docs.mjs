@@ -23,7 +23,7 @@ const requiredFiles = {
   "docs/connect-codex.md": ["Codex", "detection", "Generic", "manual validation"],
   "docs/connect-gemini.md": ["Gemini CLI", "detection", "GEMINI_API_KEY", "Vertex AI", "Generic", "manual validation"],
   "docs/project-structure.md": ["Project Structure", "deck.json", "slides/", "exports/"],
-  "docs/cli.md": ["CLI", "htmlslide new", "htmlslide templates list", "htmlslide check", "htmlslide export", "htmlslide doctor"],
+  "docs/cli.md": ["CLI", "htmlslide new", "htmlslide templates list", "htmlslide check", "htmlslide export", "htmlslide rc byok", "htmlslide doctor"],
   "docs/mcp.md": ["MCP", "project boundary", "path traversal", "alpha"],
   "docs/skills.md": ["Skills", "official skills", "SKILL.md", "license"],
   "docs/design-skills.md": ["Design Skills", "fixed 1920x1080", "swiss-editorial", "data-report"],

@@ -53,6 +53,12 @@ Use deterministic fixtures and avoid real provider credentials in automated test
 - Docs publishing tests: `pnpm docs:check` validates required public docs, local Markdown links, forbidden over-promising claims, GitHub issue template contracts for reproducible bugs, rendering bugs, external-agent bugs, feature requests, skill contributions, private security reporting, and the pull request template. `pnpm docs:build` renders `docs/**/*.md` into `dist/docs-site`, writes `.nojekyll`, copies static assets, and validates generated local links before GitHub Pages upload.
 - Version tests: `pnpm version:check` verifies every workspace `package.json` stays on the root app version, `packages/core/src/version.ts` exposes the matching `HTMLSLIDE_APP_VERSION`, `DECK_SCHEMA_VERSION` and `EXPORT_MANIFEST_SCHEMA_VERSION` remain semver and independent, and production code does not reintroduce version literals where the core constants should be used.
 
+### RC BYOK Acceptance Contract
+
+The shared `htmlslide rc byok` command is an orchestration contract, not a live-credential CI test. Its deterministic/fake-provider coverage must assert the documented arguments, provider validation before generation, real-flow stage ordering through Check and PDF/deckpkg/thumbnail export, `--json` sanitization, and run-bound evidence under `.htmlslide/reports/rc-evidence-<run-id>/`. Tests must prove that environment variable names and Keychain-backed credentials are not copied into evidence.
+
+CI must use fake fetch/provider fixtures for this contract and must not require an API key. A passing contract test does not satisfy the manual real-provider Alpha/RC row; that row requires the same command against a real provider and the exact candidate artifact. It also does not prove Claude Code, Codex, or physical dual-screen support.
+
 ## Performance Smoke
 
 Run the deterministic package-level performance smoke when touching project preview, compiler export, checker, presenter session, or desktop service paths:

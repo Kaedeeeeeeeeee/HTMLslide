@@ -51,7 +51,6 @@ const temporaryRoots: string[] = [];
 
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
-  await rm(visualDiffOutputPath, { recursive: true, force: true });
 });
 
 const loadCompilerProject = async (projectPath: string): Promise<CompilerProjectInput> => {

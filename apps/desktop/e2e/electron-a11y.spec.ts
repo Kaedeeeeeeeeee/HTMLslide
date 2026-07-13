@@ -369,6 +369,8 @@ test.describe("HTMLslide desktop accessibility smoke", () => {
     await expect(page.getByRole("heading", { name: "CLI Integration", exact: true })).toBeVisible();
     await expect(page.getByRole("status", { name: "CLI integration operation status" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "HTMLslide Skills", exact: true })).toBeVisible();
+    const settingsLayout = page.locator(".settings-layout");
+    await expect.poll(() => settingsLayout.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ").length)).toBe(2);
     const skillsPanel = page.locator(".cli-settings-card").filter({
       has: page.getByRole("heading", { name: "HTMLslide Skills", exact: true })
     });
@@ -378,6 +380,10 @@ test.describe("HTMLslide desktop accessibility smoke", () => {
     await antiAiSlopSkill.getByRole("button", { name: "Inspect anti-ai-slop", exact: true }).click();
     await expect(antiAiSlopSkill.getByLabel("anti-ai-slop risk flags")).toContainText("Modifies source: yes");
     await expectNoAccessibilityViolations(page, "settings and official skills");
+
+    await page.setViewportSize({ width: 900, height: 800 });
+    await expect.poll(() => settingsLayout.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ").length)).toBe(1);
+    await expectNoAccessibilityViolations(page, "settings and official skills narrow");
 
     await expectNoFrameworkOverlay(page);
     expect(browserErrors).toEqual([]);

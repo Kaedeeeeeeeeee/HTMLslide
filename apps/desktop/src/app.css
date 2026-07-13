@@ -864,6 +864,15 @@ svg {
   gap: 18px;
 }
 
+.settings-layout {
+  align-items: start;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-layout > .ai-settings {
+  grid-column: 1 / -1;
+}
+
 .ai-settings__modes,
 .ai-settings__grid {
   display: grid;
@@ -3331,6 +3340,14 @@ svg {
 }
 
 @media (max-width: 1100px) {
+  .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-layout > .ai-settings {
+    grid-column: auto;
+  }
+
   .ai-settings__modes,
   .ai-settings__grid {
     grid-template-columns: minmax(0, 1fr);

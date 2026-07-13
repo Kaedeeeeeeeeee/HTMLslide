@@ -47,6 +47,7 @@ import {
   type NewDeckExportSelection,
   type OperationStatus,
   type ProjectSummary,
+  type QaCheckStatus,
   type QaFilter,
   type QaIssue,
   type SlideSummary
@@ -67,7 +68,6 @@ import {
   agentStages,
   onboardingSteps,
   projects as sampleProjects,
-  qaIssues as sampleQaIssues,
   slides as sampleSlides
 } from "./sampleData";
 
@@ -278,7 +278,8 @@ function App(): React.ReactNode {
   const [selectedSlideId, setSelectedSlideId] = useState(sampleSlides[0]?.id ?? "");
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("qa");
   const [qaFilter, setQaFilter] = useState<QaFilter>("all");
-  const [qaIssues, setQaIssues] = useState<QaIssue[]>(sampleQaIssues);
+  const [qaIssues, setQaIssues] = useState<QaIssue[]>([]);
+  const [qaCheckStatus, setQaCheckStatus] = useState<QaCheckStatus>("not-checked");
   const [commandValue, setCommandValue] = useState("");
   const [running, setRunning] = useState(false);
   const [activeStageIndex, setActiveStageIndex] = useState(4);
@@ -327,6 +328,22 @@ function App(): React.ReactNode {
   const smokeDeckPackageReportedRef = useRef(false);
   const desktopApi = getDesktopApi();
 
+  const resetWorkspaceRuntime = useCallback((): void => {
+    agentRunSnapshotRef.current = undefined;
+    appliedTerminalResultRunIdsRef.current.clear();
+    handledTerminalSnapshotRunIdsRef.current.clear();
+    setAgentRunSnapshot(undefined);
+    setAgentRunEvents([]);
+    setAgentRunLogs([]);
+    setAgentCancelPendingRunId(undefined);
+    setActiveStageIndex(0);
+    setRunning(false);
+    setQaCheckStatus("not-checked");
+    setQaIssues([]);
+    setDiffReview(undefined);
+    setCommandActionStatuses(defaultCommandActionStatuses());
+  }, []);
+
   const beginOpenRequest = useCallback((path: string, requestId: number | undefined): boolean => {
     if (requestId !== undefined && requestId <= latestOpenRequestIdRef.current) {
       return false;
@@ -357,8 +374,7 @@ function App(): React.ReactNode {
       setSelectedProjectId(next.project.id);
       setActiveSlides(next.slides);
       setSelectedSlideId(next.slides[0]?.id ?? "");
-      setQaIssues([]);
-      setDiffReview(undefined);
+      resetWorkspaceRuntime();
       setDirectPresenterOpen({
         id: `${result.deckpkgPath}:${result.deck.slides.length}:${Date.now()}`,
         source: "deckpkg-file",
@@ -381,7 +397,7 @@ function App(): React.ReactNode {
       ...current,
       review: { kind: "failed", message: result.source === "missing" ? "Deck package missing" : "Deck package invalid" }
     }));
-  }, []);
+  }, [resetWorkspaceRuntime]);
 
   const reportSmokeReady = useCallback(
     async (marker: DesktopSmokeReadyMarker): Promise<void> => {
@@ -461,14 +477,13 @@ function App(): React.ReactNode {
     setSelectedProjectId(next.project.id);
     setActiveSlides(next.slides);
     setSelectedSlideId(next.slides[0]?.id ?? "");
-    setQaIssues([]);
-    setDiffReview(undefined);
+    resetWorkspaceRuntime();
     setOperationStatus({
       kind: "success",
       message: "Project loaded"
     });
     setView("workspace");
-  }, []);
+  }, [resetWorkspaceRuntime]);
 
   const openProjectPath = useCallback(
     async (projectPath: string, requestId?: number): Promise<DesktopProjectPreview | undefined> => {
@@ -762,6 +777,13 @@ function App(): React.ReactNode {
           : undefined
       );
       setRunning(false);
+      setQaCheckStatus(
+        result.check
+          ? result.check.ok
+            ? "passed"
+            : "failed"
+          : "not-checked"
+      );
       setOperationStatus({
         kind: result.ok && !cancelled ? "success" : "failed",
         message: cancelled
@@ -931,6 +953,8 @@ function App(): React.ReactNode {
       setRunning(true);
       setActiveStageIndex(0);
       setInspectorTab("qa");
+      setQaCheckStatus("not-checked");
+      setQaIssues([]);
       setAgentRunEvents([]);
       setAgentRunLogs([]);
       setDiffReview(undefined);
@@ -1254,6 +1278,12 @@ function App(): React.ReactNode {
     },
     [desktopApi, openPreview, projectPreviews, projects]
   );
+
+  const handleBackToLibrary = useCallback((): void => {
+    setDirectPresenterOpen(undefined);
+    setLibrarySection("recent");
+    setView("library");
+  }, []);
 
   const handleRemoveProject = useCallback((projectId: string): void => {
     const removedProject = projects.find((project) => project.id === projectId);
@@ -1625,6 +1655,7 @@ function App(): React.ReactNode {
       const result = await desktopApi.checkProject(activeProject.path);
       const report = result.json as DesktopCheckReport | undefined;
       setQaIssues(reportToIssues(report));
+      setQaCheckStatus(result.ok ? "passed" : "failed");
       const nextStatus: OperationStatus = {
         kind: result.ok ? "success" : "failed",
         message: result.ok ? "Check passed" : report?.status === "failed" ? "Check found issues" : result.error ?? "Check failed"
@@ -1639,6 +1670,7 @@ function App(): React.ReactNode {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       setOperationStatus({ kind: "failed", message });
+      setQaCheckStatus("failed");
       updateCommandActionStatus("check", { kind: "failed", message });
       return false;
     } finally {
@@ -1925,6 +1957,7 @@ function App(): React.ReactNode {
           setActiveSlides(next.slides);
           setSelectedSlideId(next.slides[0]?.id ?? "");
         }
+        setQaCheckStatus("not-checked");
         setQaIssues([]);
         setDiffReview((current) =>
           current
@@ -2052,6 +2085,7 @@ function App(): React.ReactNode {
       inspectorTab={inspectorTab}
       initialPresenterOpen={directPresenterOpen}
       onAcceptDiff={handleAcceptDiff}
+      onBackToLibrary={handleBackToLibrary}
       onCloseDiff={handleCloseDiff}
       onCommandChange={setCommandValue}
       onCommandSubmit={() => {
@@ -2116,6 +2150,7 @@ function App(): React.ReactNode {
       onSelectVisualDirection={chooseVisualDirection}
       project={activeProject}
       previewRevision={previewRevision}
+      qaCheckStatus={qaCheckStatus}
       pendingVisualDirections={agentRunSnapshot?.pendingVisualDirections ?? []}
       qaFilter={qaFilter}
       qaIssues={qaIssues}

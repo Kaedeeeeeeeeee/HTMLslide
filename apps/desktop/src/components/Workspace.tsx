@@ -26,6 +26,7 @@ import {
 } from "@htmlslide/shared-ui";
 import {
   Activity,
+  ArrowLeft,
   ArrowLeftRight,
   Ban,
   CheckCircle2,
@@ -85,6 +86,7 @@ import type {
   NewDeckExportSelection,
   OperationStatus,
   ProjectSummary,
+  QaCheckStatus,
   QaFilter,
   QaIgnoreScope,
   QaIssue,
@@ -119,6 +121,7 @@ interface WorkspaceProps {
   inspectorTab: InspectorTab;
   project: ProjectSummary;
   previewRevision: number;
+  qaCheckStatus: QaCheckStatus;
   qaFilter: QaFilter;
   qaIssues: QaIssue[];
   running: boolean;
@@ -135,6 +138,7 @@ interface WorkspaceProps {
   notesSaveStatus: OperationStatus;
   notesReadOnly: boolean;
   onAcceptDiff?: () => void;
+  onBackToLibrary: () => void;
   onCloseDiff?: () => void;
   onCommandChange: (value: string) => void;
   onCommandSubmit: () => void;
@@ -317,6 +321,7 @@ export function Workspace({
   initialPresenterOpen,
   inspectorTab,
   onAcceptDiff,
+  onBackToLibrary,
   onCloseDiff,
   onCommandChange,
   onCommandSubmit,
@@ -348,6 +353,7 @@ export function Workspace({
   pendingVisualDirections,
   project,
   previewRevision,
+  qaCheckStatus,
   qaFilter,
   qaIssues,
   running,
@@ -377,8 +383,10 @@ export function Workspace({
   const qaIssuesForFilter = filterQaIssues(qaIssues, qaFilter);
   const issueCounts = countIssuesBySeverity(qaIssues);
   const awaitingVisualDirection = String(agentRunStatus) === "awaiting-user-choice" && pendingVisualDirections.length > 0;
-  const runtimeStages =
-    agentRunEvents.length > 0
+  const hasAgentRun = running || Boolean(agentRunId) || agentRunEvents.length > 0;
+  const runtimeStages = !hasAgentRun
+    ? []
+    : agentRunEvents.length > 0
       ? buildAgentRunStages(agentRunEvents, agentRunLogs, stages)
       : buildRuntimeStages(stages, activeStageIndex, running);
   const previewCacheRef = useRef(new Map<string, DesktopSlidePreviewDocument>());
@@ -593,6 +601,7 @@ export function Workspace({
         canRetry={agentCanRetry}
         generationEnabled={generationEnabled}
         issueCounts={issueCounts}
+        onBackToLibrary={onBackToLibrary}
         onInspectorTabChange={onInspectorTabChange}
         onRunAction={onRunAction}
         onSettingsOpen={onSettingsOpen}
@@ -626,6 +635,7 @@ export function Workspace({
           issueCounts={issueCounts}
           exportIssueCounts={issueCounts}
           issues={qaIssuesForFilter}
+          qaCheckStatus={qaCheckStatus}
           onQaFilterChange={onQaFilterChange}
           onFixQaIssue={onFixQaIssue}
           onIgnoreQaIssue={onIgnoreQaIssue}
@@ -1599,6 +1609,7 @@ interface ToolbarProps {
   project: ProjectSummary;
   running: boolean;
   statuses: CommandActionStatuses;
+  onBackToLibrary: () => void;
   onInspectorTabChange: (tab: InspectorTab) => void;
   onRunAction: (action: "start" | "pause" | "cancel" | "retry") => void;
   onSettingsOpen: () => void;
@@ -1609,6 +1620,7 @@ function Toolbar({
   canRetry,
   generationEnabled,
   issueCounts,
+  onBackToLibrary,
   onInspectorTabChange,
   onRunAction,
   onSettingsOpen,
@@ -1622,6 +1634,11 @@ function Toolbar({
   return (
     <header className="workspace-toolbar">
       <div className="workspace-title">
+        <IconButton
+          icon={<ArrowLeft />}
+          label="Back to Projects"
+          onClick={onBackToLibrary}
+        />
         <span className="brand-mark">Hs</span>
         <div>
           <strong>{project.title}</strong>
@@ -1963,6 +1980,7 @@ interface InspectorProps {
   generationEnabled: boolean;
   issueCounts: Record<"error" | "warning" | "suggestion", number>;
   issues: QaIssue[];
+  qaCheckStatus: QaCheckStatus;
   operationStatus: OperationStatus;
   qaFilter: QaFilter;
   onFixQaIssue: (issue: QaIssue) => void;
@@ -1985,6 +2003,7 @@ function Inspector({
   generationEnabled,
   issueCounts,
   issues,
+  qaCheckStatus,
   onExportOptionsChange,
   onFixQaIssue,
   onIgnoreQaIssue,
@@ -2022,6 +2041,7 @@ function Inspector({
             generationEnabled={generationEnabled}
             issueCounts={issueCounts}
             issues={issues}
+            qaCheckStatus={qaCheckStatus}
             onFixQaIssue={onFixQaIssue}
             onIgnoreQaIssue={onIgnoreQaIssue}
             onQaFilterChange={onQaFilterChange}
@@ -2178,6 +2198,7 @@ interface QaPanelProps {
   generationEnabled: boolean;
   issueCounts: Record<"error" | "warning" | "suggestion", number>;
   issues: QaIssue[];
+  qaCheckStatus: QaCheckStatus;
   qaFilter: QaFilter;
   onFixQaIssue: (issue: QaIssue) => void;
   onIgnoreQaIssue: (issue: QaIssue, scope: QaIgnoreScope) => Promise<boolean>;
@@ -2193,12 +2214,16 @@ function QaPanel({
   onIgnoreQaIssue,
   onQaFilterChange,
   onSelectSlide,
-  qaFilter
+  qaFilter,
+  qaCheckStatus
 }: QaPanelProps): ReactNode {
+  const hasCheckResult = qaCheckStatus !== "not-checked";
   const totalIssueCount = issueCounts.error + issueCounts.warning + issueCounts.suggestion;
   const issueNoun = issues.length === 1 ? "issue" : "issues";
   const filterLabel = qaFilter === "all" ? "all severities" : qaFilter;
-  const statusSummary = issues.length === 0
+  const statusSummary = !hasCheckResult
+    ? "QA Panel has not run Check yet."
+    : issues.length === 0
     ? `QA Panel shows no ${filterLabel} issues in this deck.`
     : `QA Panel shows ${issues.length} ${filterLabel} ${issueNoun} across this deck: ${issueCounts.error} errors, ${issueCounts.warning} warnings, and ${issueCounts.suggestion} suggestions.`;
 
@@ -2210,7 +2235,11 @@ function QaPanel({
       role="region"
     >
       <PanelHeader
-        actions={<StatusPill tone={issueCounts.error > 0 ? "danger" : "success"}>{issueCounts.error} errors</StatusPill>}
+        actions={
+          <StatusPill tone={!hasCheckResult ? "neutral" : issueCounts.error > 0 ? "danger" : "success"}>
+            {hasCheckResult ? `${issueCounts.error} errors` : "Not checked"}
+          </StatusPill>
+        }
         titleId={qaPanelHeadingId}
         title="QA Panel"
       />
@@ -2233,7 +2262,15 @@ function QaPanel({
           count: tab.id === "all" ? totalIssueCount : issueCounts[tab.id]
         }))}
       />
-      {issues.length === 0 ? (
+      {!hasCheckResult ? (
+        <div className="qa-issue-list">
+          <div className="empty-state">
+            <CircleDot />
+            <strong>Not checked yet</strong>
+            <span>Run Check to produce the authoritative QA report.</span>
+          </div>
+        </div>
+      ) : issues.length === 0 ? (
         <div className="qa-issue-list">
           <div className="empty-state">
             <CheckCircle2 />
@@ -2525,8 +2562,15 @@ function AgentRunConsole({
       data-agent-run-id={runId}
       data-agent-run-status={runStatus}
     >
-      <section className="agent-console__timeline">
-        {stages.map((stage) => (
+      {stages.length === 0 ? (
+        <div className="agent-console__empty" role="status">
+          <CircleDot />
+          <strong>No agent run yet</strong>
+          <span>Agent stages and logs will appear after a run starts.</span>
+        </div>
+      ) : (
+        <section className="agent-console__timeline">
+          {stages.map((stage) => (
           <article
             className={`agent-stage is-${stage.status}`}
             key={stage.id}
@@ -2562,8 +2606,9 @@ function AgentRunConsole({
               </details>
             </div>
           </article>
-        ))}
-      </section>
+          ))}
+        </section>
+      )}
 
       {awaitingVisualDirection ? (
         <VisualDirectionChoicePanel

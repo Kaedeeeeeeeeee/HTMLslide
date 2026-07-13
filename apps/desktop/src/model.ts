@@ -13,6 +13,7 @@ export type InspectorTab = InspectorTabId;
 export type QaSeverity = QaSeverityId;
 export type QaFilter = "all" | QaSeverity;
 export type QaIgnoreScope = "once" | "rule";
+export type QaCheckStatus = "not-checked" | "passed" | "failed";
 export type OperationStatusKind = "idle" | "running" | "success" | "failed";
 export type CommandAction = "generate" | "check" | "repair" | "export" | "review";
 export type NewDeckGenerationMode = "no-ai" | "htmlslide-agent" | "external-agent" | "mock-agent";

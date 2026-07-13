@@ -1640,6 +1640,10 @@ test.describe("HTMLslide desktop smoke", () => {
       timeout: 30_000
     });
     await expect(page.getByRole("heading", { name: "Slides" })).toBeVisible();
+    await expect(page.getByRole("status", { name: "QA result summary" })).toHaveText("QA Panel has not run Check yet.");
+    await expect(page.getByText("Not checked yet", { exact: true })).toBeVisible();
+    await expect(page.getByText("No agent run yet", { exact: true })).toBeVisible();
+    await expect(page.locator(".agent-stage")).toHaveCount(0);
     const initialPreviewFrame = page.locator('iframe[title="HTML as source slide preview"]');
     await expect(initialPreviewFrame).toBeVisible();
     await expect(page.frameLocator('iframe[title="HTML as source slide preview"]').getByText(
@@ -1651,6 +1655,10 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(page.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
     await expect(page.getByText("AI generation is disabled in No AI mode.")).toBeVisible();
+
+    await page.getByRole("button", { name: "Back to Projects", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+    await expect(page.locator(".library-main").getByRole("button", { name: "Open Folder", exact: true }).first()).toBeVisible();
 
     await expectNoFrameworkOverlay(page);
     expect(browserErrors).toEqual([]);

@@ -320,7 +320,7 @@ describe("release evidence scripts", () => {
     expect(checklist).toContain("pnpm security:check");
     expect(checklist).toContain("pnpm e2e:desktop:a11y");
     expect(checklist).toContain("Validate Real Claude/Codex Compatibility And Gemini Boundary");
-    expect(checklist).toContain("If compatibility is not claimed, mark N/A");
+    expect(checklist).toContain("a no-claim result is a release blocker");
     expect(checklist).toContain("Gemini CLI remains detection-only");
     expect(checklist).toContain("htmlslide agent validate-provider");
     expect(checklist).not.toContain("Release macOS completed with signed, notarized, stapled manifest.");
@@ -500,6 +500,42 @@ describe("release evidence scripts", () => {
         status: "passed",
         manualSectionCount: 13
       });
+    } finally {
+      await rm(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    [
+      "missing real BYOK evidence",
+      (text: string) => text.replace(
+        /(### 5\. Create Deck With BYOK Provider If Key Available[\s\S]*?)- Status: Pass/u,
+        "$1- Status: N/A"
+      ),
+      /Accepted alpha RC checklists require Pass.*Create Deck With BYOK Provider/u
+    ],
+    [
+      "missing real Claude or Codex evidence",
+      (text: string) => text.replace(
+        /(### 7\. Validate Real Claude\/Codex Compatibility And Gemini Boundary[\s\S]*?)- Status: Pass/u,
+        "$1- Status: N/A"
+      ),
+      /Accepted alpha RC checklists require Pass.*Validate Real Claude\/Codex Compatibility/u
+    ],
+    [
+      "rejected candidate",
+      (text: string) => text
+        .replace("- Status: Accepted", "- Status: Rejected")
+        .replace("- [x] Accepted for release candidate publication.", "- [ ] Accepted for release candidate publication.")
+        .replace("- [ ] Rejected; blocking issues are filed and linked below", "- [x] Rejected; blocking issues are filed and linked below"),
+      /result is Rejected; promotion requires Accepted/u
+    ]
+  ])("rejects %s at the promotion gate", async (_name, mutate, expected) => {
+    const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-rc-checklist-promotion-invalid-"));
+    const inputPath = path.join(fixtureRoot, "invalid.md");
+    try {
+      await writeFile(inputPath, mutate(completeChecklist()), "utf8");
+      await expect(verifyChecklist(["--checklist", inputPath])).rejects.toThrow(expected);
     } finally {
       await rm(fixtureRoot, { recursive: true, force: true });
     }

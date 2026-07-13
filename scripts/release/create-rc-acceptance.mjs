@@ -118,7 +118,7 @@ export function renderChecklist(metadata) {
 
 ## Manual Acceptance Script
 
-For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is only acceptable for BYOK when no test key is available, or for real Claude/Codex compatibility when the candidate makes no validated real-account claim; record that explicitly. Gemini headless editing is not supported and must remain detection-only.
+For every item, record Pass, Fail, or N/A with an evidence link or note. A public alpha or release promotion requires Accepted as the final result and Pass for every manual item. N/A can document an incomplete, non-promotable attempt only; it cannot be used to bypass the real-provider or real-Claude/Codex requirements. Gemini headless editing is not supported and must remain detection-only.
 
 ### 1. Clean macOS User Account
 
@@ -162,7 +162,7 @@ For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is 
 - [ ] Run \`pnpm rc:byok-evidence -- --project <deck> --provider-validation <validation.json> --run-id <run-id> --commit <commit> --artifact-url <artifact-url>\`.
 - [ ] Attach the passing sanitized evidence JSON for this exact run and candidate artifact.
 - [ ] Confirm no API key appears in project files, reports, logs, or screenshots.
-- [ ] If no key is available, mark N/A and record why.
+- [ ] A real provider run is required for an accepted alpha or release candidate; missing credentials are a release blocker, not a promotion exception.
 - Status: TODO
 - Evidence:
 - Notes:
@@ -180,7 +180,7 @@ For every item, record Pass, Fail, or N/A with an evidence link or note. N/A is 
 
 - [ ] Review docs and release notes for any validated real-account Claude Code or Codex compatibility claim.
 - [ ] If compatibility is claimed, record the real tool, version, authentication evidence, sanitized task/command, completed edit, cancellation behavior, checkpoint diff, check/export result, and revert evidence against this exact packaged artifact.
-- [ ] If compatibility is not claimed, mark N/A and confirm docs/release notes describe only the built-in adapter contract and fake automation.
+- [ ] A real Claude or Codex compatibility run is required for an accepted alpha or release candidate; a no-claim result is a release blocker. Confirm Gemini remains detection-only.
 - [ ] Confirm Gemini CLI remains detection-only and no headless deck-editing claim is present.
 - Status: TODO
 - Evidence:

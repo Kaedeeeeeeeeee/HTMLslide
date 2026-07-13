@@ -16,4 +16,10 @@ exports/
 .htmlslide/cache/
 .htmlslide/logs/
 .htmlslide/reports/
+**/.htmlslide/cache/
+**/.htmlslide/checkpoints/
+**/.htmlslide/logs/
+**/.htmlslide/reports/
+**/.htmlslide/runs/
+**/.htmlslide/prompts/
 tmp/

@@ -77,6 +77,12 @@ export function verifyChecklist(markdown, metadata = {}) {
     throw new Error("RC checklist must be a non-empty Markdown document.");
   }
 
+  const metadataSection = sectionBetween(markdown, "## Metadata", "## Automated Gates");
+  const channel = metadataFieldValue(metadataSection, "Channel").toLowerCase();
+  if (channel !== "alpha" && channel !== "release") {
+    throw new Error(`RC checklist has unsupported Channel: ${channel || "empty"}.`);
+  }
+
   const automatedSection = sectionBetween(markdown, "## Automated Gates", "## Manual Acceptance Script");
   const automatedItems = automatedSection.split("\n").filter((line) => /^- \[[ xX]\] /u.test(line));
   if (automatedItems.length === 0) {
@@ -140,10 +146,23 @@ export function verifyChecklist(markdown, metadata = {}) {
     throw new Error("Result must check exactly one of Accepted or Rejected.");
   }
 
+  if (resultStatus !== "Accepted") {
+    throw new Error("RC checklist result is Rejected; promotion requires Accepted.");
+  }
+
   const hasFailure = items.some((item) => item.status === "Fail");
   const expectedResult = hasFailure ? "Rejected" : "Accepted";
   if (resultStatus !== expectedResult || (hasFailure ? !rejectedChecked : !acceptedChecked)) {
     throw new Error(`Result Status ${resultStatus} does not match manual acceptance outcome ${expectedResult}.`);
+  }
+
+  const incompleteItems = items.filter((item) => item.status !== "Pass");
+  if (incompleteItems.length > 0) {
+    throw new Error(
+      `Accepted ${channel} RC checklists require Pass for every manual acceptance item; incomplete items: ${incompleteItems
+        .map((item) => `${item.number}. ${item.title} (${item.status})`)
+        .join("; ")}`
+    );
   }
 
   if (/\bTODO\b/gu.test(markdown)) {
@@ -191,6 +210,11 @@ function sectionAfter(markdown, startHeading) {
 
 function fieldValue(section, field) {
   const match = section.match(new RegExp(`^- ${field}:[ \\t]*(.*)$`, "mu"));
+  return match?.[1]?.trim() ?? "";
+}
+
+function metadataFieldValue(section, field) {
+  const match = section.match(new RegExp(`^\\|[ \\t]*${field}[ \\t]*\\|[ \\t]*([^|]*?)[ \\t]*\\|$`, "mu"));
   return match?.[1]?.trim() ?? "";
 }
 

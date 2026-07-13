@@ -2109,6 +2109,32 @@ svg {
   overflow-x: auto;
 }
 
+.agent-console__empty {
+  align-items: center;
+  color: var(--hs-text-muted);
+  display: grid;
+  gap: 5px;
+  justify-items: center;
+  padding: 18px;
+  text-align: center;
+}
+
+.agent-console__empty svg {
+  color: var(--hs-text-subtle);
+  height: 20px;
+  margin-bottom: 2px;
+  width: 20px;
+}
+
+.agent-console__empty strong {
+  color: var(--hs-text);
+  font-size: 12px;
+}
+
+.agent-console__empty span {
+  font-size: 11px;
+}
+
 .visual-direction-choice {
   background: #ffffff;
   border: 1px solid var(--hs-line-strong);

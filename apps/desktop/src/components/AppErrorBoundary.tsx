@@ -98,7 +98,7 @@ const fallbackStatusStyle: React.CSSProperties = {
 };
 
 export class AppErrorBoundary extends React.Component<AppErrorBoundaryProps, AppErrorBoundaryState> {
-  state: AppErrorBoundaryState = {
+  override state: AppErrorBoundaryState = {
     copyStatus: "idle",
     hasError: false
   };
@@ -125,7 +125,7 @@ export class AppErrorBoundary extends React.Component<AppErrorBoundaryProps, App
     );
   };
 
-  render(): React.ReactNode {
+  override render(): React.ReactNode {
     if (!this.state.hasError) {
       return this.props.children;
     }

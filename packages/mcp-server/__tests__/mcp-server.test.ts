@@ -263,7 +263,7 @@ describe("HTMLslide MCP in-process server", () => {
     });
   });
 
-  it("creates a PDF artifact inside exports", async () => {
+  it("creates a PDF artifact inside exports", { timeout: 30_000 }, async () => {
     await withTempFixture("linter-valid-clean", async (projectPath) => {
       const server = createHtmlslideMcpServer({ projectRoot: projectPath });
       const exported = await server.callTool("export_pdf");

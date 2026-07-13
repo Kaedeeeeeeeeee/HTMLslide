@@ -144,6 +144,7 @@ App integration:
 - `--bundle-id`, `--app-version`, and `--updated-at` add app metadata used by the desktop app to detect stale or moved installs.
 - The shim reads `~/.htmlslide/app-path.json` at runtime and prefers the app-packaged CLI entry when present.
 - If no app CLI is available, the shim falls back to the development/package CLI path recorded when the shim was installed.
+- When invoked, the shim passes its actual path to the CLI so `htmlslide doctor` checks the preferred-bin installation rather than only `~/.htmlslide/bin`.
 - The desktop app chooses a writable target in this order: `HTMLSLIDE_CLI_TARGET_PATH`/`HTMLSLIDE_CLI_TARGET_DIR` overrides, `/opt/homebrew/bin`, `/usr/local/bin`, then `~/.htmlslide/bin`.
 
 `app-path.json` records the app the shim should prefer:

@@ -1184,6 +1184,61 @@ describe("CLI project helpers", { timeout: 20_000 }, () => {
     }
   });
 
+  it("lets doctor resolve the CLI shim path from the invoking managed shim", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-doctor-shim-"));
+    const previousTargetPath = process.env.HTMLSLIDE_CLI_TARGET_PATH;
+    const previousPath = process.env.PATH;
+    const previousBrowserRuntimeError = process.env.HTMLSLIDE_BROWSER_RUNTIME_ERROR;
+    try {
+      const homeDir = path.join(root, "state");
+      const binDir = path.join(root, "preferred-bin");
+      const fallbackCliPath = path.join(root, "fallback-cli.js");
+      await writeExecutable(
+        fallbackCliPath,
+        `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ targetPath: process.env.HTMLSLIDE_CLI_TARGET_PATH }) + "\\n");
+`
+      );
+
+      const installed = await installCliShim({ targetDir: binDir, htmlslideHomeDir: homeDir, fallbackCliPath });
+      const executed = await execFileAsync(installed.targetPath, ["doctor"], {
+        env: { ...process.env, HTMLSLIDE_HOME: homeDir }
+      });
+
+      expect(JSON.parse(executed.stdout)).toEqual({ targetPath: installed.targetPath });
+
+      process.env.HTMLSLIDE_CLI_TARGET_PATH = installed.targetPath;
+      const explicitTargetDir = path.join(root, "explicit-bin");
+      expect(await getCliShimStatus({ targetDir: explicitTargetDir, htmlslideHomeDir: homeDir })).toMatchObject({
+        targetPath: path.join(explicitTargetDir, "htmlslide")
+      });
+      process.env.PATH = `${binDir}${path.delimiter}${previousPath ?? ""}`;
+      process.env.HTMLSLIDE_BROWSER_RUNTIME_ERROR = "test runtime unavailable";
+      const report = await doctor({ htmlslideHomeDir: homeDir });
+      expect(report.checks.find((check) => check.id === "cli-shim")).toMatchObject({
+        status: "passed",
+        targetPath: installed.targetPath
+      });
+    } finally {
+      if (previousTargetPath === undefined) {
+        delete process.env.HTMLSLIDE_CLI_TARGET_PATH;
+      } else {
+        process.env.HTMLSLIDE_CLI_TARGET_PATH = previousTargetPath;
+      }
+      if (previousPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = previousPath;
+      }
+      if (previousBrowserRuntimeError === undefined) {
+        delete process.env.HTMLSLIDE_BROWSER_RUNTIME_ERROR;
+      } else {
+        process.env.HTMLSLIDE_BROWSER_RUNTIME_ERROR = previousBrowserRuntimeError;
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("reports shim status and uninstalls only managed shims", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-"));
     try {

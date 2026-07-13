@@ -411,6 +411,7 @@ export type PackageProjectResult = Awaited<ReturnType<typeof exportLoadedProject
 
 const HTMLSLIDE_SHIM_MARKER = "HTMLslide managed CLI shim v1";
 const HTMLSLIDE_HOME_ENV = "HTMLSLIDE_HOME";
+const HTMLSLIDE_CLI_TARGET_PATH_ENV = "HTMLSLIDE_CLI_TARGET_PATH";
 const execFileAsync = promisify(execFile);
 
 const exists = async (filePath: string): Promise<boolean> => {
@@ -450,15 +451,20 @@ const resolveCliShimTarget = (options: CliShimTargetOptions = {}) => {
   }
 
   const htmlslideHomeDir = resolveHtmlslideHomeDir(options.htmlslideHomeDir);
+  const runtimeTargetPath = process.env[HTMLSLIDE_CLI_TARGET_PATH_ENV];
   const targetPath = options.targetPath
     ? path.resolve(options.targetPath)
-    : path.join(options.targetDir ? path.resolve(options.targetDir) : path.join(htmlslideHomeDir, "bin"), "htmlslide");
+    : options.targetDir
+      ? path.join(path.resolve(options.targetDir), "htmlslide")
+      : runtimeTargetPath
+        ? path.resolve(runtimeTargetPath)
+        : path.join(htmlslideHomeDir, "bin", "htmlslide");
 
   return {
     targetPath,
     targetDir: path.dirname(targetPath),
     htmlslideHomeDir,
-    explicit: Boolean(options.targetDir || options.targetPath)
+    explicit: Boolean(options.targetDir || options.targetPath || runtimeTargetPath)
   };
 };
 
@@ -656,6 +662,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const fallbackCliPath = ${escapeShimString(path.resolve(fallbackCliPath))};
+process.env.HTMLSLIDE_CLI_TARGET_PATH = path.resolve(process.argv[1]);
 
 const unique = (values) => [...new Set(values.filter(Boolean).map((value) => path.resolve(String(value))))];
 

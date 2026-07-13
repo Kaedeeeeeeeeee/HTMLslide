@@ -38,6 +38,7 @@ import {
   packageLoadedProject,
   revertCheckpoint,
   runAgentTask,
+  testAgentEngine,
   tryLoadProjectForCheck,
   uninstallCliShim,
   validateAgentProviderCredentials,
@@ -87,6 +88,10 @@ type AgentRunCommandOptions = JsonOption & {
   apiKeyEnv?: string;
   baseUrl?: string;
   targetSlideCount?: string;
+};
+
+type AgentTestCommandOptions = JsonOption & {
+  path?: string;
 };
 
 type AgentValidateProviderCommandOptions = JsonOption & {
@@ -728,6 +733,28 @@ agentCommand
   .action((options: JsonOption) => {
     const json = Boolean(options.json ?? program.opts<JsonOption>().json);
     writeResult({ status: "passed", engines: listAgentEngines() }, json);
+  });
+
+agentCommand
+  .command("test")
+  .argument("<engine>", "engine id to test: claude-code, codex-cli, gemini-cli, or htmlslide-mock")
+  .option("--path <path>", "working directory used for the read-only engine test", process.cwd())
+  .option("--json", "print machine-readable JSON")
+  .description("Run a read-only preflight for an agent engine.")
+  .action(async (engine: string, options: AgentTestCommandOptions) => {
+    const json = Boolean(options.json ?? program.opts<JsonOption>().json);
+    try {
+      const result = await testAgentEngine({
+        engine,
+        projectPath: options.path
+      });
+      writeResult(result, json);
+      if (result.status === "failed") {
+        process.exit(result.exitCode);
+      }
+    } catch (error) {
+      fail(error, json);
+    }
   });
 
 agentCommand

@@ -27,6 +27,7 @@ Each explicit `--pdf`/`--no-pdf`, `--html`/`--no-html`, `--deckpkg`/`--no-deckpk
 - `htmlslide setup status --json` reports shim installation status.
 - `htmlslide doctor --json` reports local runtime health.
 - `htmlslide agent validate-provider --provider openai|anthropic|compatible --model <model> --api-key-env <ENV_NAME> [--base-url <url>] --json` validates BYOK credential/model reachability without printing or accepting an API key as a CLI argument.
+- `htmlslide agent test <engine> [--path <dir>] --json` runs a read-only engine preflight. Supported engines are `claude-code`, `codex-cli`, `gemini-cli`, and `htmlslide-mock`; Claude/Codex checks version, authentication, and the fixed headless contract, while Gemini is detection-only.
 - `htmlslide agent run --engine htmlslide-mock --task <task> [--speaker-notes <mode>] --path <project> --json` runs the deterministic agent; `<mode>` is `none`, `bullet-notes`, `full-script`, or `rehearsal-cues`.
 - `pnpm rc:byok-evidence -- --project <path> --provider-validation <validation.json> [--run-id <id>] [--report <agent-report.json>] [--output <evidence.json>]` verifies a completed desktop BYOK run without reading provider credentials.
 

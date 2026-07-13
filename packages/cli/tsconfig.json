@@ -8,6 +8,7 @@
   "include": ["src"],
   "references": [
     { "path": "../agent" },
+    { "path": "../agent-adapters" },
     { "path": "../compiler" },
     { "path": "../core" },
     { "path": "../linter" },

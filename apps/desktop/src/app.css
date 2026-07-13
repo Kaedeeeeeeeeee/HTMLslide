@@ -3313,6 +3313,36 @@ svg {
     grid-template-rows: auto minmax(0, 1fr) minmax(360px, 48vh);
   }
 
+  .agent-console__timeline {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding-right: 2px;
+  }
+
+  .agent-stage {
+    gap: 7px;
+    padding: 7px;
+  }
+
+  .agent-stage p,
+  .agent-stage small {
+    overflow-wrap: anywhere;
+  }
+
+  .command-bar {
+    align-items: stretch;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .command-bar__controls {
+    flex-wrap: wrap;
+  }
+
+  .command-bar__status {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
   .agent-diff-review__body {
     grid-template-columns: minmax(150px, 0.35fr) minmax(0, 1fr);
   }

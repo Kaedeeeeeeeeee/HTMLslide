@@ -21,6 +21,7 @@ import {
   readDesktopAppPathConfig,
   resolveProjectExportOptions,
   runAgentTask,
+  testAgentEngine,
   tryLoadProjectForCheck,
   uninstallCliShim,
   validateAgentProviderCredentials,
@@ -1086,6 +1087,72 @@ describe("CLI project helpers", { timeout: 20_000 }, () => {
         })
       ])
     );
+  });
+
+  it("runs a deterministic, non-writing mock agent preflight", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-agent-test-"));
+    try {
+      const result = await testAgentEngine({ engine: "htmlslide-mock", projectPath: root });
+
+      expect(result).toMatchObject({
+        status: "passed",
+        command: "agent test",
+        engine: "htmlslide-mock",
+        cwd: root,
+        exitCode: EXIT_CODES.success,
+        adapter: {
+          id: "htmlslide-mock",
+          status: "ready"
+        }
+      });
+      await expect(access(path.join(root, ".htmlslide"))).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("runs a fake Codex preflight without exposing command output", async () => {
+    const result = await testAgentEngine({
+      engine: "codex-cli",
+      projectPath: process.cwd(),
+      runner: async (invocation) => {
+        if (invocation.args.includes("--version")) {
+          return { exitCode: 0, stdout: "codex 9.9.9\n", stderr: "" };
+        }
+        if (invocation.args.includes("--help")) {
+          return {
+            exitCode: 0,
+            stdout: "--sandbox --ephemeral --ignore-user-config --skip-git-repo-check --json\n",
+            stderr: "secret-auth-output\n"
+          };
+        }
+        return { exitCode: 0, stdout: "authenticated secret-auth-output\n", stderr: "" };
+      }
+    });
+
+    expect(result.status).toBe("passed");
+    expect(result.adapter).toMatchObject({
+      id: "codex-cli",
+      status: "ready",
+      version: "codex 9.9.9"
+    });
+    expect(JSON.stringify(result)).not.toContain("secret-auth-output");
+  });
+
+  it("returns an actionable failure for an unavailable external engine", async () => {
+    const result = await testAgentEngine({
+      engine: "claude-code",
+      runner: async () => ({ exitCode: 1, stdout: "", stderr: "login required" })
+    });
+
+    expect(result).toMatchObject({
+      status: "failed",
+      exitCode: EXIT_CODES.agentFailed,
+      adapter: {
+        id: "claude-code",
+        status: "unavailable"
+      }
+    });
   });
 
   it("validates provider credentials from an environment variable without recording the secret", async () => {

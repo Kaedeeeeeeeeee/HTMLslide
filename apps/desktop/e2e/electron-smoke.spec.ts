@@ -1057,6 +1057,13 @@ test.describe("HTMLslide desktop smoke", () => {
     await expect(readFile(path.join(projectDir, "notes", "001-title.md"), "utf8")).resolves.toBe(
       "# Reviewed notes\n\nReady for rehearsal."
     );
+
+    await page.setViewportSize({ width: 1024, height: 800 });
+    const agentTimeline = page.locator(".agent-console__timeline");
+    await expect(agentTimeline).toBeVisible();
+    await expect.poll(() => agentTimeline.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await expect(page.getByRole("button", { name: "Run", exact: true })).toBeVisible();
+    await expect(page.getByRole("status", { name: "Agent command statuses" })).toBeVisible();
     await expectNoFrameworkOverlay(page);
   });
 

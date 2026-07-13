@@ -32,6 +32,14 @@ import {
   type ModelProvider
 } from "@htmlslide/agent";
 import {
+  detectClaudeCli,
+  detectCodexCli,
+  detectGeminiCli,
+  runCommand,
+  type AgentAdapterDetectionResult,
+  type CommandRunner
+} from "@htmlslide/agent-adapters";
+import {
   exportDeck,
   inspectChromiumRuntime,
   type CompilerProjectInput,
@@ -248,6 +256,38 @@ export type AgentProviderValidationResult = {
   baseUrl?: string;
   credential: CredentialStatus;
   secretRecorded: false;
+  exitCode: 0 | typeof EXIT_CODES.agentFailed;
+};
+
+export type AgentTestOptions = {
+  engine: string;
+  projectPath?: string;
+  runner?: CommandRunner;
+};
+
+export type AgentTestResult = {
+  status: "passed" | "failed";
+  command: "agent test";
+  engine: string;
+  cwd: string;
+  adapter: {
+    id: string;
+    label: string;
+    kind: string;
+    command: string;
+    status: string;
+    installed: boolean;
+    authenticated: boolean;
+    version?: string;
+    capabilities: Record<string, boolean | undefined>;
+    failure?: {
+      type: string;
+      message: string;
+      remediation: string;
+      command?: string;
+      exitCode?: number;
+    };
+  };
   exitCode: 0 | typeof EXIT_CODES.agentFailed;
 };
 
@@ -1056,6 +1096,22 @@ export const doctor = async (options: CliShimTargetOptions = {}) => {
 
 const providerBackedEngineIds = new Set(["htmlslide-byok", "htmlslide-byok-openai"]);
 
+const agentTestEngineAliases: ReadonlyMap<string, "claude-code" | "codex-cli" | "gemini-cli" | "htmlslide-mock"> = new Map([
+  ["claude", "claude-code"],
+  ["claude-code", "claude-code"],
+  ["codex", "codex-cli"],
+  ["codex-cli", "codex-cli"],
+  ["external-codex", "codex-cli"],
+  ["gemini", "gemini-cli"],
+  ["gemini-cli", "gemini-cli"],
+  ["htmlslide-mock", "htmlslide-mock"],
+  ["mock-agent", "htmlslide-mock"]
+] as const);
+
+const agentTestEngineNames = [...agentTestEngineAliases.keys()]
+  .filter((engine, index, engines) => engines.indexOf(engine) === index)
+  .join(", ");
+
 export const listAgentEngines = () => [
   ...mockEngines.map((engine) =>
     engine.id === "htmlslide-byok-openai" ? { ...engine, available: true } : engine
@@ -1067,6 +1123,84 @@ export const listAgentEngines = () => [
     available: true
   }
 ];
+
+const sanitizeAgentDetection = (detection: AgentAdapterDetectionResult): AgentTestResult["adapter"] => ({
+  id: detection.id,
+  label: detection.label,
+  kind: detection.kind,
+  command: detection.command,
+  status: detection.status,
+  installed: detection.installed,
+  authenticated: detection.authenticated,
+  ...(detection.version ? { version: detection.version } : {}),
+  capabilities: detection.capabilities,
+  ...(detection.failure
+    ? {
+        failure: {
+          type: detection.failure.type,
+          message: detection.failure.message,
+          remediation: detection.failure.remediation,
+          ...(detection.failure.command ? { command: detection.failure.command } : {}),
+          ...(detection.failure.exitCode === undefined ? {} : { exitCode: detection.failure.exitCode })
+        }
+      }
+    : {})
+});
+
+export const testAgentEngine = async (options: AgentTestOptions): Promise<AgentTestResult> => {
+  const requestedEngine = options.engine.trim().toLowerCase();
+  const engine = agentTestEngineAliases.get(requestedEngine);
+  if (!engine) {
+    throw agentError(
+      "AGENT_ENGINE_NOT_FOUND",
+      `Unknown agent test engine: ${options.engine}.`,
+      `Pass one of the supported engines: ${agentTestEngineNames}.`,
+      { engine: options.engine }
+    );
+  }
+
+  const cwd = path.resolve(options.projectPath ?? process.cwd());
+  if (engine === "htmlslide-mock") {
+    return {
+      status: "passed",
+      command: "agent test",
+      engine: options.engine,
+      cwd,
+      adapter: {
+        id: "htmlslide-mock",
+        label: "HTMLslide Mock Provider",
+        kind: "fake",
+        command: "in-process",
+        status: "ready",
+        installed: true,
+        authenticated: true,
+        capabilities: {
+          detectInstalled: true,
+          detectAuthenticated: true,
+          headlessRun: true
+        }
+      },
+      exitCode: EXIT_CODES.success
+    };
+  }
+
+  const runner = options.runner ?? runCommand;
+  const detection = engine === "claude-code"
+    ? await detectClaudeCli({ cwd, runner })
+    : engine === "codex-cli"
+      ? await detectCodexCli({ cwd, runner })
+      : await detectGeminiCli({ cwd, runner });
+  const adapter = sanitizeAgentDetection(detection);
+
+  return {
+    status: detection.status === "ready" ? "passed" : "failed",
+    command: "agent test",
+    engine: options.engine,
+    cwd,
+    adapter,
+    exitCode: detection.status === "ready" ? EXIT_CODES.success : EXIT_CODES.agentFailed
+  };
+};
 
 const agentError = (
   code: string,

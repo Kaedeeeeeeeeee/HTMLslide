@@ -96,7 +96,6 @@ export const runPdfRasterCommand: PdfRasterCommandRunner = async (
   let timedOut = false;
   let finished = false;
   let killTimer: NodeJS.Timeout | undefined;
-  let timeoutTimer: NodeJS.Timeout | undefined;
 
   const finish = (result: PdfRasterCommandResult): void => {
     if (finished) {
@@ -120,7 +119,7 @@ export const runPdfRasterCommand: PdfRasterCommandRunner = async (
       windowsHide: true
     });
   } catch (error) {
-    finish({
+    resolve({
       exitCode: null,
       signal: null,
       stdout,
@@ -154,7 +153,7 @@ export const runPdfRasterCommand: PdfRasterCommandRunner = async (
   child.on("close", (exitCode, signal) => {
     finish({ exitCode, signal, stdout, stderr, timedOut });
   });
-  timeoutTimer = setTimeout(() => {
+  const timeoutTimer = setTimeout(() => {
     if (finished) {
       return;
     }

@@ -55,6 +55,7 @@ import {
   DesktopAgentRunRegistry,
   type DesktopAgentRunRequest
 } from "./agent-run-registry.js";
+import { centerPresenterWindowInWorkArea } from "./presenter-screen-swap.js";
 
 const currentDir = fileURLToPath(new URL(".", import.meta.url));
 const devServerUrl = process.env.HTMLSLIDE_DESKTOP_DEV_SERVER_URL;
@@ -485,34 +486,6 @@ function presenterScreenSwapFailure(
   };
 }
 
-function isUsableRectangle(bounds: Rectangle): boolean {
-  return (
-    Number.isFinite(bounds.x) &&
-    Number.isFinite(bounds.y) &&
-    Number.isFinite(bounds.width) &&
-    Number.isFinite(bounds.height) &&
-    bounds.width > 0 &&
-    bounds.height > 0
-  );
-}
-
-function centeredWindowedBounds(windowedBounds: Rectangle, workArea: Rectangle): Rectangle | undefined {
-  if (!isUsableRectangle(windowedBounds) || !isUsableRectangle(workArea)) {
-    return undefined;
-  }
-
-  const workAreaWidth = Math.round(workArea.width);
-  const workAreaHeight = Math.round(workArea.height);
-  const width = Math.min(Math.max(1, Math.round(windowedBounds.width)), workAreaWidth);
-  const height = Math.min(Math.max(1, Math.round(windowedBounds.height)), workAreaHeight);
-  return {
-    height,
-    width,
-    x: Math.round(workArea.x + (workAreaWidth - width) / 2),
-    y: Math.round(workArea.y + (workAreaHeight - height) / 2)
-  };
-}
-
 function restoreMainWindowPresentation(
   window: BrowserWindow,
   windowedBounds: Rectangle,
@@ -740,7 +713,7 @@ async function swapPresenterScreens(requestValue: unknown): Promise<DesktopPrese
     );
   }
 
-  const mainTargetBounds = centeredWindowedBounds(originalMainWindowedBounds, audienceDisplay.workArea);
+  const mainTargetBounds = centerPresenterWindowInWorkArea(originalMainWindowedBounds, audienceDisplay.workArea);
   const audienceTargetBounds = audienceWindowBounds(mainDisplay.id);
   if (!mainTargetBounds || !audienceTargetBounds) {
     return presenterScreenSwapFailure(

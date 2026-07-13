@@ -2353,7 +2353,7 @@ fetch("${previewNetworkOrigin}/fetch");
     await qaSeverityTabs.getByRole("tab", { name: /Warnings\s+0/ }).click();
     await expect(qaSeverityTabs.getByRole("tab", { name: /All\s+1/ })).toBeVisible();
     await expect(qaSeverityTabs.getByRole("tab", { name: /Warnings\s+0/ })).toHaveAttribute("aria-selected", "true");
-    await expect(qaResultSummary).toContainText("QA Panel shows no warning issues.");
+    await expect(qaResultSummary).toContainText("QA Panel shows no warning issues in this deck.");
     await expect(qaPanel.getByRole("list", { name: "QA issues" })).toHaveCount(0);
     await expect(qaPanel.getByText("No issues in this filter")).toBeVisible();
     await qaSeverityTabs.getByRole("tab", { name: /All\s+1/ }).click();
@@ -2417,7 +2417,7 @@ fetch("${previewNetworkOrigin}/fetch");
 
     const qaPanel = page.getByRole("region", { name: "QA Panel" });
     await expect(qaPanel.getByRole("heading", { name: "QA Panel" })).toBeVisible();
-    await expect(qaPanel.getByRole("status", { name: "QA result summary" })).toContainText("QA Panel shows");
+    await expect(qaPanel.getByRole("status", { name: "QA result summary" })).toContainText("across this deck");
     const qaIssueList = qaPanel.getByRole("list", { name: "QA issues" });
     const missingAssetIssue = qaIssueList.getByRole("listitem", { name: "missing-asset" });
     await expect(missingAssetIssue).toBeVisible();
@@ -2425,15 +2425,13 @@ fetch("${previewNetworkOrigin}/fetch");
     await expect(missingAssetIssue.getByText("Referenced asset is missing: ../assets/missing-chart.png.")).toBeVisible();
     await expect(missingAssetIssue.getByText("img[src]").first()).toBeVisible();
 
-    await page.getByRole("button", { name: /Missing Notes/ }).click();
-    await expect(qaPanel.getByRole("status", { name: "QA result summary" })).toContainText("QA Panel shows");
-    const missingNotesIssue = qaPanel
-      .getByRole("list", { name: "QA issues" })
-      .getByRole("listitem", { name: "missing-notes" });
+    const missingNotesIssue = qaIssueList.getByRole("listitem", { name: "missing-notes" });
     await expect(missingNotesIssue).toBeVisible();
     await expect(missingNotesIssue.getByRole("heading", { name: "missing-notes" })).toBeVisible();
     await expect(missingNotesIssue.getByText("Slide has no speaker notes file.")).toBeVisible();
     await expect(missingNotesIssue.getByText("slides[].notes")).toBeVisible();
+    await missingNotesIssue.getByRole("button", { name: "Go to slide 002-missing-notes" }).click();
+    await expect(page.locator('.filmstrip-item[aria-current="true"]')).toContainText("Missing Notes");
 
     await expectNoFrameworkOverlay(page);
   });

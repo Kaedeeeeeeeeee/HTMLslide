@@ -88,3 +88,9 @@ changes and artifact edits but are SHA-256 integrity metadata, not digital signa
 both an artifact and its compiler-owned manifest can still manufacture a matching local state. Verification describes
 a bounded filesystem scan; a separate same-user process that changes a file immediately after it is hashed can make the
 report stale as soon as it returns, just as with other local lint tools.
+
+## Desktop QA Navigation
+
+The desktop workspace keeps filmstrip badges scoped to individual slides, but the QA Panel shows the selected
+severity filter across the entire deck. Each issue exposes a `Go to slide` action that selects the issue's `slideId` in
+the filmstrip and updates the preview, so a clean currently selected slide cannot hide problems elsewhere in the deck.

@@ -210,6 +210,7 @@ test.describe("HTMLslide desktop accessibility smoke", () => {
     });
     await expect(qaPanel.getByRole("tablist", { name: "QA severity filter" })).toBeVisible();
     await expect(qaPanel.getByRole("list", { name: "QA issues" }).getByRole("listitem", { name: "text-overflow" })).toBeVisible();
+    await expect(qaPanel.getByRole("button", { name: "Go to slide 001-overflow" })).toBeVisible();
     await expectNoAccessibilityViolations(page, "QA panel");
 
     await rm(slidePath, { force: true });

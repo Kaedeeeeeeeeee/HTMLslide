@@ -365,11 +365,10 @@ export function Workspace({
       status: "needs-check",
       title: "No deck loaded"
     } satisfies SlideSummary);
-  const selectedSlideIssues = filterQaIssues(qaIssues, "all", selectedSlideId);
   const selectedIssues = filterQaIssues(qaIssues, qaFilter, selectedSlideId);
+  const qaIssuesForFilter = filterQaIssues(qaIssues, qaFilter);
   const issueCounts = countIssuesBySeverity(qaIssues);
   const awaitingVisualDirection = String(agentRunStatus) === "awaiting-user-choice" && pendingVisualDirections.length > 0;
-  const selectedIssueCounts = countIssuesBySeverity(selectedSlideIssues);
   const runtimeStages =
     agentRunEvents.length > 0
       ? buildAgentRunStages(agentRunEvents, agentRunLogs, stages)
@@ -616,13 +615,14 @@ export function Workspace({
           activeTab={inspectorTab}
           currentSlide={currentSlide}
           generationEnabled={generationEnabled}
-          issueCounts={selectedIssueCounts}
+          issueCounts={issueCounts}
           exportIssueCounts={issueCounts}
-          issues={selectedIssues}
+          issues={qaIssuesForFilter}
           onQaFilterChange={onQaFilterChange}
           onFixQaIssue={onFixQaIssue}
           onIgnoreQaIssue={onIgnoreQaIssue}
           onToolbarAction={handleWorkspaceToolbarAction}
+          onSelectSlide={onSelectSlide}
           exportOptions={exportOptions}
           onExportOptionsChange={setExportOptions}
           onSaveSlideNotes={onSaveSlideNotes}
@@ -1913,6 +1913,7 @@ interface InspectorProps {
   onExportOptionsChange: (options: NewDeckExportSelection) => void;
   onIgnoreQaIssue: (issue: QaIssue, scope: QaIgnoreScope) => Promise<boolean>;
   onQaFilterChange: (filter: QaFilter) => void;
+  onSelectSlide: (slideId: string) => void;
   onSaveSlideNotes: (slideId: string, content: string) => Promise<boolean>;
   notesReadOnly: boolean;
   onTabChange: (tab: InspectorTab) => void;
@@ -1932,6 +1933,7 @@ function Inspector({
   onFixQaIssue,
   onIgnoreQaIssue,
   onQaFilterChange,
+  onSelectSlide,
   onSaveSlideNotes,
   notesReadOnly,
   onToolbarAction,
@@ -1967,6 +1969,7 @@ function Inspector({
             onFixQaIssue={onFixQaIssue}
             onIgnoreQaIssue={onIgnoreQaIssue}
             onQaFilterChange={onQaFilterChange}
+            onSelectSlide={onSelectSlide}
             qaFilter={qaFilter}
           />
         ) : null}
@@ -2123,6 +2126,7 @@ interface QaPanelProps {
   onFixQaIssue: (issue: QaIssue) => void;
   onIgnoreQaIssue: (issue: QaIssue, scope: QaIgnoreScope) => Promise<boolean>;
   onQaFilterChange: (filter: QaFilter) => void;
+  onSelectSlide: (slideId: string) => void;
 }
 
 function QaPanel({
@@ -2132,14 +2136,15 @@ function QaPanel({
   onFixQaIssue,
   onIgnoreQaIssue,
   onQaFilterChange,
+  onSelectSlide,
   qaFilter
 }: QaPanelProps): ReactNode {
   const totalIssueCount = issueCounts.error + issueCounts.warning + issueCounts.suggestion;
   const issueNoun = issues.length === 1 ? "issue" : "issues";
   const filterLabel = qaFilter === "all" ? "all severities" : qaFilter;
   const statusSummary = issues.length === 0
-    ? `QA Panel shows no ${filterLabel} issues.`
-    : `QA Panel shows ${issues.length} ${filterLabel} ${issueNoun}: ${issueCounts.error} errors, ${issueCounts.warning} warnings, and ${issueCounts.suggestion} suggestions.`;
+    ? `QA Panel shows no ${filterLabel} issues in this deck.`
+    : `QA Panel shows ${issues.length} ${filterLabel} ${issueNoun} across this deck: ${issueCounts.error} errors, ${issueCounts.warning} warnings, and ${issueCounts.suggestion} suggestions.`;
 
   return (
     <section
@@ -2222,6 +2227,14 @@ function QaPanel({
                   </dl>
                   <small id={fixId}>{issue.suggestedFix}</small>
                   <div className="qa-issue__actions">
+                    <Button
+                      aria-label={`Go to slide ${issue.slideId}`}
+                      onClick={() => onSelectSlide(issue.slideId)}
+                      size="sm"
+                      variant="secondary"
+                    >
+                      Go to slide
+                    </Button>
                     <Button
                       aria-label={`Fix ${issue.type} with AI`}
                       disabled={!generationEnabled}

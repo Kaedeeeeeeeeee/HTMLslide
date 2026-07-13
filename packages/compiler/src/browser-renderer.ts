@@ -64,7 +64,7 @@ const PDF_RENDER_TIMEOUT_MS = 20_000;
 const SCREENSHOT_TIMEOUT_MS = 15_000;
 // Browser shutdown can take longer than rendering on loaded macOS workers.
 // Keep cleanup fail-closed, but allow the process a bounded grace period.
-const CLEANUP_TIMEOUT_MS = 10_000;
+const CLEANUP_TIMEOUT_MS = 30_000;
 
 const assertSize = (name: string, size: BrowserRenderSize): void => {
   if (!Number.isInteger(size.width) || !Number.isInteger(size.height) || size.width <= 0 || size.height <= 0) {

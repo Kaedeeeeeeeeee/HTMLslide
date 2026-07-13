@@ -168,6 +168,143 @@ describe("source material staging", () => {
     await expect(fs.stat(path.join(projectRoot, "assets"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("rejects malformed options and source input records before writing", async () => {
+    const projectRoot = await makeProject();
+    const absoluteSource = path.join(projectRoot, "source.txt");
+    await fs.writeFile(absoluteSource, "source\n", "utf8");
+
+    await expectRejected(
+      stageSourceMaterials(projectRoot, [], null as never),
+      "INVALID_OPTIONS"
+    );
+    await expectRejected(
+      stageSourceMaterials(projectRoot, null as never),
+      "INVALID_INPUT"
+    );
+    await expectRejected(
+      stageSourceMaterials(projectRoot, [], { maxCount: -1 }),
+      "INVALID_OPTIONS"
+    );
+    await expectRejected(
+      stageSourceMaterials(projectRoot, [], { maxBytesPerFile: 1.5 }),
+      "INVALID_OPTIONS"
+    );
+    await expectRejected(
+      stageSourceMaterials(projectRoot, [], { maxBytesTotal: MAX_SOURCE_MATERIAL_BYTES_TOTAL + 1 }),
+      "INVALID_OPTIONS"
+    );
+
+    await expectRejected(stageSourceMaterials(projectRoot, [{ kind: "other" } as never]), "INVALID_INPUT");
+    await expectRejected(stageSourceMaterials(projectRoot, [{ kind: "file", sourcePath: "" }]), "INVALID_INPUT");
+    await expectRejected(
+      stageSourceMaterials(projectRoot, [{ kind: "file", sourcePath: "relative.txt" }]),
+      "SOURCE_PATH_NOT_ABSOLUTE"
+    );
+    await expectRejected(
+      stageSourceMaterials(projectRoot, [{ kind: "file", sourcePath: absoluteSource, mediaType: " " }]),
+      "INVALID_INPUT"
+    );
+    await expectRejected(
+      stageSourceMaterials(projectRoot, [{ kind: "text", name: "", content: "text" }]),
+      "SOURCE_NAME_INVALID"
+    );
+    await expectRejected(
+      stageSourceMaterials(projectRoot, [{ kind: "text", name: "nested/notes", content: "text" }]),
+      "SOURCE_NAME_INVALID"
+    );
+    await expectRejected(
+      stageSourceMaterials(projectRoot, [{ kind: "text", name: "control\u0007", content: "text" }]),
+      "SOURCE_NAME_INVALID"
+    );
+    await expectRejected(
+      stageSourceMaterials(projectRoot, [{ kind: "text", name: 123, content: "text" } as never]),
+      "INVALID_INPUT"
+    );
+    await expect(fs.stat(path.join(projectRoot, "assets"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects missing and oversized selected files, including total file limits", async () => {
+    const projectRoot = await makeProject();
+    const firstSource = path.join(projectRoot, "first.txt");
+    const secondSource = path.join(projectRoot, "second.txt");
+    await fs.writeFile(firstSource, "12", "utf8");
+    await fs.writeFile(secondSource, "34", "utf8");
+
+    await expectRejected(
+      stageSourceMaterials(projectRoot, [{ kind: "file", sourcePath: path.join(projectRoot, "missing.txt") }]),
+      "SOURCE_NOT_FOUND"
+    );
+    await expectRejected(
+      stageSourceMaterials(projectRoot, [{ kind: "file", sourcePath: firstSource }], { maxBytesPerFile: 1 }),
+      "SOURCE_FILE_TOO_LARGE"
+    );
+    await expectRejected(
+      stageSourceMaterials(
+        projectRoot,
+        [
+          { kind: "file", sourcePath: firstSource },
+          { kind: "file", sourcePath: secondSource }
+        ],
+        { maxBytesTotal: 3 }
+      ),
+      "SOURCE_TOTAL_TOO_LARGE"
+    );
+    await expect(fs.stat(path.join(projectRoot, "assets"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("fails closed for an invalid or unsafe existing source index", async () => {
+    const projectRoot = await makeProject();
+    const indexPath = path.join(projectRoot, SOURCE_MATERIAL_INDEX_PATH);
+    await fs.mkdir(path.dirname(indexPath), { recursive: true });
+
+    await fs.writeFile(indexPath, "not-json\n", "utf8");
+    await expectRejected(
+      stageSourceMaterials(projectRoot, [{ kind: "text", name: "notes", content: "content" }]),
+      "SOURCE_INDEX_INVALID"
+    );
+
+    await fs.writeFile(indexPath, JSON.stringify({ schemaVersion: 1, materials: [{ kind: "text" }] }), "utf8");
+    await expectRejected(
+      stageSourceMaterials(projectRoot, [{ kind: "text", name: "notes", content: "content" }]),
+      "SOURCE_INDEX_INVALID"
+    );
+
+    const sha = sha256("existing\n");
+    await fs.writeFile(
+      indexPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        materials: [{ kind: "text", name: "../existing.md", path: "assets/sources/../existing.md", bytes: 9, sha256: sha }]
+      }),
+      "utf8"
+    );
+    await expectRejected(
+      stageSourceMaterials(projectRoot, [{ kind: "text", name: "notes", content: "content" }]),
+      "SOURCE_INDEX_INVALID"
+    );
+  });
+
+  it("rejects an index target that is a directory or symbolic link", async () => {
+    const directoryProject = await makeProject();
+    const directoryIndex = path.join(directoryProject, SOURCE_MATERIAL_INDEX_PATH);
+    await fs.mkdir(directoryIndex, { recursive: true });
+    await expectRejected(
+      stageSourceMaterials(directoryProject, [{ kind: "text", name: "notes", content: "content" }]),
+      "SOURCE_INDEX_INVALID"
+    );
+
+    const symlinkProject = await makeProject();
+    const symlinkIndex = path.join(symlinkProject, SOURCE_MATERIAL_INDEX_PATH);
+    const realIndex = path.join(symlinkProject, "real-index.json");
+    await fs.mkdir(path.dirname(symlinkIndex), { recursive: true });
+    await fs.writeFile(realIndex, JSON.stringify({ schemaVersion: 1, materials: [] }), "utf8");
+    await fs.symlink(realIndex, symlinkIndex);
+    await expectRejected(
+      stageSourceMaterials(symlinkProject, [{ kind: "text", name: "notes", content: "content" }]),
+      "SOURCE_TARGET_UNSAFE"
+    );
+  });
+
   it("writes byte-identical indexes for identical inputs and sorts records by path", async () => {
     const firstProject = await makeProject();
     const secondProject = await makeProject();

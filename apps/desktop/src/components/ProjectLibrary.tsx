@@ -430,6 +430,11 @@ function RecentProjects({
     }
   };
 
+  const openImportSourcesPanel = async (event: MouseEvent<HTMLButtonElement>): Promise<void> => {
+    openNewDeckPanel(event);
+    await addSourceFiles();
+  };
+
   const addTextSource = (): void => {
     const trimmedName = sourceName.trim();
     if (trimmedName.length === 0) {
@@ -507,7 +512,7 @@ function RecentProjects({
             </Button>
             <Button
               icon={<Import />}
-              onClick={(event) => openNewDeckPanel(event)}
+              onClick={(event) => void openImportSourcesPanel(event)}
               title="Start a new deck with source material"
             >
               Import sources

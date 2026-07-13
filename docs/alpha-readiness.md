@@ -103,7 +103,7 @@ htmlslide rc byok --project <deck-path> --provider openai|anthropic|compatible -
 
 Optional candidate binding and run controls are `--base-url <url>`, `--commit <commit>`, `--artifact-url <url>`, and `--speaker-notes <mode>`. Use the command from the exact candidate binary being tested.
 
-The command writes sanitized run-bound evidence under `.htmlslide/reports/rc-evidence-<run-id>/`. The named environment variable and any desktop Keychain-backed credential remain outside the project; API key values are never written to the evidence.
+The command writes sanitized run-bound evidence under `.htmlslide/reports/rc-evidence-<run-id>/`. For a signed release promotion, attach the resulting evidence JSON as `HTMLslide-byok-acceptance-evidence.json` to the matching Draft Release; promotion verifies its run, 8-12 slide contract, passed checks, candidate commit, and artifact reference. The named environment variable and any desktop Keychain-backed credential remain outside the project; API key values are never written to the evidence.
 
 For implementation-level verification of an already captured run, the lower-level verifier remains available:
 

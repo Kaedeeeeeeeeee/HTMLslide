@@ -54,11 +54,19 @@ export async function main(args) {
   if (!new RegExp(`/actions/runs/${candidateRunId}(?:[/?#]|$)`, "u").test(packageRunUrl)) {
     throw new Error(`RC checklist Package workflow run does not identify candidate run ${candidateRunId}.`);
   }
+  const checklistArtifactReference = metadataFieldValue(checklistMarkdown, "DMG / artifact URL");
+  const expectedArtifactReference = `htmlslide-signed-notarized-${candidateRunId}-${bundleResult.dmg.fileName}`;
+  if (checklistArtifactReference !== expectedArtifactReference) {
+    throw new Error(
+      `RC checklist DMG / artifact URL ${checklistArtifactReference || "<empty>"} does not identify the verified candidate ${expectedArtifactReference}.`
+    );
+  }
 
   const checklistResult = await verifyChecklist(checklistMarkdown, {
     checklistPath,
     expectedCommit,
-    packageManifestPath: manifestPath
+    packageManifestPath: manifestPath,
+    byokEvidencePath: options.byokEvidence
   });
   const checklistSha256 = createHash("sha256").update(checklistMarkdown).digest("hex");
   const result = {
@@ -76,8 +84,10 @@ export async function main(args) {
       fileName: path.basename(checklistPath),
       sizeBytes: checklistStats.size,
       sha256: checklistSha256,
+      artifactReference: checklistArtifactReference,
       result: checklistResult.result
     },
+    byokEvidence: checklistResult.byokEvidence,
     provenance: checklistResult.provenance
   };
 
@@ -98,6 +108,7 @@ export function parseArgs(args) {
     "releaseTag",
     "candidateRunId",
     "commit",
+    "byokEvidence",
     "expectedArch",
     "teamId",
     "output"
@@ -122,7 +133,7 @@ export function parseArgs(args) {
     if (inlineValue === undefined) index += 1;
   }
 
-  for (const key of ["bundleDir", "checklist", "releaseTag", "candidateRunId", "commit"]) {
+  for (const key of ["bundleDir", "checklist", "releaseTag", "candidateRunId", "commit", "byokEvidence"]) {
     if (typeof parsed[key] !== "string" || parsed[key].trim().length === 0) {
       throw new Error(`Missing required --${key.replace(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`)} value.`);
     }

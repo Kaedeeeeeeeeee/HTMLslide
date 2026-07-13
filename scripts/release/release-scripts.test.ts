@@ -17,7 +17,7 @@ import {
   validateReleaseManifest,
   validateReleasePackageConfig
 } from "./validate-release-contract.mjs";
-import { main as verifyByokEvidence } from "./verify-byok-acceptance.mjs";
+import { main as verifyByokEvidence, validateByokAcceptanceEvidence } from "./verify-byok-acceptance.mjs";
 import { main as verifyChecklist } from "./verify-rc-checklist.mjs";
 import { main as verifyExternalAgentEvidence } from "./verify-external-agent-acceptance.mjs";
 import { main as verifyReleasePromotion } from "./promote-release.mjs";
@@ -798,12 +798,67 @@ describe("release evidence scripts", () => {
 
   it("verifies release promotion against the downloaded candidate and Draft Release checklist", async () => {
     const fixture = await createReleaseBundleFixture();
+    const byokFixture = await createByokEvidenceFixture();
     const checklistPath = path.join(fixture.root, "completed-release.md");
     const outputPath = path.join(fixture.root, "promotion-evidence.json");
     try {
       const provenance = await readPackageManifestProvenance(fixture.manifestPath, { requireSourceCommit: true });
+      const byokEvidencePath = path.join(byokFixture.projectPath, ".htmlslide", "reports", "release-evidence.json");
+      await verifyByokEvidence([
+        "--project", byokFixture.projectPath,
+        "--provider-validation", byokFixture.validationPath,
+        "--run-id", "run-real-provider",
+        "--output", byokEvidencePath,
+        "--commit", provenance.sourceCommit,
+        "--artifact-url", "htmlslide-signed-notarized-12345-HTMLslide-0.1.0-signed-notarized-arm64.dmg"
+      ]);
+      const legacyEvidence = JSON.parse(await readFile(byokEvidencePath, "utf8")) as {
+        generatedAt: string;
+        runId: string;
+        provider: { provider: string; model: string };
+        project: { slideCount: number };
+        candidate: { claimedCommit: string; claimedArtifactUrl: string };
+        inputs: { agentReportPath: string };
+        artifacts: unknown[];
+      };
+      await writeFile(byokEvidencePath, JSON.stringify({
+        schemaVersion: 1,
+        kind: "htmlslide-rc-byok-acceptance",
+        status: "passed",
+        command: "rc byok",
+        generatedAt: legacyEvidence.generatedAt,
+        runId: legacyEvidence.runId,
+        projectPath: ".",
+        evidenceDir: ".htmlslide/reports/rc-evidence-run-real-provider",
+        evidencePath: ".htmlslide/reports/rc-evidence-run-real-provider/evidence.json",
+        providerValidationPath: ".htmlslide/reports/rc-evidence-run-real-provider/provider-validation.json",
+        provider: legacyEvidence.provider.provider,
+        model: legacyEvidence.provider.model,
+        targetSlideCount: legacyEvidence.project.slideCount,
+        slideCount: legacyEvidence.project.slideCount,
+        candidate: {
+          binding: "caller-declared",
+          commit: legacyEvidence.candidate.claimedCommit,
+          artifactUrl: legacyEvidence.candidate.claimedArtifactUrl
+        },
+        checks: {
+          providerValidation: "passed",
+          agentRun: "passed",
+          checkpoint: "passed",
+          cliCheck: "passed",
+          cliExport: "passed",
+          exportArtifacts: "passed",
+          secretSafety: "passed"
+        },
+        inputs: {
+          providerValidation: { path: ".htmlslide/reports/rc-evidence-run-real-provider/provider-validation.json", sizeBytes: 1, sha256: "0".repeat(64) },
+          agentReport: { path: legacyEvidence.inputs.agentReportPath, sizeBytes: 1, sha256: "0".repeat(64) },
+          exportManifest: { path: "exports/export-manifest.json", sizeBytes: 1, sha256: "0".repeat(64) }
+        },
+        artifacts: legacyEvidence.artifacts
+      }, null, 2), "utf8");
       await writeFile(checklistPath, completeChecklist({
-        artifactUrl: "https://github.test/releases/download/v0.1.0/HTMLslide-0.1.0-signed-notarized-arm64.dmg",
+        artifactUrl: "htmlslide-signed-notarized-12345-HTMLslide-0.1.0-signed-notarized-arm64.dmg",
         channel: "release",
         ciRunUrl: "https://github.test/Kaedeeeeeeeeee/HTMLslide/actions/runs/12345",
         packageRunUrl: "https://github.test/Kaedeeeeeeeeee/HTMLslide/actions/runs/12345",
@@ -820,6 +875,7 @@ describe("release evidence scripts", () => {
         "--release-tag", "v0.1.0",
         "--candidate-run-id", "12345",
         "--commit", provenance.sourceCommit,
+        "--byok-evidence", byokEvidencePath,
         "--output", outputPath
       ]);
 
@@ -840,18 +896,95 @@ describe("release evidence scripts", () => {
         "--checklist", checklistPath,
         "--release-tag", "v0.1.1",
         "--candidate-run-id", "12345",
-        "--commit", provenance.sourceCommit
+        "--commit", provenance.sourceCommit,
+        "--byok-evidence", byokEvidencePath
       ])).rejects.toThrow(/does not match package manifest version/iu);
       await expect(verifyReleasePromotion([
         "--bundle-dir", fixture.bundleDir,
         "--checklist", checklistPath,
         "--release-tag", "v0.1.0",
         "--candidate-run-id", "99999",
-        "--commit", provenance.sourceCommit
+        "--commit", provenance.sourceCommit,
+        "--byok-evidence", byokEvidencePath
       ])).rejects.toThrow(/Candidate run ID .* does not match 99999/iu);
+
+      const wrongArtifactChecklistPath = path.join(fixture.root, "wrong-artifact.md");
+      await writeFile(
+        wrongArtifactChecklistPath,
+        completeChecklist({
+          artifactUrl: "htmlslide-signed-notarized-12345-other.dmg",
+          channel: "release",
+          ciRunUrl: "https://github.test/Kaedeeeeeeeeee/HTMLslide/actions/runs/12345",
+          packageRunUrl: "https://github.test/Kaedeeeeeeeeee/HTMLslide/actions/runs/12345",
+          candidateRunId: "12345",
+          releaseTag: "v0.1.0",
+          commit: provenance.sourceCommit,
+          packageManifestSha256: provenance.manifestSha256,
+          primaryArtifactSha256: provenance.primaryArtifactSha256
+        }),
+        "utf8"
+      );
+      await expect(verifyReleasePromotion([
+        "--bundle-dir", fixture.bundleDir,
+        "--checklist", wrongArtifactChecklistPath,
+        "--release-tag", "v0.1.0",
+        "--candidate-run-id", "12345",
+        "--commit", provenance.sourceCommit,
+        "--byok-evidence", byokEvidencePath
+      ])).rejects.toThrow(/does not identify the verified candidate/iu);
     } finally {
-      await rm(fixture.root, { recursive: true, force: true });
+      await Promise.all([
+        rm(fixture.root, { recursive: true, force: true }),
+        rm(byokFixture.root, { recursive: true, force: true })
+      ]);
     }
+  });
+
+  it("accepts the unified CLI BYOK evidence shape and binds its candidate metadata", () => {
+    expect(validateByokAcceptanceEvidence({
+      schemaVersion: 1,
+      kind: "htmlslide-rc-byok-acceptance",
+      status: "passed",
+      command: "rc byok",
+      generatedAt: "2026-07-14T00:00:00.000Z",
+      runId: "run-cli-evidence",
+      projectPath: ".",
+      evidenceDir: ".htmlslide/reports/rc-evidence-run-cli-evidence",
+      evidencePath: ".htmlslide/reports/rc-evidence-run-cli-evidence/evidence.json",
+      providerValidationPath: ".htmlslide/reports/rc-evidence-run-cli-evidence/provider-validation.json",
+      provider: "openai",
+      model: "gpt-test",
+      targetSlideCount: 8,
+      slideCount: 8,
+      candidate: { binding: "caller-declared", commit: "abc1234", artifactUrl: "htmlslide-signed-notarized-12345-deck.dmg" },
+      checks: {
+        providerValidation: "passed",
+        agentRun: "passed",
+        checkpoint: "passed",
+        cliCheck: "passed",
+        cliExport: "passed",
+        exportArtifacts: "passed",
+        secretSafety: "passed"
+      },
+      inputs: {
+        providerValidation: { path: ".htmlslide/reports/rc-evidence-run-cli-evidence/provider-validation.json", sizeBytes: 1, sha256: "0".repeat(64) },
+        agentReport: { path: ".htmlslide/reports/agent-run-cli-evidence.json", sizeBytes: 1, sha256: "0".repeat(64) },
+        exportManifest: { path: "exports/export-manifest.json", sizeBytes: 1, sha256: "0".repeat(64) }
+      },
+      artifacts: [
+        { path: "exports/deck.pdf", sizeBytes: 1, sha256: "0".repeat(64), kind: "pdf" },
+        { path: "exports/deck.deckpkg", sizeBytes: 1, sha256: "0".repeat(64), kind: "deckpkg" },
+        { path: "exports/thumbnails/001-slide.png", sizeBytes: 1, sha256: "0".repeat(64), kind: "thumbnail", slideId: "001-slide" }
+      ]
+    }, {
+      expectedCommit: "abc1234",
+      expectedArtifactUrl: "htmlslide-signed-notarized-12345-deck.dmg"
+    })).toMatchObject({
+      runId: "run-cli-evidence",
+      provider: "openai",
+      slideCount: 8,
+      candidate: { claimedCommit: "abc1234", claimedArtifactUrl: "htmlslide-signed-notarized-12345-deck.dmg" }
+    });
   });
 
   it.each([

@@ -527,10 +527,11 @@ test.describe("HTMLslide desktop smoke", () => {
     await recentNav.click();
     await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
     await expect(recentNav).toHaveAttribute("aria-current", "page");
-    await page.locator(".library-main").getByRole("button", { name: "New Deck", exact: true }).first().click();
+    await page.locator(".library-main").getByRole("button", { name: "Import sources", exact: true }).click();
 
     const newDeckPanel = page.locator(".new-deck-panel");
     await expect(newDeckPanel).toBeVisible();
+    await expect(newDeckPanel.getByText("research.csv", { exact: true })).toBeVisible();
     const templateSelect = newDeckPanel.getByLabel("Template");
     await expect(templateSelect).toHaveValue("default");
     await expect(templateSelect.locator("option")).toHaveText([
@@ -558,8 +559,6 @@ test.describe("HTMLslide desktop smoke", () => {
     await recentNav.click();
     await expect(page.getByLabel("Deck title")).toHaveValue("Investor Update");
     await expect(page.getByLabel("Folder")).toHaveValue("investor-update");
-    await newDeckPanel.getByRole("button", { name: "Add files", exact: true }).click();
-    await expect(newDeckPanel.getByText("research.csv", { exact: true })).toBeVisible();
     await newDeckPanel.getByRole("button", { name: "Paste text", exact: true }).click();
     await newDeckPanel.getByLabel("Source name").fill("Meeting transcript");
     await newDeckPanel.getByLabel("Source text").fill("Decisions\n\n- Ship the beta");

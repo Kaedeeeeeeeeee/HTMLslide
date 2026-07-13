@@ -16,6 +16,11 @@ on:
         required: false
         default: HTMLslide-release-rc-acceptance-completed.md
         type: string
+      byok_evidence_asset:
+        description: "Sanitized real-provider BYOK evidence asset uploaded to the Draft GitHub Release."
+        required: false
+        default: HTMLslide-byok-acceptance-evidence.json
+        type: string
 
 permissions:
   actions: read
@@ -42,6 +47,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
           RC_CHECKLIST_ASSET: ${{ inputs.rc_checklist_asset }}
+          BYOK_EVIDENCE_ASSET: ${{ inputs.byok_evidence_asset }}
         run: |
           set -euo pipefail
 
@@ -53,7 +59,7 @@ jobs:
             echo "::error title=Invalid candidate run ID::Expected a positive numeric Actions run ID."
             exit 1
           }
-          for value in "$RC_CHECKLIST_ASSET"; do
+          for value in "$RC_CHECKLIST_ASSET" "$BYOK_EVIDENCE_ASSET"; do
             [[ "$value" != */* && "$value" != *\\* && "$value" != .* ]] || {
               echo "::error title=Unsafe promotion asset name::Asset names must be basename-only values."
               exit 1
@@ -102,6 +108,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           RC_CHECKLIST_ASSET: ${{ inputs.rc_checklist_asset }}
+          BYOK_EVIDENCE_ASSET: ${{ inputs.byok_evidence_asset }}
         run: |
           set -euo pipefail
 
@@ -112,6 +119,10 @@ jobs:
           }
           gh release download "$RELEASE_TAG" \
             --pattern "$RC_CHECKLIST_ASSET" \
+            --dir promotion-input \
+            --clobber
+          gh release download "$RELEASE_TAG" \
+            --pattern "$BYOK_EVIDENCE_ASSET" \
             --dir promotion-input \
             --clobber
 
@@ -131,6 +142,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
           RC_CHECKLIST_ASSET: ${{ inputs.rc_checklist_asset }}
+          BYOK_EVIDENCE_ASSET: ${{ inputs.byok_evidence_asset }}
         run: |
           set -euo pipefail
 
@@ -138,6 +150,7 @@ jobs:
           pnpm release:promote:verify -- \
             --bundle-dir candidate-bundle \
             --checklist "promotion-input/$RC_CHECKLIST_ASSET" \
+            --byok-evidence "promotion-input/$BYOK_EVIDENCE_ASSET" \
             --release-tag "$RELEASE_TAG" \
             --candidate-run-id "$CANDIDATE_RUN_ID" \
             --commit "$expected_commit" \

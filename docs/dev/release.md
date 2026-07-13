@@ -96,7 +96,7 @@ Also verify:
 - New Deck, Open Folder, and Project Library work.
 - Mock provider full flow passes.
 - At least one real provider is manually validated when credentials are available.
-- The exact real-provider desktop run produces 8-12 slides and passes `pnpm rc:byok-evidence -- --project <deck> --provider-validation <validation.json> --run-id <run-id> --commit <commit> --artifact-url <artifact-url>`.
+- The exact real-provider candidate run produces 8-12 slides and passes `htmlslide rc byok --project <deck> --provider <provider> --model <model> --api-key-env <ENV_NAME> --task <brief> --target-slide-count <8-12> --commit <commit> --artifact-url <artifact-reference> --json`, writing sanitized evidence under `.htmlslide/reports/rc-evidence-<run-id>/`. For a desktop run captured through Settings, `pnpm rc:byok-evidence` remains the lower-level verifier.
 - Outline, visual directions, and full deck generation work.
 - Checks find `text-overflow`, missing asset, and missing notes issues.
 - Chromium PDF page count, normalized metadata, and repeated-export determinism match the deck; Poppler rasterized PDF page goldens and PNG full-slide goldens stay within 0.2 percent, and real DOM thumbnail goldens stay within 0.5 percent. CI installs and verifies `pdftoppm`; PDF raster failures write before/after/diff artifacts under `dist/visual-regression/pdf/`. PDF bytes remain scoped to the pinned Chromium, OS, and font environment, while raster goldens are reviewed per platform and architecture.
@@ -152,7 +152,7 @@ The first workflow gate runs `scripts/release/validate-release-contract.mjs` bef
 
 Signing and notarization secrets must be company-owned repository or organization secrets, never committed files or personal local credentials.
 
-The workflow-generated `HTMLslide-release-rc-acceptance.md` remains a run-bound checklist template. The candidate workflow uploads it before manual testing so the tester can inspect the exact package. The separate `Promote macOS Release` workflow requires the completed checklist to be an asset in the matching Draft Release and runs `pnpm release:promote:verify`, which delegates the checklist contract to `pnpm rc:checklist:verify` after validating the downloaded candidate bundle. Without a valid completed checklist or an exact candidate provenance match, promotion fails closed and the Draft Release remains unpublished.
+The workflow-generated `HTMLslide-release-rc-acceptance.md` remains a run-bound checklist template. The candidate workflow uploads it before manual testing so the tester can inspect the exact package. Its `DMG / artifact URL` metadata is a stable reference in the form `htmlslide-signed-notarized-<candidate-run-id>-<DMG-file-name>`, which promotion binds to the verified downloaded DMG. Before promotion, upload the real-provider output as `HTMLslide-byok-acceptance-evidence.json` to the matching Draft Release. The separate `Promote macOS Release` workflow downloads both assets and runs `pnpm release:promote:verify`, which delegates the checklist contract to `pnpm rc:checklist:verify` after validating the downloaded candidate bundle and BYOK evidence. Without a valid completed checklist, BYOK evidence asset, or exact candidate provenance match, promotion fails closed and the Draft Release remains unpublished.
 
 ## Release Notes
 

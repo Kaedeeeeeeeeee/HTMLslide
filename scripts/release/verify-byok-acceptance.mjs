@@ -193,7 +193,7 @@ export async function verifyByokAcceptance(options) {
     candidate: {
       binding: "caller-declared",
       ...(options.commit ? { claimedCommit: cleanMetadata(options.commit, "commit") } : {}),
-      ...(options.artifactUrl ? { claimedArtifactUrl: validateArtifactUrl(options.artifactUrl) } : {})
+      ...(options.artifactUrl ? { claimedArtifactUrl: validateArtifactReference(options.artifactUrl) } : {})
     },
     inputs: {
       providerValidationSha256: await sha256File(validationPath),
@@ -215,6 +215,162 @@ export async function verifyByokAcceptance(options) {
   };
   assertNoSecrets(evidence, "generated evidence");
   return evidence;
+}
+
+export function validateByokAcceptanceEvidence(value, options = {}) {
+  assertNoSecrets(value, "BYOK acceptance evidence");
+  if (isRecord(value) && value.kind === "htmlslide-rc-byok-acceptance") {
+    return validateCliByokAcceptanceEvidence(value, options);
+  }
+  return validateLegacyByokAcceptanceEvidence(value, options);
+}
+
+function validateCliByokAcceptanceEvidence(value, options) {
+  if (value.schemaVersion !== 1 || value.status !== "passed" || value.command !== "rc byok") {
+    throw new Error("BYOK acceptance evidence does not match the unified CLI evidence contract.");
+  }
+
+  const runId = requireString(value.runId, "BYOK evidence runId");
+  if (safeRunId(runId) !== runId) {
+    throw new Error("BYOK evidence runId is not safe for release binding.");
+  }
+  if (value.projectPath !== "." || !isSafeEvidencePath(value.evidenceDir) || !isSafeEvidencePath(value.evidencePath) || !isSafeEvidencePath(value.providerValidationPath)) {
+    throw new Error("BYOK CLI evidence contains unsafe project-local paths.");
+  }
+  if (!allowedProviders.has(value.provider) || typeof value.model !== "string" || value.model.trim().length === 0) {
+    throw new Error("BYOK evidence provider metadata is invalid.");
+  }
+  if (!Number.isInteger(value.targetSlideCount) || value.targetSlideCount < 8 || value.targetSlideCount > 12 || value.slideCount !== value.targetSlideCount) {
+    throw new Error("BYOK evidence does not prove an 8-12 slide project with the requested count.");
+  }
+
+  if (!isRecord(value.candidate) || value.candidate.binding !== "caller-declared") {
+    throw new Error("BYOK evidence is missing caller-declared candidate binding metadata.");
+  }
+  const claimedCommit = value.candidate.commit === undefined
+    ? undefined
+    : cleanMetadata(value.candidate.commit, "BYOK evidence commit");
+  const claimedArtifactUrl = value.candidate.artifactUrl === undefined
+    ? undefined
+    : validateCliArtifactReference(value.candidate.artifactUrl);
+  if (options.expectedCommit !== undefined && claimedCommit !== options.expectedCommit) {
+    throw new Error("BYOK evidence claimed commit does not match the candidate commit.");
+  }
+  if (options.expectedArtifactUrl !== undefined && claimedArtifactUrl !== options.expectedArtifactUrl) {
+    throw new Error("BYOK evidence claimed artifact does not match the checklist artifact reference.");
+  }
+
+  const requiredChecks = [
+    "providerValidation",
+    "agentRun",
+    "checkpoint",
+    "cliCheck",
+    "cliExport",
+    "exportArtifacts",
+    "secretSafety"
+  ];
+  if (!isRecord(value.checks) || requiredChecks.some((check) => value.checks[check] !== "passed")) {
+    throw new Error("BYOK evidence is missing a passed acceptance check.");
+  }
+
+  for (const key of ["providerValidation", "agentReport", "exportManifest"]) {
+    const input = isRecord(value.inputs) ? value.inputs[key] : undefined;
+    if (!isRecord(input) || !isSafeEvidencePath(input.path) || !Number.isInteger(input.sizeBytes) || input.sizeBytes < 0 || !sha256Pattern.test(input.sha256)) {
+      throw new Error("BYOK evidence input fingerprints are invalid.");
+    }
+  }
+  if (value.inputs.exportManifest.path !== "exports/export-manifest.json") {
+    throw new Error("BYOK evidence export manifest path is invalid.");
+  }
+  validateExportArtifactEvidence(value.artifacts);
+
+  return {
+    runId,
+    provider: value.provider,
+    model: value.model,
+    slideCount: value.slideCount,
+    candidate: {
+      binding: "caller-declared",
+      ...(claimedCommit === undefined ? {} : { claimedCommit }),
+      ...(claimedArtifactUrl === undefined ? {} : { claimedArtifactUrl })
+    }
+  };
+}
+
+function validateLegacyByokAcceptanceEvidence(value, options) {
+  if (!isRecord(value) || value.schemaVersion !== 1 || value.kind !== "htmlslide-byok-acceptance-evidence" || value.status !== "passed") {
+    throw new Error("BYOK acceptance evidence does not match the generated evidence contract.");
+  }
+
+  const runId = requireString(value.runId, "BYOK evidence runId");
+  if (safeRunId(runId) !== runId) {
+    throw new Error("BYOK evidence runId is not safe for release binding.");
+  }
+
+  if (!isRecord(value.provider) || !allowedProviders.has(value.provider.provider) || typeof value.provider.model !== "string" || value.provider.model.trim().length === 0) {
+    throw new Error("BYOK evidence provider metadata is invalid.");
+  }
+
+  if (!isRecord(value.project) || value.project.schemaVersion !== "0.1.0" || !Number.isInteger(value.project.slideCount) || value.project.slideCount < 8 || value.project.slideCount > 12 || !Array.isArray(value.project.slideIds) || value.project.slideIds.length !== value.project.slideCount || new Set(value.project.slideIds).size !== value.project.slideIds.length) {
+    throw new Error("BYOK evidence does not prove an 8-12 slide project with unique slide IDs.");
+  }
+
+  if (!isRecord(value.candidate) || value.candidate.binding !== "caller-declared") {
+    throw new Error("BYOK evidence is missing caller-declared candidate binding metadata.");
+  }
+  if (options.expectedCommit !== undefined && value.candidate.claimedCommit !== options.expectedCommit) {
+    throw new Error("BYOK evidence claimed commit does not match the candidate commit.");
+  }
+  if (options.expectedArtifactUrl !== undefined && value.candidate.claimedArtifactUrl !== options.expectedArtifactUrl) {
+    throw new Error("BYOK evidence claimed artifact does not match the checklist artifact reference.");
+  }
+
+  const requiredChecks = [
+    "providerValidation",
+    "outlineAndDeck",
+    "providerSourceWrites",
+    "reversibleCheckpoint",
+    "cliCheck",
+    "cliExport",
+    "exportArtifacts",
+    "secretSafety"
+  ];
+  if (!isRecord(value.checks) || requiredChecks.some((check) => value.checks[check] !== "passed")) {
+    throw new Error("BYOK evidence is missing a passed acceptance check.");
+  }
+
+  if (!isRecord(value.inputs) || !sha256Pattern.test(value.inputs.providerValidationSha256) || !sha256Pattern.test(value.inputs.agentReportSha256) || !isSafeEvidencePath(value.inputs.agentReportPath)) {
+    throw new Error("BYOK evidence input fingerprints are invalid.");
+  }
+  if (!sha256Pattern.test(value.exportSourceDigest)) {
+    throw new Error("BYOK evidence export source digest is invalid.");
+  }
+
+  validateExportArtifactEvidence(value.artifacts);
+
+  return {
+    runId,
+    provider: value.provider.provider,
+    model: value.provider.model,
+    slideCount: value.project.slideCount,
+    candidate: value.candidate
+  };
+}
+
+function validateExportArtifactEvidence(artifacts) {
+  if (!Array.isArray(artifacts) || artifacts.length === 0) {
+    throw new Error("BYOK evidence contains no export artifacts.");
+  }
+  const kinds = new Set();
+  for (const artifact of artifacts) {
+    if (!isRecord(artifact) || !isSafeEvidencePath(artifact.path) || !artifact.path.startsWith("exports/") || artifact.path === "exports/export-manifest.json" || !Number.isInteger(artifact.sizeBytes) || artifact.sizeBytes < 0 || !sha256Pattern.test(artifact.sha256) || typeof artifact.kind !== "string") {
+      throw new Error("BYOK evidence contains invalid artifact metadata.");
+    }
+    kinds.add(artifact.kind);
+  }
+  if (!kinds.has("pdf") || !kinds.has("deckpkg") || !kinds.has("thumbnail")) {
+    throw new Error("BYOK evidence must include PDF, deckpkg, and thumbnail artifacts.");
+  }
 }
 
 function validateProviderValidation(validation) {
@@ -635,8 +791,12 @@ function assertNoSecrets(value, label, currentPath = "$") {
   }
 }
 
-function validateArtifactUrl(value) {
+function validateArtifactReference(value) {
   const clean = cleanMetadata(value, "artifact URL");
+  if (/^htmlslide-signed-notarized-[1-9][0-9]*-[A-Za-z0-9][A-Za-z0-9._-]*\.dmg$/u.test(clean)) {
+    return clean;
+  }
+
   let url;
   try {
     url = new URL(clean);
@@ -647,6 +807,17 @@ function validateArtifactUrl(value) {
     throw new Error("Artifact URL must be HTTPS and must not contain credentials, query parameters, or fragments.");
   }
   return url.href;
+}
+
+function validateCliArtifactReference(value) {
+  const clean = cleanMetadata(value, "artifact URL");
+  if (/^https:\/\//u.test(clean)) {
+    return validateArtifactReference(clean);
+  }
+  if (!/^[A-Za-z0-9._-]+$/u.test(clean)) {
+    throw new Error("Artifact URL or label contains unsafe characters.");
+  }
+  return clean;
 }
 
 function cleanMetadata(value, label) {
@@ -663,6 +834,11 @@ function requireString(value, label) {
     throw new Error(`${label} must be a non-empty string.`);
   }
   return value.trim();
+}
+
+function isSafeEvidencePath(value) {
+  return typeof value === "string" && value.length > 0 && value === value.normalize("NFC") &&
+    !value.startsWith("/") && !value.includes("\\") && !value.split("/").some((segment) => segment.length === 0 || segment === "." || segment === "..");
 }
 
 function isRecord(value) {

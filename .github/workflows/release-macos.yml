@@ -304,8 +304,9 @@ jobs:
           shopt -s nullglob
           artifacts=(dist/release/*.dmg dist/release/*.json)
           manifest="$(find dist/release -maxdepth 1 -type f -name 'HTMLslide-*.json' -print | sort | tail -n 1)"
+          dmg="$(find dist/release -maxdepth 1 -type f -name '*.dmg' -print | sort | tail -n 1)"
 
-          if (( ${#artifacts[@]} == 0 )) || [[ -z "$manifest" || ! -f "$manifest" ]]; then
+          if (( ${#artifacts[@]} == 0 )) || [[ -z "$manifest" || ! -f "$manifest" || -z "$dmg" || ! -f "$dmg" ]]; then
             echo "::error title=No release artifacts::No release DMG or manifest was found under dist/release."
             exit 1
           fi
@@ -326,7 +327,7 @@ jobs:
             --channel release \
             --ci-run-url "$run_url" \
             --package-run-url "$run_url" \
-            --artifact-url "htmlslide-signed-notarized-${GITHUB_RUN_ID}" \
+            --artifact-url "htmlslide-signed-notarized-${GITHUB_RUN_ID}-$(basename "$dmg")" \
             --candidate-run-id "$GITHUB_RUN_ID" \
             --release-tag "$release_tag" \
             --package-manifest "$manifest" \

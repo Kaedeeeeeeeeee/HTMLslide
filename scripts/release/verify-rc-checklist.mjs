@@ -1,8 +1,10 @@
-import { readFile, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { lstat, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { readPackageManifestProvenance, validateCommit } from "./rc-provenance.mjs";
+import { validateByokAcceptanceEvidence } from "./verify-byok-acceptance.mjs";
 
 const maxChecklistBytes = 2 * 1024 * 1024;
 const expectedManualItems = 13;
@@ -31,7 +33,8 @@ export async function main(args) {
   const result = await verifyChecklist(markdown, {
     checklistPath,
     expectedCommit: options.commit,
-    packageManifestPath: options.packageManifest
+    packageManifestPath: options.packageManifest,
+    byokEvidencePath: options.byokEvidence
   });
   process.stdout.write(options.json ? `${JSON.stringify(result)}\n` : `${formatHumanResult(result)}\n`);
   return result;
@@ -39,7 +42,7 @@ export async function main(args) {
 
 export function parseArgs(args) {
   const parsed = { json: false };
-  const allowed = new Set(["checklist", "input", "json", "packageManifest", "commit"]);
+  const allowed = new Set(["checklist", "input", "json", "packageManifest", "commit", "byokEvidence"]);
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -187,6 +190,9 @@ export async function verifyChecklist(markdown, metadata = {}) {
   const provenance = metadata.packageManifestPath
     ? await verifyProvenance(markdown, metadata)
     : undefined;
+  const byokEvidence = metadata.byokEvidencePath
+    ? await verifyByokEvidencePath(metadata.byokEvidencePath, markdown, metadata)
+    : undefined;
 
   const statusCounts = Object.fromEntries(["Pass", "Fail", "N/A"].map((status) => [
     status,
@@ -203,7 +209,40 @@ export async function verifyChecklist(markdown, metadata = {}) {
     manualStatuses: statusCounts,
     statusCounts,
     result: resultStatus,
+    ...(byokEvidence ? { byokEvidence } : {}),
     ...(provenance ? { provenance } : {})
+  };
+}
+
+async function verifyByokEvidencePath(evidencePathInput, markdown, metadata) {
+  const evidencePath = path.resolve(evidencePathInput);
+  const info = await lstat(evidencePath);
+  if (!info.isFile() || info.isSymbolicLink() || info.size > maxChecklistBytes) {
+    throw new Error(`BYOK evidence must be a regular JSON file no larger than ${maxChecklistBytes} bytes.`);
+  }
+
+  let evidence;
+  try {
+    evidence = JSON.parse(await readFile(evidencePath, "utf8"));
+  } catch (error) {
+    throw new Error(`BYOK evidence is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  const metadataSection = sectionBetween(markdown, "## Metadata", "## Automated Gates");
+  const checklistCommit = metadataFieldValue(metadataSection, "Commit");
+  const checklistArtifact = metadataFieldValue(metadataSection, "DMG / artifact URL");
+  const expectedCommit = metadata.expectedCommit ?? (isEmptyEvidence(checklistCommit) ? undefined : checklistCommit);
+  const expectedArtifactUrl = isEmptyEvidence(checklistArtifact) ? undefined : checklistArtifact;
+  const summary = validateByokAcceptanceEvidence(evidence, {
+    ...(expectedCommit ? { expectedCommit } : {}),
+    ...(expectedArtifactUrl ? { expectedArtifactUrl } : {})
+  });
+
+  return {
+    path: evidencePath,
+    sizeBytes: info.size,
+    sha256: createHash("sha256").update(await readFile(evidencePath)).digest("hex"),
+    ...summary
   };
 }
 

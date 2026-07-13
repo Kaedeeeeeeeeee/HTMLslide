@@ -188,8 +188,8 @@ For every item, record Pass, Fail, or N/A with an evidence link or note. A publi
 - [ ] Save a test provider key through Settings.
 - [ ] Create a deck with the BYOK provider.
 - [ ] Request an explicit 8-12 slide count and confirm the generated manifest matches the accepted outline.
-- [ ] Run \`pnpm rc:byok-evidence -- --project <deck> --provider-validation <validation.json> --run-id <run-id> --commit <commit> --artifact-url <artifact-url>\`.
-- [ ] Attach the passing sanitized evidence JSON for this exact run and candidate artifact.
+- [ ] Run \`htmlslide rc byok --project <deck> --provider <provider> --model <model> --api-key-env <ENV_NAME> --task <brief> --target-slide-count <8-12> --commit <commit> --artifact-url <artifact-reference> --json\`.
+- [ ] Attach the passing sanitized evidence JSON as \`HTMLslide-byok-acceptance-evidence.json\` for this exact run and candidate artifact.
 - [ ] Confirm no API key appears in project files, reports, logs, or screenshots.
 - [ ] A real provider run is required for an accepted alpha or release candidate; missing credentials are a release blocker, not a promotion exception.
 - Status: TODO

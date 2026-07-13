@@ -219,6 +219,9 @@ export async function verifyByokAcceptance(options) {
 
 export function validateByokAcceptanceEvidence(value, options = {}) {
   assertNoSecrets(value, "BYOK acceptance evidence");
+  if (isRecord(value) && (value.fixtureOnly === true || value.providerBoundary === "fixture-only")) {
+    throw new Error("Fixture-only BYOK evidence cannot be used for release promotion.");
+  }
   if (isRecord(value) && value.kind === "htmlslide-rc-byok-acceptance") {
     return validateCliByokAcceptanceEvidence(value, options);
   }

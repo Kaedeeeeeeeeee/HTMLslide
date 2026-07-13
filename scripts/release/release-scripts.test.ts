@@ -1104,6 +1104,7 @@ describe("release evidence scripts", () => {
         providerBoundary: "fixture-only"
       });
       expect(evidence.verificationNote).toMatch(/not real provider acceptance/iu);
+      expect(() => validateByokAcceptanceEvidence(evidence)).toThrow(/Fixture-only BYOK evidence cannot be used for release promotion/iu);
     } finally {
       await rm(outputPath, { force: true });
     }

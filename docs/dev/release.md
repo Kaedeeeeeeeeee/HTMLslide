@@ -84,7 +84,7 @@ pnpm rc:external-agent-evidence -- \
 
 The verifier rejects raw logs, secrets, absolute paths, unsupported fields, mismatched provider auth commands, incomplete Check/Export/Revert evidence, and package manifests whose signing/channel contract is inconsistent. Its output contains only sanitized metadata and input/package SHA-256 digests; it does not prove the manual run occurred by itself, so the human tester must retain the evidence link and exact artifact notes in the RC checklist.
 
-The CI workflows also run `pnpm rc:byok-fixture-smoke`. Its output is marked `fixtureOnly: true` and `providerBoundary: "fixture-only"`; it validates the evidence pipeline with deterministic local data only and must never be used as real provider acceptance evidence. Signed tag candidates remain in Draft GitHub Releases until the promotion workflow verifies the exact downloaded bundle and completed checklist.
+The CI workflows also run `pnpm rc:byok-fixture-smoke`. Its output is marked `fixtureOnly: true` and `providerBoundary: "fixture-only"`; it validates the evidence pipeline with deterministic local data only and must never be used as real provider acceptance evidence. The promotion verifier rejects either marker, even if a fixture file is renamed to the real-provider asset name. Signed tag candidates remain in Draft GitHub Releases until the promotion workflow verifies the exact downloaded bundle and completed checklist.
 
 The Alpha Package and Release macOS workflows also generate a prefilled RC checklist in their uploaded artifact bundle. Treat that file as a run-bound evidence template, not completed acceptance, until a tester fills in the manual results.
 

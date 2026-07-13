@@ -243,6 +243,37 @@ describe("macOS alpha packaging contract", () => {
     expect(desktopApiSource).toContain("onAudienceWindowStateChanged(handler: (state: DesktopAudienceWindowState) => void): () => void;");
   });
 
+  it("keeps presenter screen swapping validated, stateful, and window-safe", async () => {
+    const mainSource = await readText("apps/desktop/electron/main.ts");
+    const preloadSource = await readText("apps/desktop/electron/preload.cts");
+    const desktopApiSource = await readText("apps/desktop/src/desktop-api.ts");
+    const workspaceSource = await readText("apps/desktop/src/components/Workspace.tsx");
+
+    expect(mainSource).toContain("normalizePresenterScreenSwapRequest");
+    expect(mainSource).toContain('ipcMain.handle("htmlslide:swap-presenter-screens"');
+    expect(mainSource).toContain('"main-window-unavailable"');
+    expect(mainSource).toContain('"audience-window-unavailable"');
+    expect(mainSource).toContain('"audience-state-mismatch"');
+    expect(mainSource).toContain('"same-display"');
+    expect(mainSource).toContain('"target-disconnected"');
+    expect(mainSource).toContain("mainWindow.getNormalBounds()");
+    expect(mainSource).toContain("restoreMainWindowPresentation");
+    expect(mainSource).toContain("mainWindow.setBounds(mainTargetBounds)");
+    expect(mainSource).toContain("audienceWindow.setBounds(audienceTargetBounds)");
+    expect(mainSource).toContain("audienceWindowDisplayId = mainDisplay.id");
+    expect(mainSource).toContain("selectedDisplayId: mainDisplay.id");
+    expect(preloadSource).toContain('ipcRenderer.invoke("htmlslide:swap-presenter-screens", request)');
+    expect(desktopApiSource).toContain("DesktopPresenterScreenSwapRequest");
+    expect(desktopApiSource).toContain("DesktopPresenterScreenSwapResult");
+    expect(desktopApiSource).toContain(
+      "swapPresenterScreens(request: DesktopPresenterScreenSwapRequest): Promise<DesktopPresenterScreenSwapResult>;"
+    );
+    expect(workspaceSource).toContain('"Swap screens"');
+    expect(workspaceSource).toContain("swapPresenterScreens({ selectedDisplayId })");
+    expect(workspaceSource).toContain("setSelectedDisplayId(state.selectedDisplayId)");
+    expect(workspaceSource).toContain("setAudienceWindowError(state.error.message)");
+  });
+
   it("keeps the repair-prompt clipboard bridge explicit and bounded", async () => {
     const mainSource = await readText("apps/desktop/electron/main.ts");
     const preloadSource = await readText("apps/desktop/electron/preload.cts");

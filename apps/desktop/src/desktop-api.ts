@@ -478,6 +478,36 @@ export type DesktopAudienceWindowState = {
   reason?: "target-disconnected" | "target-reconnected" | "closed";
 };
 
+export type DesktopPresenterScreenSwapRequest = {
+  selectedDisplayId: number;
+};
+
+export type DesktopPresenterScreenSwapErrorCode =
+  | "main-window-unavailable"
+  | "audience-window-unavailable"
+  | "audience-state-mismatch"
+  | "same-display"
+  | "target-disconnected"
+  | "swap-failed";
+
+export type DesktopPresenterScreenSwapResult =
+  | {
+      ok: true;
+      selectedDisplayId: number;
+      audienceDisplayId: number;
+      mainDisplayId: number;
+    }
+  | {
+      ok: false;
+      selectedDisplayId?: number;
+      audienceDisplayId?: number;
+      mainDisplayId?: number;
+      error: {
+        code: DesktopPresenterScreenSwapErrorCode;
+        message: string;
+      };
+    };
+
 export type DesktopAiEngineSettingsSaveRequest = {
   settings: AiEngineSettings;
   apiKeyInput?: string;
@@ -528,6 +558,7 @@ export type HtmlslideDesktopApi = {
   openAudienceWindow(request: DesktopAudienceWindowRequest): Promise<DesktopAudienceWindowState>;
   updateAudienceWindow(request: DesktopAudienceWindowRequest): Promise<DesktopAudienceWindowState>;
   closeAudienceWindow(): Promise<DesktopAudienceWindowState>;
+  swapPresenterScreens(request: DesktopPresenterScreenSwapRequest): Promise<DesktopPresenterScreenSwapResult>;
   startAgentRun(request: DesktopAgentRunRequest): Promise<DesktopAgentRunSnapshot>;
   getAgentRun(runId: string): Promise<DesktopAgentRunSnapshot | undefined>;
   getActiveAgentRun(projectPath: string): Promise<DesktopAgentRunSnapshot | undefined>;

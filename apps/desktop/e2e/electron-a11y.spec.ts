@@ -323,6 +323,7 @@ test.describe("HTMLslide desktop accessibility smoke", () => {
     const presenter = page.getByLabel("Presenter rehearsal mode");
     await expect(presenter).toBeVisible({ timeout: 30_000 });
     await expect(presenter.getByLabel("Presenter progress")).toBeVisible();
+    await expect(presenter.getByRole("button", { name: "Swap screens", exact: true })).toBeVisible();
     const pauseTimerButton = presenter.getByRole("button", { name: "Pause timer", exact: true });
     await expect(pauseTimerButton).toHaveAttribute("aria-pressed", "false");
     await pauseTimerButton.click();

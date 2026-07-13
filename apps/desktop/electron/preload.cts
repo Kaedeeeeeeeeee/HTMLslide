@@ -71,6 +71,7 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
   openAudienceWindow: (request: unknown) => ipcRenderer.invoke("htmlslide:open-audience-window", request),
   updateAudienceWindow: (request: unknown) => ipcRenderer.invoke("htmlslide:update-audience-window", request),
   closeAudienceWindow: () => ipcRenderer.invoke("htmlslide:close-audience-window"),
+  swapPresenterScreens: (request: unknown) => ipcRenderer.invoke("htmlslide:swap-presenter-screens", request),
   startAgentRun: (request: {
     engine: "mock-agent" | "htmlslide-agent" | "external-agent";
     exportOptions?: unknown;

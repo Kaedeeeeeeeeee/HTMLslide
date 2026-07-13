@@ -26,6 +26,7 @@ import {
 } from "@htmlslide/shared-ui";
 import {
   Activity,
+  ArrowLeftRight,
   Ban,
   CheckCircle2,
   ChevronDown,
@@ -98,8 +99,11 @@ import type {
   DesktopPresenterDisplay,
   DesktopPresenterDisplayPreference,
   DesktopPresenterPreferences,
+  DesktopPresenterScreenSwapRequest,
+  DesktopPresenterScreenSwapResult,
   DesktopSlidePreviewDocument
 } from "../desktop-api";
+import { getDesktopApi } from "../desktop-api";
 
 interface WorkspaceProps {
   activeStageIndex: number;
@@ -154,6 +158,7 @@ interface WorkspaceProps {
   loadPresenterPreferences?: () => Promise<DesktopPresenterPreferences>;
   listPresenterDisplays?: () => Promise<DesktopPresenterDisplay[]>;
   openAudienceWindow?: (request: DesktopAudienceWindowRequest) => Promise<DesktopAudienceWindowState>;
+  swapPresenterScreens?: (request: DesktopPresenterScreenSwapRequest) => Promise<DesktopPresenterScreenSwapResult>;
   savePresenterPreferences?: (
     preferences: Pick<DesktopPresenterPreferences, "recentSlideId" | "notesFontSizePx" | "selectedDisplay">
   ) => Promise<DesktopPresenterPreferences>;
@@ -324,6 +329,7 @@ export function Workspace({
   loadPresenterDeck,
   listPresenterDisplays,
   openAudienceWindow,
+  swapPresenterScreens,
   onQaFilterChange,
   onRevertDiff,
   onRunAction,
@@ -351,6 +357,8 @@ export function Workspace({
   stages,
   updateAudienceWindow
 }: WorkspaceProps): ReactNode {
+  const rendererDesktopApi = getDesktopApi();
+  const resolvedSwapPresenterScreens = swapPresenterScreens ?? rendererDesktopApi?.swapPresenterScreens;
   const currentSlide =
     slides.find((slide) => slide.id === selectedSlideId) ??
     slides[0] ??
@@ -669,6 +677,7 @@ export function Workspace({
           onSessionChange={handlePresenterSessionChange}
           savePresenterPreferences={savePresenterPreferences}
           openAudienceWindow={openAudienceWindow}
+          swapPresenterScreens={resolvedSwapPresenterScreens}
           project={project}
           listPresenterDisplays={listPresenterDisplays}
           onPresenterDisplaysChanged={onPresenterDisplaysChanged}
@@ -692,6 +701,7 @@ interface PresenterModeProps {
   onPresenterDisplaysChanged?: (handler: () => void) => () => void;
   onAudienceWindowStateChanged?: (handler: (state: DesktopAudienceWindowState) => void) => () => void;
   openAudienceWindow?: (request: DesktopAudienceWindowRequest) => Promise<DesktopAudienceWindowState>;
+  swapPresenterScreens?: (request: DesktopPresenterScreenSwapRequest) => Promise<DesktopPresenterScreenSwapResult>;
   session: PresenterSessionState;
   slides: SlideSummary[];
   source: PresenterSource;
@@ -718,6 +728,7 @@ function PresenterMode({
   session,
   slides,
   source,
+  swapPresenterScreens,
   updateAudienceWindow
 }: PresenterModeProps): ReactNode {
   const shellRef = useRef<HTMLElement | null>(null);
@@ -731,6 +742,7 @@ function PresenterMode({
   const [displayResolutionReady, setDisplayResolutionReady] = useState(false);
   const [audienceWindowState, setAudienceWindowState] = useState<DesktopAudienceWindowState>({ open: false });
   const [audienceWindowError, setAudienceWindowError] = useState<string | undefined>();
+  const [swapPending, setSwapPending] = useState(false);
   const autoAudienceOpenAttemptedRef = useRef(false);
 
   useEffect(() => {
@@ -1010,6 +1022,36 @@ function PresenterMode({
       });
   }, [closeAudienceWindow]);
 
+  const handleSwapScreens = useCallback((): void => {
+    if (!swapPresenterScreens) {
+      setAudienceWindowError("Screen swapping is unavailable in this runtime.");
+      return;
+    }
+    if (!audienceWindowState.open || selectedDisplayId === undefined) {
+      setAudienceWindowError("Open Audience on a selected display before swapping screens.");
+      return;
+    }
+
+    setSwapPending(true);
+    swapPresenterScreens({ selectedDisplayId })
+      .then((state) => {
+        if (!state.ok) {
+          setAudienceWindowError(state.error.message);
+          return;
+        }
+
+        selectedDisplayIdRef.current = state.selectedDisplayId;
+        setSelectedDisplayId(state.selectedDisplayId);
+        setAudienceWindowState({ open: true, displayId: state.audienceDisplayId });
+        setAudienceWindowError(undefined);
+        setDisplayError(undefined);
+      })
+      .catch((error: unknown) => {
+        setAudienceWindowError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => setSwapPending(false));
+  }, [audienceWindowState.open, selectedDisplayId, swapPresenterScreens]);
+
   const runPresenterAction = useCallback(
     (action: PresenterKeyboardAction, jumpSlideIndex?: number): void => {
       if (action === "exit") {
@@ -1138,7 +1180,9 @@ function PresenterMode({
             onOpenAudienceWindow={handleOpenAudienceWindow}
             onRefreshDisplays={refreshPresenterDisplays}
             onSelectedDisplayIdChange={handleSelectedDisplayIdChange}
+            onSwapScreens={handleSwapScreens}
             selectedDisplayId={selectedDisplayId}
+            swapPending={swapPending}
           />
 
           <section className="presenter-panel">
@@ -1297,7 +1341,9 @@ function PresenterDisplayPanel({
   onOpenAudienceWindow,
   onRefreshDisplays,
   onSelectedDisplayIdChange,
-  selectedDisplayId
+  onSwapScreens,
+  selectedDisplayId,
+  swapPending
 }: {
   audienceError?: string;
   audienceOpen: boolean;
@@ -1309,6 +1355,8 @@ function PresenterDisplayPanel({
   onRefreshDisplays: () => void;
   selectedDisplayId?: number;
   onSelectedDisplayIdChange: (displayId: number | undefined) => void;
+  onSwapScreens: () => void;
+  swapPending: boolean;
 }): ReactNode {
   const selectedDisplay = displays.find((display) => display.id === selectedDisplayId);
   const selectedDisplayDisconnected = selectedDisplayId !== undefined && !selectedDisplay;
@@ -1383,6 +1431,14 @@ function PresenterDisplayPanel({
                 Close audience
               </Button>
             ) : null}
+            <Button
+              disabled={!audienceOpen || selectedDisplayId === undefined || swapPending}
+              icon={<ArrowLeftRight />}
+              onClick={onSwapScreens}
+              variant="secondary"
+            >
+              {swapPending ? "Swapping..." : "Swap screens"}
+            </Button>
           </div>
           {audienceError ? (
             <p className="presenter-display-empty">

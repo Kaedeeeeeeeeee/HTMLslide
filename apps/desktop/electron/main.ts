@@ -253,6 +253,36 @@ type DesktopAudienceWindowState = {
   reason?: "target-disconnected" | "target-reconnected" | "closed";
 };
 
+type DesktopPresenterScreenSwapRequest = {
+  selectedDisplayId: number;
+};
+
+type DesktopPresenterScreenSwapErrorCode =
+  | "main-window-unavailable"
+  | "audience-window-unavailable"
+  | "audience-state-mismatch"
+  | "same-display"
+  | "target-disconnected"
+  | "swap-failed";
+
+type DesktopPresenterScreenSwapResult =
+  | {
+      ok: true;
+      selectedDisplayId: number;
+      audienceDisplayId: number;
+      mainDisplayId: number;
+    }
+  | {
+      ok: false;
+      selectedDisplayId?: number;
+      audienceDisplayId?: number;
+      mainDisplayId?: number;
+      error: {
+        code: DesktopPresenterScreenSwapErrorCode;
+        message: string;
+      };
+    };
+
 let audienceWindow: BrowserWindow | undefined;
 let audienceWindowDisplayId: number | undefined;
 let audienceWindowPayload: DesktopAudienceSlidePayload | undefined;
@@ -426,6 +456,83 @@ function normalizeAudienceWindowRequest(value: unknown): Required<Pick<DesktopAu
   };
 }
 
+function normalizePresenterScreenSwapRequest(value: unknown): DesktopPresenterScreenSwapRequest {
+  if (typeof value !== "object" || value === null) {
+    throw new Error("Swap screens request must be an object.");
+  }
+
+  const selectedDisplayId = (value as { selectedDisplayId?: unknown }).selectedDisplayId;
+  if (
+    typeof selectedDisplayId !== "number" ||
+    !Number.isSafeInteger(selectedDisplayId) ||
+    selectedDisplayId < 0
+  ) {
+    throw new Error("Swap screens request must include a valid selected display.");
+  }
+
+  return { selectedDisplayId };
+}
+
+function presenterScreenSwapFailure(
+  code: DesktopPresenterScreenSwapErrorCode,
+  message: string,
+  state: Omit<Extract<DesktopPresenterScreenSwapResult, { ok: false }>, "ok" | "error"> = {}
+): DesktopPresenterScreenSwapResult {
+  return {
+    ...state,
+    error: { code, message },
+    ok: false
+  };
+}
+
+function isUsableRectangle(bounds: Rectangle): boolean {
+  return (
+    Number.isFinite(bounds.x) &&
+    Number.isFinite(bounds.y) &&
+    Number.isFinite(bounds.width) &&
+    Number.isFinite(bounds.height) &&
+    bounds.width > 0 &&
+    bounds.height > 0
+  );
+}
+
+function centeredWindowedBounds(windowedBounds: Rectangle, workArea: Rectangle): Rectangle | undefined {
+  if (!isUsableRectangle(windowedBounds) || !isUsableRectangle(workArea)) {
+    return undefined;
+  }
+
+  const workAreaWidth = Math.round(workArea.width);
+  const workAreaHeight = Math.round(workArea.height);
+  const width = Math.min(Math.max(1, Math.round(windowedBounds.width)), workAreaWidth);
+  const height = Math.min(Math.max(1, Math.round(windowedBounds.height)), workAreaHeight);
+  return {
+    height,
+    width,
+    x: Math.round(workArea.x + (workAreaWidth - width) / 2),
+    y: Math.round(workArea.y + (workAreaHeight - height) / 2)
+  };
+}
+
+function restoreMainWindowPresentation(
+  window: BrowserWindow,
+  windowedBounds: Rectangle,
+  wasFullScreen: boolean,
+  wasMaximized: boolean
+): void {
+  if (window.isFullScreen()) {
+    window.setFullScreen(false);
+  }
+  if (window.isMaximized()) {
+    window.unmaximize();
+  }
+  window.setBounds(windowedBounds);
+  if (wasFullScreen) {
+    window.setFullScreen(true);
+  } else if (wasMaximized) {
+    window.maximize();
+  }
+}
+
 function audienceWindowBounds(displayId: number | undefined): Rectangle | undefined {
   const selectedDisplay = screen.getAllDisplays().find((display) => display.id === displayId) ?? screen.getPrimaryDisplay();
   if (displayId !== undefined && selectedDisplay.id !== displayId) {
@@ -532,6 +639,162 @@ async function updateAudienceWindow(requestValue: unknown) {
     open: true,
     displayId: audienceWindowDisplayId
   };
+}
+
+async function swapPresenterScreens(requestValue: unknown): Promise<DesktopPresenterScreenSwapResult> {
+  const request = normalizePresenterScreenSwapRequest(requestValue);
+
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return presenterScreenSwapFailure(
+      "main-window-unavailable",
+      "Swap screens is unavailable because the main HTMLslide window is not open."
+    );
+  }
+
+  if (!audienceWindow || audienceWindow.isDestroyed() || audienceWindowDisplayId === undefined) {
+    return presenterScreenSwapFailure(
+      "audience-window-unavailable",
+      "Open the Audience window before swapping screens.",
+      { selectedDisplayId: request.selectedDisplayId }
+    );
+  }
+
+  const currentAudienceDisplayId = audienceWindowDisplayId;
+  if (request.selectedDisplayId !== currentAudienceDisplayId) {
+    return presenterScreenSwapFailure(
+      "audience-state-mismatch",
+      "Audience is no longer open on the selected display. Refresh the display list and try again.",
+      {
+        audienceDisplayId: currentAudienceDisplayId,
+        selectedDisplayId: request.selectedDisplayId
+      }
+    );
+  }
+
+  const connectedDisplaysBeforeVisibilityCheck = screen.getAllDisplays();
+  if (!connectedDisplaysBeforeVisibilityCheck.some((display) => display.id === currentAudienceDisplayId)) {
+    return presenterScreenSwapFailure(
+      "target-disconnected",
+      "The Audience display is disconnected. Reconnect it and refresh the display list.",
+      {
+        audienceDisplayId: currentAudienceDisplayId,
+        selectedDisplayId: request.selectedDisplayId
+      }
+    );
+  }
+
+  if (!audienceWindow.isVisible()) {
+    return presenterScreenSwapFailure(
+      "audience-window-unavailable",
+      "Audience is not currently visible. Reopen the Audience window before swapping screens.",
+      {
+        audienceDisplayId: currentAudienceDisplayId,
+        selectedDisplayId: request.selectedDisplayId
+      }
+    );
+  }
+
+  let mainDisplay;
+  let originalMainBounds: Rectangle;
+  let originalMainWindowedBounds: Rectangle;
+  let originalAudienceBounds: Rectangle;
+  let mainWasFullScreen: boolean;
+  let mainWasMaximized: boolean;
+  try {
+    originalMainBounds = mainWindow.getBounds();
+    originalMainWindowedBounds = mainWindow.getNormalBounds();
+    originalAudienceBounds = audienceWindow.getBounds();
+    mainWasFullScreen = mainWindow.isFullScreen();
+    mainWasMaximized = mainWindow.isMaximized();
+    mainDisplay = screen.getDisplayMatching(originalMainBounds);
+  } catch {
+    return presenterScreenSwapFailure(
+      "main-window-unavailable",
+      "The main HTMLslide window could not be inspected safely."
+    );
+  }
+
+  const displays = screen.getAllDisplays();
+  const audienceDisplay = displays.find((display) => display.id === currentAudienceDisplayId);
+  if (!audienceDisplay || !displays.some((display) => display.id === mainDisplay.id)) {
+    return presenterScreenSwapFailure(
+      "target-disconnected",
+      "One of the target displays is disconnected. Reconnect it and refresh the display list.",
+      {
+        audienceDisplayId: currentAudienceDisplayId,
+        mainDisplayId: mainDisplay.id,
+        selectedDisplayId: request.selectedDisplayId
+      }
+    );
+  }
+
+  if (mainDisplay.id === audienceDisplay.id) {
+    return presenterScreenSwapFailure(
+      "same-display",
+      "Swap screens requires the main and Audience windows to be on different displays.",
+      {
+        audienceDisplayId: audienceDisplay.id,
+        mainDisplayId: mainDisplay.id,
+        selectedDisplayId: request.selectedDisplayId
+      }
+    );
+  }
+
+  const mainTargetBounds = centeredWindowedBounds(originalMainWindowedBounds, audienceDisplay.workArea);
+  const audienceTargetBounds = audienceWindowBounds(mainDisplay.id);
+  if (!mainTargetBounds || !audienceTargetBounds) {
+    return presenterScreenSwapFailure(
+      "target-disconnected",
+      "The target display does not have usable bounds for a screen swap.",
+      {
+        audienceDisplayId: audienceDisplay.id,
+        mainDisplayId: mainDisplay.id,
+        selectedDisplayId: request.selectedDisplayId
+      }
+    );
+  }
+
+  try {
+    if (mainWasFullScreen || mainWasMaximized) {
+      restoreMainWindowPresentation(mainWindow, originalMainWindowedBounds, false, false);
+    }
+    mainWindow.setBounds(mainTargetBounds);
+    audienceWindow.setBounds(audienceTargetBounds);
+    if (mainWasFullScreen || mainWasMaximized) {
+      restoreMainWindowPresentation(mainWindow, mainTargetBounds, mainWasFullScreen, mainWasMaximized);
+    }
+    audienceWindowDisplayId = mainDisplay.id;
+    return {
+      audienceDisplayId: mainDisplay.id,
+      mainDisplayId: audienceDisplay.id,
+      ok: true,
+      selectedDisplayId: mainDisplay.id
+    };
+  } catch (error: unknown) {
+    try {
+      restoreMainWindowPresentation(mainWindow, originalMainWindowedBounds, mainWasFullScreen, mainWasMaximized);
+    } catch {
+      try {
+        mainWindow.setBounds(originalMainBounds);
+      } catch {
+        // Best-effort rollback; the error below still reports the failed swap.
+      }
+    }
+    try {
+      audienceWindow.setBounds(originalAudienceBounds);
+    } catch {
+      // Best-effort rollback; the error below still reports the failed swap.
+    }
+    return presenterScreenSwapFailure(
+      "swap-failed",
+      `Screen swap failed without changing the selected display: ${error instanceof Error ? error.message : String(error)}`,
+      {
+        audienceDisplayId: currentAudienceDisplayId,
+        mainDisplayId: mainDisplay.id,
+        selectedDisplayId: request.selectedDisplayId
+      }
+    );
+  }
 }
 
 function closeAudienceWindow() {
@@ -1135,6 +1398,10 @@ function registerIpcHandlers(): void {
   );
 
   ipcMain.handle("htmlslide:close-audience-window", async () => closeAudienceWindow());
+
+  ipcMain.handle("htmlslide:swap-presenter-screens", async (_event, request: unknown) =>
+    swapPresenterScreens(request)
+  );
 
   ipcMain.handle("htmlslide:start-agent-run", async (_event, request: DesktopAgentRunRequest) => {
     if (!request || typeof request !== "object" || typeof request.projectPath !== "string") {

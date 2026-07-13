@@ -179,14 +179,30 @@ describe("release evidence scripts", () => {
     })).toThrow(/smoke:package:alpha/iu);
   });
 
+  it("keeps coverage gates in the signed release contract", () => {
+    expect(REQUIRED_RELEASE_SCRIPTS).toContain("test:coverage");
+    expect(REQUIRED_RELEASE_SCRIPTS).toContain("rc:byok-fixture-smoke");
+  });
+
   it("keeps the signed release workflow wired to the shared release contract", async () => {
-    const workflow = await readFile(path.join(root, ".github", "workflows", "release-macos.yml"), "utf8");
+    const [workflow, alphaWorkflow] = await Promise.all([
+      readFile(path.join(root, ".github", "workflows", "release-macos.yml"), "utf8"),
+      readFile(path.join(root, ".github", "workflows", "alpha-package.yml"), "utf8")
+    ]);
 
     expect(workflow).toContain("node scripts/release/validate-release-contract.mjs");
     expect(workflow).toContain('--manifest "$manifest"');
     expect(workflow).toContain("--expected-arch arm64");
     expect(workflow).toContain("Verify signed release security evidence");
     expect(workflow).toContain("pnpm release:security:verify");
+    expect(workflow).toContain("pnpm test:coverage");
+    expect(workflow).toContain("pnpm rc:byok-fixture-smoke");
+    expect(workflow).toContain("rc_checklist_promotion_path");
+    expect(workflow).toContain("pnpm rc:checklist:verify");
+    expect(workflow.indexOf("Verify RC checklist promotion gate")).toBeLessThan(workflow.indexOf("Attach artifacts to GitHub Release"));
+    expect(alphaWorkflow).toContain("pnpm test:coverage");
+    expect(alphaWorkflow).toContain("pnpm rc:byok-fixture-smoke");
+    expect(alphaWorkflow).toContain("htmlslide-byok-fixture-evidence.json");
   });
 
   it("validates the signed release manifest, architecture, and artifact hash", async () => {
@@ -552,6 +568,26 @@ describe("release evidence scripts", () => {
       expect((evidence.artifacts as unknown[])).toHaveLength(10);
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the CI BYOK contract smoke explicitly fixture-only", async () => {
+    const outputPath = path.join(os.tmpdir(), "htmlslide-byok-fixture-smoke-test.json");
+    try {
+      await execFileAsync(process.execPath, [
+        path.join(currentDir, "run-byok-fixture-smoke.mjs"),
+        "--output", outputPath
+      ], { cwd: root });
+      const evidence = JSON.parse(await readFile(outputPath, "utf8")) as Record<string, unknown>;
+      expect(evidence).toMatchObject({
+        kind: "htmlslide-byok-acceptance-evidence",
+        status: "passed",
+        fixtureOnly: true,
+        providerBoundary: "fixture-only"
+      });
+      expect(evidence.verificationNote).toMatch(/not real provider acceptance/iu);
+    } finally {
+      await rm(outputPath, { force: true });
     }
   });
 

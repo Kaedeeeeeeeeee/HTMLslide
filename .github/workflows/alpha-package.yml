@@ -44,7 +44,7 @@ jobs:
           set -euo pipefail
 
           if [[ ! -f package.json ]]; then
-            echo "::error title=Missing package.json::Alpha packaging expects a root package.json with pnpm scripts: docs:check, docs:build, version:check, lint, typecheck, test, perf:smoke, security:check, build, package:alpha, smoke:package:alpha, rc:checklist, rc:external-agent-evidence."
+            echo "::error title=Missing package.json::Alpha packaging expects a root package.json with pnpm scripts: docs:check, docs:build, version:check, lint, typecheck, test, test:coverage, perf:smoke, security:check, build, package:alpha, smoke:package:alpha, rc:checklist, rc:external-agent-evidence, rc:byok-fixture-smoke."
             exit 1
           fi
 
@@ -56,7 +56,7 @@ jobs:
           node <<'NODE'
           const fs = require('fs');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          const requiredScripts = ['docs:check', 'docs:build', 'version:check', 'lint', 'typecheck', 'test', 'test:visual:browser', 'perf:smoke', 'security:check', 'build', 'e2e:desktop', 'e2e:desktop:a11y', 'package:alpha', 'smoke:package:alpha', 'rc:checklist', 'rc:external-agent-evidence'];
+          const requiredScripts = ['docs:check', 'docs:build', 'version:check', 'lint', 'typecheck', 'test', 'test:coverage', 'test:visual:browser', 'perf:smoke', 'security:check', 'build', 'e2e:desktop', 'e2e:desktop:a11y', 'package:alpha', 'smoke:package:alpha', 'rc:checklist', 'rc:external-agent-evidence', 'rc:byok-fixture-smoke'];
           const missing = requiredScripts.filter((name) => !pkg.scripts || !pkg.scripts[name]);
 
           if (missing.length > 0) {
@@ -103,6 +103,9 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      - name: Test coverage
+        run: pnpm test:coverage
 
       - name: Browser visual regression
         run: pnpm test:visual:browser
@@ -179,6 +182,14 @@ jobs:
             --artifact-url "$run_url" \
             --output "$output_path"
 
+          if [[ ! -s "$output_path" ]]; then
+            echo "::error title=Missing external-agent verifier output::The sanitized external-agent evidence file was not written to $output_path."
+            exit 1
+          fi
+
+      - name: Contract-only BYOK fixture smoke (fixture only; no real provider acceptance)
+        run: pnpm rc:byok-fixture-smoke
+
       - name: Smoke unsigned alpha package
         run: pnpm smoke:package:alpha
 
@@ -209,6 +220,20 @@ jobs:
           fi
 
           mkdir -p alpha-artifacts
+
+          external_agent_evidence="$RUNNER_TEMP/htmlslide-alpha-external-agent-contract-smoke.json"
+          if [[ ! -s "$external_agent_evidence" ]]; then
+            echo "::error title=Missing external-agent evidence artifact::The sanitized verifier output is missing from $external_agent_evidence."
+            exit 1
+          fi
+          cp "$external_agent_evidence" alpha-artifacts/
+
+          byok_fixture_evidence="$RUNNER_TEMP/htmlslide-byok-fixture-evidence.json"
+          if [[ ! -s "$byok_fixture_evidence" ]]; then
+            echo "::error title=Missing BYOK fixture evidence artifact::The fixture-only BYOK smoke output is missing from $byok_fixture_evidence."
+            exit 1
+          fi
+          cp "$byok_fixture_evidence" alpha-artifacts/
 
           for artifact in "${artifacts[@]}"; do
             cp "$artifact" alpha-artifacts/

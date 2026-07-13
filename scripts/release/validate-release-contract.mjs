@@ -24,6 +24,7 @@ export const REQUIRED_RELEASE_SCRIPTS = Object.freeze([
   "lint",
   "typecheck",
   "test",
+  "test:coverage",
   "test:visual:browser",
   "perf:smoke",
   "security:check",
@@ -37,6 +38,7 @@ export const REQUIRED_RELEASE_SCRIPTS = Object.freeze([
   "rc:checklist",
   "rc:checklist:verify",
   "rc:byok-evidence",
+  "rc:byok-fixture-smoke",
   "rc:external-agent-evidence",
   "release:notes"
 ]);

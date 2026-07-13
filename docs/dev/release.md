@@ -10,8 +10,8 @@ HTMLslide uses SemVer for app releases and a separate schema version for deck fo
 
 - `CI`: runs `pnpm install --frozen-lockfile`, installs Playwright Chromium, then runs `pnpm docs:check`, `pnpm docs:build`, `pnpm version:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:coverage`, `pnpm test:visual:browser`, `pnpm perf:smoke`, `pnpm security:check`, and `pnpm build` on Ubuntu, plus `pnpm e2e:desktop` and `pnpm e2e:desktop:a11y` on macOS for Electron workspace/presenter smoke and app-shell accessibility coverage.
 - `Docs Pages`: runs on manual dispatch, pushes to `main`, and `v*` tags. It checks public docs, builds `dist/docs-site`, uploads a Pages artifact, and deploys it with GitHub Pages.
-- `Alpha Package`: runs on manual dispatch, nightly schedule, and `v*` tags. It installs Playwright Chromium, repeats the CI checks including browser visual regression, runs macOS desktop Electron E2E and desktop accessibility E2E before packaging, runs `pnpm package:alpha`, smokes the generated package through its bundled browser runtime, and uploads unsigned artifacts.
-- `Release macOS`: runs on manual dispatch and `v*` tags. It installs Playwright Chromium, repeats docs check/docs build/version check/lint/typecheck/test/browser visual/perf/security/build/Electron E2E/desktop accessibility E2E, imports a Developer ID certificate from GitHub Actions secrets, runs `pnpm package:release:macos`, notarizes and staples the DMG, mounts and smokes the final signed package through its bundled browser runtime, generates release notes from git history with `pnpm release:notes`, uploads signed artifacts, and attaches them to the matching GitHub Release for tag builds.
+- `Alpha Package`: runs on manual dispatch, nightly schedule, and `v*` tags. It installs Playwright Chromium, repeats the CI checks including coverage and browser visual regression, runs macOS desktop Electron E2E and desktop accessibility E2E before packaging, runs the fixture-only BYOK and external-agent evidence contract smokes, runs `pnpm package:alpha`, smokes the generated package through its bundled browser runtime, and uploads unsigned artifacts plus sanitized contract evidence.
+- `Release macOS`: runs on manual dispatch and `v*` tags. It installs Playwright Chromium, repeats docs check/docs build/version check/lint/typecheck/test/coverage/browser visual/perf/security/build/Electron E2E/desktop accessibility E2E, runs the fixture-only BYOK and external-agent evidence contract smokes, imports a Developer ID certificate from GitHub Actions secrets, runs `pnpm package:release:macos`, notarizes and staples the DMG, mounts and smokes the final signed package through its bundled browser runtime, verifies a completed RC checklist before artifact upload or GitHub Release publication, generates release notes from git history with `pnpm release:notes`, and attaches artifacts to the matching GitHub Release for tag builds.
 
 GitHub-hosted action implementations use Node 24 runtimes, while HTMLslide project commands continue to run on the declared Node 22 toolchain. Validation, documentation, and security jobs pin the `ubuntu-24.04` OS label; Electron E2E, accessibility, alpha packaging, and signed release jobs pin the currently verified Apple Silicon `macos-26` OS label. This prevents `*-latest` from silently changing the OS major or architecture, but GitHub can still update Xcode, browsers, and other software within each image line.
 
@@ -83,6 +83,8 @@ pnpm rc:external-agent-evidence -- \
 
 The verifier rejects raw logs, secrets, absolute paths, unsupported fields, mismatched provider auth commands, incomplete Check/Export/Revert evidence, and package manifests whose signing/channel contract is inconsistent. Its output contains only sanitized metadata and input/package SHA-256 digests; it does not prove the manual run occurred by itself, so the human tester must retain the evidence link and exact artifact notes in the RC checklist.
 
+The CI workflows also run `pnpm rc:byok-fixture-smoke`. Its output is marked `fixtureOnly: true` and `providerBoundary: "fixture-only"`; it validates the evidence pipeline with deterministic local data only and must never be used as real provider acceptance evidence.
+
 The Alpha Package and Release macOS workflows also generate a prefilled RC checklist in their uploaded artifact bundle. Treat that file as a run-bound evidence template, not completed acceptance, until a tester fills in the manual results.
 
 Also verify:
@@ -127,7 +129,7 @@ The release script uses `build/package/release-macos.json` and writes:
 The hosted signed release workflow currently publishes Apple Silicon (`arm64`) artifacts only. Intel and universal macOS release artifacts are not yet part of the production workflow.
 
 The release wrapper validates all seven signing/notarization secrets before starting the build. The release manifest uses the same per-artifact filename, byte size, and SHA-256 metadata as alpha builds. Its `securityEvidence` reference must resolve to a report beside the manifest containing the exact seven passed checks, Developer ID identity, bundle/team binding, hardened-runtime state, and app/DMG/manifest metadata; `pnpm release:security:verify` independently runs `codesign`, hardened-runtime, `spctl`, `xcrun stapler validate`, and manifest hash checks without recording raw command output.
-Manual `workflow_dispatch` runs can pass the optional `release_tag` input to label the uploaded RC checklist. Tag-triggered runs always use the pushed tag. Manual runs without an input use `manual-<run_number>` so checklist metadata remains run-bound instead of `TODO`.
+Manual `workflow_dispatch` runs can pass the optional `release_tag` input to label the uploaded RC checklist and `rc_checklist_promotion_path` to point at a completed checklist inside the checked-out ref. Tag-triggered runs always use the pushed tag. Manual runs without an input use `manual-<run_number>` so checklist metadata remains run-bound instead of `TODO`.
 The release workflow also writes `release-artifacts/RELEASE_NOTES.md` for tag builds and uses it as the GitHub Release body. Run the same generator locally when preparing a candidate:
 
 ```bash
@@ -148,7 +150,7 @@ The first workflow gate runs `scripts/release/validate-release-contract.mjs` bef
 
 Signing and notarization secrets must be company-owned repository or organization secrets, never committed files or personal local credentials.
 
-The workflow-generated `HTMLslide-release-rc-acceptance.md` is a run-bound checklist template, not completed acceptance evidence. A tag-triggered run can create or update a GitHub Release after its automated gates, but it does not infer or verify the human checklist result. Do not treat that release as public acceptance until a tester completes the checklist and runs `pnpm rc:checklist:verify`, or links equivalent recorded evidence in the release notes.
+The workflow-generated `HTMLslide-release-rc-acceptance.md` remains a run-bound checklist template. The Release workflow copies a supplied completed checklist over that template and runs `pnpm rc:checklist:verify`; without a valid completed checklist, the workflow fails closed before uploading release artifacts or running any `gh release` operation. For a tag publication, dispatch the workflow against the tag ref with `rc_checklist_promotion_path` pointing at the completed checklist, or keep the tag run as an intentional non-publishing validation failure.
 
 ## Release Notes
 

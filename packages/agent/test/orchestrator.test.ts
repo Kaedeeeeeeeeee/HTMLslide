@@ -323,11 +323,32 @@ describe("agent orchestrator", () => {
   });
 
   it("reports an early startup timeout as a brief-stage failure", async () => {
+    let providerStarted = false;
+    let resolveProviderSettled: (() => void) | undefined;
+    const providerSettled = new Promise<void>((resolve) => {
+      resolveProviderSettled = resolve;
+    });
+    const baseProvider = createMockProvider({ delayMs: 25 });
+    const provider = {
+      ...baseProvider,
+      complete: async (request: ModelRequest): Promise<ModelResponse> => {
+        providerStarted = true;
+        try {
+          return await baseProvider.complete(request);
+        } finally {
+          resolveProviderSettled?.();
+        }
+      }
+    };
     const result = await runMockAgent({
       runId: "run-startup-timeout",
       runTimeoutMs: 1,
-      provider: createMockProvider({ delayMs: 25 })
+      provider
     });
+
+    if (providerStarted) {
+      await providerSettled;
+    }
 
     expect(result).toMatchObject({
       ok: false,

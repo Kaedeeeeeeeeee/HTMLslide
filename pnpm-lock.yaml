@@ -62,6 +62,9 @@ importers:
       '@htmlslide/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@htmlslide/mcp-server':
+        specifier: workspace:*
+        version: link:../../packages/mcp-server
       '@htmlslide/presenter':
         specifier: workspace:*
         version: link:../../packages/presenter

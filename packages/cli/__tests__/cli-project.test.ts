@@ -413,6 +413,161 @@ describe("CLI project helpers", { timeout: 20_000 }, () => {
     }
   });
 
+  it("generates a sanitized read-only repair prompt for a failing deck", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-repair-"));
+    try {
+      const project = await createProject(path.join(root, "repair-deck"), "repair-deck");
+      const sourcePath = path.join(project.projectPath, "slides", "001-title.html");
+      const sourceBefore = await readFile(sourcePath, "utf8");
+      await writeFile(sourcePath, sourceBefore.replace('data-slide-id="001-title"', 'data-slide-id="wrong-id"'));
+
+      const failure = await runCli([
+        "repair",
+        "--for",
+        "claude",
+        project.projectPath,
+        "--json"
+      ]).catch((error: unknown) => error);
+
+      expect(failure).toMatchObject({ code: EXIT_CODES.validationFailed });
+      const payload = JSON.parse(String((failure as { stdout?: unknown }).stdout)) as {
+        status: string;
+        command: string;
+        target: string;
+        for: string;
+        slideIds: string[];
+        prompt: string;
+        check: {
+          status: string;
+          issues: Array<{ type: string; slideId: string; path?: string; priority: string }>;
+        };
+        readOnly: boolean;
+        externalAgentExecuted: boolean;
+        writes: { source: boolean; exports: boolean };
+        exitCode: number;
+      };
+
+      expect(payload).toMatchObject({
+        status: "failed",
+        command: "repair",
+        target: "claude",
+        for: "claude",
+        check: { status: "failed" },
+        readOnly: true,
+        externalAgentExecuted: false,
+        writes: { source: false, exports: false },
+        exitCode: EXIT_CODES.validationFailed
+      });
+      expect(payload.slideIds).toContain("001-title");
+      expect(payload.check.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "slide-id-mismatch",
+            slideId: "001-title",
+            path: "slides/001-title.html",
+            priority: "P0"
+          })
+        ])
+      );
+      expect(payload.prompt).toContain("Do not edit exports/");
+      expect(payload.prompt).toContain("Do not change any slide id");
+      expect(payload.prompt).toContain("1920x1080");
+      expect(payload.prompt).toContain("content compression first, then adjust layout, then reduce font size");
+      expect(payload.prompt).toContain("htmlslide check --json");
+      expect(payload.prompt).toContain("slide id=001-title");
+      expect(payload.prompt).not.toContain(project.projectPath);
+      expect(payload).not.toHaveProperty("projectPath");
+      expect(await readFile(sourcePath, "utf8")).toBe(sourceBefore.replace('data-slide-id="001-title"', 'data-slide-id="wrong-id"'));
+      await expectMissing(path.join(project.projectPath, ".htmlslide", "reports", "check-report.json"));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("returns a successful prompt-only repair result for a healthy deck", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-repair-"));
+    try {
+      const project = await createProject(path.join(root, "healthy-deck"), "healthy-deck");
+      await writeDeckExportOptions(project.projectPath, {
+        deckpkg: false,
+        html: false,
+        pdf: false,
+        speakerNotes: false,
+        thumbnails: false
+      });
+      const deckBefore = await readFile(path.join(project.projectPath, "deck.json"), "utf8");
+      const result = await runCli([
+        "repair",
+        "--for",
+        "generic",
+        project.projectPath,
+        "--json"
+      ]);
+      const payload = JSON.parse(result.stdout) as {
+        status: string;
+        target: string;
+        exitCode: number;
+        check: { status: string; summary: { errors: number } };
+        prompt: string;
+        readOnly: boolean;
+        writes: { source: boolean; exports: boolean };
+      };
+
+      expect(payload).toMatchObject({
+        status: "passed",
+        target: "generic",
+        exitCode: EXIT_CODES.success,
+        check: { status: "passed", summary: { errors: 0 } },
+        readOnly: true,
+        writes: { source: false, exports: false }
+      });
+      expect(payload.prompt).toContain("No check issues were reported");
+      expect(payload.prompt).toContain("1920x1080");
+      expect(await readFile(path.join(project.projectPath, "deck.json"), "utf8")).toBe(deckBefore);
+      await expectMissing(path.join(project.projectPath, ".htmlslide", "reports", "check-report.json"));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves repair project-not-found exit codes and rejects invalid targets", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "htmlslide-cli-repair-"));
+    try {
+      const missingPath = path.join(root, "missing");
+      const missingFailure = await runCli([
+        "repair",
+        "--for",
+        "codex",
+        missingPath,
+        "--json"
+      ]).catch((error: unknown) => error);
+      expect(missingFailure).toMatchObject({ code: EXIT_CODES.projectNotFound });
+      const missingPayload = JSON.parse(String((missingFailure as { stdout?: unknown }).stdout)) as {
+        exitCode: number;
+        prompt: string;
+        check: { issues: Array<{ type: string }> };
+      };
+      expect(missingPayload).toMatchObject({ exitCode: EXIT_CODES.projectNotFound });
+      expect(missingPayload.check.issues[0]?.type).toBe("missing-slide-source");
+      expect(missingPayload.prompt).not.toContain(missingPath);
+
+      const invalidTargetFailure = await runCli([
+        "repair",
+        "--for",
+        "unknown",
+        missingPath,
+        "--json"
+      ]).catch((error: unknown) => error);
+      expect(invalidTargetFailure).toMatchObject({ code: EXIT_CODES.generic });
+      expect(JSON.parse(String((invalidTargetFailure as { stdout?: unknown }).stdout))).toMatchObject({
+        code: "REPAIR_TARGET_INVALID",
+        exitCode: EXIT_CODES.generic
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("preserves schema diagnostics and exits 2 for an invalid deck", async () => {
     const projectPath = fixturePath("invalid-duplicate-slide-id");
     const loaded = await tryLoadProjectForCheck(projectPath);

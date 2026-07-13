@@ -1,5 +1,5 @@
 import { Button, PanelHeader, StatusPill } from "@htmlslide/shared-ui";
-import { KeyRound, Plug, RefreshCcw, Save, Trash2 } from "lucide-react";
+import { FolderCog, KeyRound, Plug, RefreshCcw, Save, ShieldCheck, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
@@ -18,19 +18,33 @@ import {
   type ExternalAgentStatus
 } from "../settings-model";
 import type { OperationStatus } from "../model";
+import type {
+  DesktopExternalAgentConnectionState,
+  DesktopProjectAgentSkillsState
+} from "../desktop-api";
 
 interface AiEngineSettingsPanelProps {
   settings: AiEngineSettings;
   statuses: ExternalAgentStatus[];
   operationStatus: OperationStatus;
+  projectPath?: string;
+  connection?: DesktopExternalAgentConnectionState;
+  projectSkills?: DesktopProjectAgentSkillsState;
   onRefreshExternalAgents: () => void;
+  onTestExternalAgent: (agentId: ExternalAgentId) => void;
+  onInstallProjectAgentSkills: (agentId: ExternalAgentId) => void;
   onSaveSettings: (draft: AiEngineSettingsDraft) => Promise<boolean> | void;
 }
 
 export function AiEngineSettingsPanel({
   onRefreshExternalAgents,
+  onTestExternalAgent,
+  onInstallProjectAgentSkills,
   onSaveSettings,
   operationStatus,
+  projectPath,
+  connection,
+  projectSkills,
   settings,
   statuses
 }: AiEngineSettingsPanelProps): ReactNode {
@@ -76,6 +90,13 @@ export function AiEngineSettingsPanel({
   );
   const keyStatus = formatRedactedKeyStatus(settings);
   const externalAgentReadiness = useMemo(() => buildExternalAgentReadiness(selectedStatus), [selectedStatus]);
+  const selectedConnection = connection?.projectPath === projectPath && connection?.agentId === externalAgentId
+    ? connection
+    : undefined;
+  const selectedProjectSkills = projectSkills?.projectPath === projectPath && projectSkills?.agentId === externalAgentId
+    ? projectSkills
+    : selectedConnection?.projectSkills;
+  const supportsProjectSkills = externalAgentId === "claude-code" || externalAgentId === "codex-cli";
 
   const save = async (clearKey = false): Promise<void> => {
     const saved = await onSaveSettings({
@@ -244,6 +265,61 @@ export function AiEngineSettingsPanel({
 
           <ExternalAgentReadinessPanel readiness={externalAgentReadiness} />
 
+          <section className="external-agent-connection" aria-label="Project agent connection">
+            <div className="external-agent-connection__header">
+              <div>
+                <strong>Project connection</strong>
+                <span>{projectPath ? projectPath : "Open a local deck project to enable project-scoped actions."}</span>
+              </div>
+              <StatusPill tone={selectedConnection ? connectionStatusTone(selectedConnection.status) : "neutral"}>
+                {selectedConnection?.status ?? "not tested"}
+              </StatusPill>
+            </div>
+
+            <div className="settings-actions">
+              <Button
+                disabled={busy || !projectPath}
+                icon={<ShieldCheck />}
+                onClick={() => onTestExternalAgent(externalAgentId)}
+                variant="primary"
+              >
+                Test connection
+              </Button>
+              <Button
+                disabled={busy || !projectPath || !supportsProjectSkills}
+                icon={<FolderCog />}
+                onClick={() => onInstallProjectAgentSkills(externalAgentId)}
+              >
+                Install project skills
+              </Button>
+            </div>
+
+            <dl className="external-agent-connection__items">
+              <div>
+                <dt>Agent</dt>
+                <dd><StatusPill tone={agentStatusTone(selectedStatus.status)}>{selectedStatus.status.replace("-", " ")}</StatusPill></dd>
+              </div>
+              <div>
+                <dt>Project skills</dt>
+                <dd>
+                  <StatusPill tone={supportsProjectSkills ? projectSkillsTone(selectedProjectSkills?.status) : "neutral"}>
+                    {supportsProjectSkills ? selectedProjectSkills?.status ?? "not checked" : "not applicable"}
+                  </StatusPill>
+                </dd>
+              </div>
+              <div>
+                <dt>MCP harness</dt>
+                <dd>
+                  <StatusPill tone={mcpStatusTone(selectedConnection?.mcp.status)}>
+                    {selectedConnection?.mcp.status ?? "not checked"}
+                  </StatusPill>
+                </dd>
+              </div>
+            </dl>
+            {selectedConnection ? <p>{selectedConnection.mcp.message}</p> : null}
+            {!supportsProjectSkills ? <p>Project Skill installation is available for Claude Code and Codex CLI.</p> : null}
+          </section>
+
           <label className="settings-field">
             <span>Generic command</span>
             <input
@@ -313,4 +389,16 @@ function agentStatusTone(status: ExternalAgentStatus["status"]): "danger" | "neu
   }
 
   return "neutral";
+}
+
+function connectionStatusTone(status: DesktopExternalAgentConnectionState["status"]): "danger" | "neutral" | "success" | "warning" {
+  return status === "ready" ? "success" : status === "failed" ? "danger" : "warning";
+}
+
+function projectSkillsTone(status: DesktopProjectAgentSkillsState["status"] | undefined): "danger" | "neutral" | "success" | "warning" {
+  return status === "passed" ? "success" : status === "failed" ? "danger" : status === "warning" ? "warning" : "neutral";
+}
+
+function mcpStatusTone(status: DesktopExternalAgentConnectionState["mcp"]["status"] | undefined): "danger" | "neutral" | "success" | "warning" {
+  return status === "ready" ? "success" : status === "failed" ? "danger" : "neutral";
 }

@@ -14,6 +14,7 @@ import {
   findCliRuntime,
   getDesktopCliIntegration,
   getDesktopOfficialSkills,
+  installDesktopProjectAgentSkills,
   installDesktopCliIntegration,
   installDesktopOfficialSkills,
   inspectDesktopSourceFiles,
@@ -35,6 +36,7 @@ import {
   runDesktopByokAgent,
   saveAiEngineSettings,
   stageDesktopNewDeckSources,
+  testDesktopExternalAgent,
   runDesktopExternalAgent,
   runDesktopMockAgent,
   runHtmlslideCli,
@@ -1121,6 +1123,18 @@ function registerIpcHandlers(): void {
   );
 
   ipcMain.handle("htmlslide:detect-external-agents", async () => detectExternalAgentStatuses());
+
+  ipcMain.handle(
+    "htmlslide:test-external-agent",
+    async (_event, request: { projectPath: string; agentId: "claude-code" | "codex-cli" | "gemini-cli" | "generic" }) =>
+      testDesktopExternalAgent(request)
+  );
+
+  ipcMain.handle(
+    "htmlslide:install-project-agent-skills",
+    async (_event, request: { projectPath: string; agentId: "claude-code" | "codex-cli" }) =>
+      installDesktopProjectAgentSkills(request)
+  );
 
   ipcMain.handle("htmlslide:choose-source-files", async () => {
     const configuredPaths = process.env.HTMLSLIDE_E2E_SOURCE_FILES;

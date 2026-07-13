@@ -36,7 +36,9 @@ import {
 } from "../settings-model";
 import type {
   DesktopCliIntegrationState,
+  DesktopExternalAgentConnectionState,
   DesktopOfficialSkillsState,
+  DesktopProjectAgentSkillsState,
   DesktopSourceFileSelection
 } from "../desktop-api";
 import {
@@ -61,6 +63,9 @@ interface ProjectLibraryProps {
   officialSkills?: DesktopOfficialSkillsState;
   officialSkillsStatus: OperationStatus;
   externalAgentStatuses: ExternalAgentStatus[];
+  activeProjectPath?: string;
+  externalAgentConnection?: DesktopExternalAgentConnectionState;
+  projectAgentSkillsStatus?: DesktopProjectAgentSkillsState;
   operationStatus: OperationStatus;
   projects: ProjectSummary[];
   workspacePath?: string;
@@ -72,6 +77,8 @@ interface ProjectLibraryProps {
   onRemoveOfficialSkill: (skillName: string) => void;
   onLibrarySectionChange: (section: LibrarySection) => void;
   onRefreshExternalAgents: () => void;
+  onTestExternalAgent: (agentId: ExternalAgentStatus["id"]) => void;
+  onInstallProjectAgentSkills: (agentId: ExternalAgentStatus["id"]) => void;
   onSaveAiEngineSettings: (draft: AiEngineSettingsDraft) => Promise<boolean> | void;
   onChooseWorkspace: () => void;
   onChooseSourceFiles: () => Promise<DesktopSourceFileSelection[]>;
@@ -158,11 +165,13 @@ function projectTone(status: ProjectSummary["status"]): "success" | "warning" | 
 
 export function ProjectLibrary({
   activeSection,
+  activeProjectPath,
   aiEngineSettings,
   aiEngineStatus,
   cliIntegration,
   cliIntegrationStatus,
   externalAgentStatuses,
+  externalAgentConnection,
   officialSkills,
   officialSkillsStatus,
   operationStatus,
@@ -174,6 +183,8 @@ export function ProjectLibrary({
   onRemoveOfficialSkill,
   onLibrarySectionChange,
   onRefreshExternalAgents,
+  onTestExternalAgent,
+  onInstallProjectAgentSkills,
   onSaveAiEngineSettings,
   onChooseSourceFiles,
   onChooseWorkspace,
@@ -182,6 +193,7 @@ export function ProjectLibrary({
   onOpenProject,
   onRemoveProject,
   projects,
+  projectAgentSkillsStatus,
   workspacePath
 }: ProjectLibraryProps): ReactNode {
   return (
@@ -229,9 +241,14 @@ export function ProjectLibrary({
 
         {activeSection === "ai-engines" ? (
           <AiEngineSettingsPanel
+            connection={externalAgentConnection}
             onRefreshExternalAgents={onRefreshExternalAgents}
+            onTestExternalAgent={onTestExternalAgent}
+            onInstallProjectAgentSkills={onInstallProjectAgentSkills}
             onSaveSettings={onSaveAiEngineSettings}
             operationStatus={aiEngineStatus}
+            projectPath={activeProjectPath}
+            projectSkills={projectAgentSkillsStatus}
             settings={aiEngineSettings}
             statuses={externalAgentStatuses}
           />
@@ -254,9 +271,14 @@ export function ProjectLibrary({
               state={officialSkills}
             />
             <AiEngineSettingsPanel
+              connection={externalAgentConnection}
               onRefreshExternalAgents={onRefreshExternalAgents}
+              onTestExternalAgent={onTestExternalAgent}
+              onInstallProjectAgentSkills={onInstallProjectAgentSkills}
               onSaveSettings={onSaveAiEngineSettings}
               operationStatus={aiEngineStatus}
+              projectPath={activeProjectPath}
+              projectSkills={projectAgentSkillsStatus}
               settings={aiEngineSettings}
               statuses={externalAgentStatuses}
             />

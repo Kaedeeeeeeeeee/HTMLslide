@@ -1385,6 +1385,70 @@ svg {
   white-space: nowrap;
 }
 
+.external-agent-connection {
+  border-top: 1px solid var(--hs-line);
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding-top: 12px;
+}
+
+.external-agent-connection__header {
+  align-items: start;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.external-agent-connection__header div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.external-agent-connection__header strong {
+  font-size: 12px;
+}
+
+.external-agent-connection__header span,
+.external-agent-connection > p {
+  color: var(--hs-text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.external-agent-connection__items {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.external-agent-connection__items div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.external-agent-connection__items dt {
+  color: var(--hs-text-muted);
+  font-size: 10px;
+}
+
+.external-agent-connection__items dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.external-agent-connection__items .hs-status-pill {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .project-card {
   background: var(--hs-surface-raised);
   border: 1px solid var(--hs-line);
@@ -3270,6 +3334,10 @@ svg {
   .ai-settings__modes,
   .ai-settings__grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .external-agent-connection__items {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .workspace-body {

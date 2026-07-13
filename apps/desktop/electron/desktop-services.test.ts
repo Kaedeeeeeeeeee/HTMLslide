@@ -3,6 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  CLAUDE_HEADLESS_CONTRACT_FLAGS,
+  CODEX_HEADLESS_CONTRACT_FLAGS,
   COMMAND_CAPTURE_LIMIT_CHARS,
   COMMAND_CAPTURE_TRUNCATION_MARKER
 } from "@htmlslide/agent-adapters";
@@ -26,9 +28,12 @@ import {
   findCliRuntime,
   getDesktopCliIntegration,
   getDesktopOfficialSkills,
+  getDesktopProjectAgentSkills,
+  getDesktopProjectMcpStatus,
   inspectDesktopSourceFiles,
   installDesktopCliIntegration,
   installDesktopOfficialSkills,
+  installDesktopProjectAgentSkills,
   listDesktopPresenterDisplays,
   loadDesktopPresenterDeck,
   loadDesktopPresenterDeckPackage,
@@ -51,6 +56,7 @@ import {
   saveDesktopSlideNotes,
   stageDesktopNewDeckSources,
   summarizeDeckProject,
+  testDesktopExternalAgent,
   uninstallDesktopCliIntegration,
   upsertRecentProject,
   writeDesktopLibrary,
@@ -63,6 +69,7 @@ import {
   type DesktopExternalAgentStatus,
   type DesktopCredentialStore,
   type DesktopAgentRunReport,
+  type ExternalAgentDetectorRunner,
   type DesktopProjectRecord
 } from "./desktop-services.js";
 
@@ -1126,6 +1133,85 @@ describe("desktop services", () => {
     await expect(
       readFile(path.join(homeDir, "skills", "deck-architect", ".htmlslide-managed.json"), "utf8")
     ).resolves.toContain('"manager": "htmlslide"');
+  });
+
+  it("installs and verifies project skills for Codex and exposes the MCP harness status", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+
+    const before = await getDesktopProjectAgentSkills({
+      agentId: "codex-cli",
+      now: "2026-07-08T00:00:00.000Z",
+      projectPath
+    });
+    expect(before).toMatchObject({
+      agentId: "codex-cli",
+      installedCount: 0,
+      location: "codex",
+      missing: expect.arrayContaining(["deck-architect"]),
+      projectPath,
+      skillCount: OFFICIAL_SKILLS.length,
+      status: "warning"
+    });
+
+    const installed = await installDesktopProjectAgentSkills({
+      agentId: "codex-cli",
+      now: "2026-07-08T00:00:00.000Z",
+      projectPath
+    });
+    expect(installed).toMatchObject({
+      agentId: "codex-cli",
+      installedCount: OFFICIAL_SKILLS.length,
+      location: "codex",
+      missing: [],
+      stale: [],
+      status: "passed"
+    });
+    await expect(
+      readFile(path.join(projectPath, ".agents", "skills", "htmlslide", "deck-architect", "SKILL.md"), "utf8")
+    ).resolves.toContain("name: deck-architect");
+
+    const mcp = await getDesktopProjectMcpStatus({
+      now: "2026-07-08T00:00:00.000Z",
+      projectPath
+    });
+    expect(mcp).toMatchObject({
+      implementedToolCount: expect.any(Number),
+      message: "Local MCP project harness is ready; provider registration remains explicit.",
+      projectPath,
+      registeredToolCount: expect.any(Number),
+      status: "ready"
+    });
+  });
+
+  it("combines fake agent readiness, project skill state, and MCP status without external execution", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const runner: ExternalAgentDetectorRunner = async ({ command, args }) => ({
+      exitCode: 0,
+      stderr: "",
+      stdout: `${command} ${args.join(" ")} ${command === "claude"
+        ? CLAUDE_HEADLESS_CONTRACT_FLAGS.join(" ")
+        : command === "codex"
+          ? CODEX_HEADLESS_CONTRACT_FLAGS.join(" ")
+          : ""}`
+    });
+
+    const result = await testDesktopExternalAgent({
+      agentId: "codex-cli",
+      now: "2026-07-08T00:00:00.000Z",
+      projectPath,
+      runner
+    });
+
+    expect(result).toMatchObject({
+      agent: { id: "codex-cli", status: "ready" },
+      agentId: "codex-cli",
+      mcp: { status: "ready" },
+      projectPath,
+      projectSkills: { status: "warning", installedCount: 0 },
+      status: "warning"
+    });
   });
 
   it("removes only verified managed official skills after explicit confirmation", async () => {

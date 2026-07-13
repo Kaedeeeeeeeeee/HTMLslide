@@ -514,6 +514,39 @@ export type DesktopAiEngineSettingsSaveRequest = {
   clearKey?: boolean;
 };
 
+export type DesktopProjectAgentSkillsState = {
+  status: "passed" | "warning" | "failed";
+  projectPath: string;
+  agentId: Extract<ExternalAgentStatus["id"], "claude-code" | "codex-cli">;
+  location: "claude" | "codex";
+  skillCount: number;
+  installedCount: number;
+  missing: string[];
+  stale: string[];
+  paths: string[];
+  message: string;
+  updatedAt: string;
+};
+
+export type DesktopProjectMcpStatus = {
+  status: "ready" | "failed";
+  projectPath: string;
+  registeredToolCount: number;
+  implementedToolCount: number;
+  message: string;
+  checkedAt: string;
+};
+
+export type DesktopExternalAgentConnectionState = {
+  status: "ready" | "warning" | "failed";
+  projectPath: string;
+  agentId: ExternalAgentStatus["id"];
+  agent: ExternalAgentStatus;
+  projectSkills?: DesktopProjectAgentSkillsState;
+  mcp: DesktopProjectMcpStatus;
+  checkedAt: string;
+};
+
 export type HtmlslideDesktopApi = {
   appName: string;
   platform: string;
@@ -538,6 +571,14 @@ export type HtmlslideDesktopApi = {
   getAiEngineSettings(): Promise<AiEngineSettings>;
   saveAiEngineSettings(request: DesktopAiEngineSettingsSaveRequest): Promise<AiEngineSettings>;
   detectExternalAgents(): Promise<ExternalAgentStatus[]>;
+  testExternalAgent(request: {
+    projectPath: string;
+    agentId: ExternalAgentStatus["id"];
+  }): Promise<DesktopExternalAgentConnectionState>;
+  installProjectAgentSkills(request: {
+    projectPath: string;
+    agentId: Extract<ExternalAgentStatus["id"], "claude-code" | "codex-cli">;
+  }): Promise<DesktopProjectAgentSkillsState>;
   chooseSourceFiles(): Promise<DesktopSourceFileSelection[]>;
   chooseWorkspace(): Promise<string | undefined>;
   openProjectDialog(): Promise<DesktopProjectPreview | undefined>;

@@ -84,13 +84,16 @@ import {
 import {
   inspectInstalledSkill,
   installSkill,
+  listInstalledSkills,
   OFFICIAL_SKILLS,
   removeSkill,
   SkillStoreError,
   type SkillStoreIntegrity,
   type SkillInstallResult,
+  type ProjectSkillInstallLocation,
   validateOfficialSkillRegistry
 } from "@htmlslide/skills";
+import { createHtmlslideMcpServer } from "@htmlslide/mcp-server";
 
 export type DesktopProjectStatus =
   | "Ready"
@@ -714,6 +717,39 @@ export type DesktopExternalAgentStatus = {
   summary: string;
 };
 
+export type DesktopProjectAgentSkillsState = {
+  status: "passed" | "warning" | "failed";
+  projectPath: string;
+  agentId: Extract<DesktopExternalAgentId, "claude-code" | "codex-cli">;
+  location: Extract<ProjectSkillInstallLocation, "claude" | "codex">;
+  skillCount: number;
+  installedCount: number;
+  missing: string[];
+  stale: string[];
+  paths: string[];
+  message: string;
+  updatedAt: string;
+};
+
+export type DesktopProjectMcpStatus = {
+  status: "ready" | "failed";
+  projectPath: string;
+  registeredToolCount: number;
+  implementedToolCount: number;
+  message: string;
+  checkedAt: string;
+};
+
+export type DesktopExternalAgentConnectionState = {
+  status: "ready" | "warning" | "failed";
+  projectPath: string;
+  agentId: DesktopExternalAgentId;
+  agent: DesktopExternalAgentStatus;
+  projectSkills?: DesktopProjectAgentSkillsState;
+  mcp: DesktopProjectMcpStatus;
+  checkedAt: string;
+};
+
 export type ExternalAgentDetectorRunner = (invocation: {
   command: string;
   args: readonly string[];
@@ -1330,6 +1366,186 @@ export async function detectExternalAgentStatuses({
       summary: "Add a custom command template before detection"
     })
   ];
+}
+
+const projectAgentSkillLocation = (
+  agentId: DesktopExternalAgentId
+): { agentId: Extract<DesktopExternalAgentId, "claude-code" | "codex-cli">; location: Extract<ProjectSkillInstallLocation, "claude" | "codex"> } | undefined => {
+  if (agentId === "claude-code") {
+    return { agentId, location: "claude" };
+  }
+  if (agentId === "codex-cli") {
+    return { agentId, location: "codex" };
+  }
+  return undefined;
+};
+
+const resolveDesktopAgentProject = (projectPath: string): string => {
+  if (typeof projectPath !== "string" || projectPath.trim().length === 0) {
+    throw new Error("A local deck project path is required.");
+  }
+  return path.resolve(projectPath);
+};
+
+export async function getDesktopProjectAgentSkills({
+  projectPath,
+  agentId,
+  now = new Date().toISOString()
+}: {
+  projectPath: string;
+  agentId: Extract<DesktopExternalAgentId, "claude-code" | "codex-cli">;
+  now?: string;
+}): Promise<DesktopProjectAgentSkillsState> {
+  const projectRoot = resolveDesktopAgentProject(projectPath);
+  const target = projectAgentSkillLocation(agentId);
+  if (!target) {
+    throw new Error(`Project skills are not supported for ${agentId}.`);
+  }
+
+  await loadDeckProject(projectRoot, { verifyFiles: false });
+  const installed = await listInstalledSkills({
+    target: { kind: "project", locations: [target.location], projectRoot }
+  });
+  const installedByName = new Map(installed.skills.map((skill) => [skill.name, skill]));
+  const missing: string[] = [];
+  const stale: string[] = installed.invalid.map((skill) => skill.name).sort();
+  const paths: string[] = [];
+  let installedCount = 0;
+
+  for (const skill of OFFICIAL_SKILLS) {
+    const name = skill.metadata.name;
+    const entry = installedByName.get(name);
+    if (!entry) {
+      missing.push(name);
+      continue;
+    }
+    paths.push(entry.directoryPath);
+    if (entry.managed && entry.integrity === "verified") {
+      installedCount += 1;
+    } else {
+      stale.push(name);
+    }
+  }
+
+  missing.sort();
+  stale.sort();
+  paths.sort();
+  const complete = missing.length === 0 && stale.length === 0 && installedCount === OFFICIAL_SKILLS.length;
+  const pendingCount = missing.length + stale.length;
+
+  return {
+    agentId: target.agentId,
+    installedCount,
+    location: target.location,
+    message: complete
+      ? `${installedCount} project skills verified for ${target.location}.`
+      : `${pendingCount} project skill${pendingCount === 1 ? "" : "s"} need installation or review.`,
+    missing,
+    paths,
+    projectPath: projectRoot,
+    skillCount: OFFICIAL_SKILLS.length,
+    stale,
+    status: complete ? "passed" : "warning",
+    updatedAt: now
+  };
+}
+
+export async function installDesktopProjectAgentSkills({
+  projectPath,
+  agentId,
+  now = new Date().toISOString()
+}: {
+  projectPath: string;
+  agentId: Extract<DesktopExternalAgentId, "claude-code" | "codex-cli">;
+  now?: string;
+}): Promise<DesktopProjectAgentSkillsState> {
+  const projectRoot = resolveDesktopAgentProject(projectPath);
+  const target = projectAgentSkillLocation(agentId);
+  if (!target) {
+    throw new Error(`Project skills are not supported for ${agentId}.`);
+  }
+
+  await loadDeckProject(projectRoot, { verifyFiles: false });
+  for (const skill of OFFICIAL_SKILLS) {
+    await installSkill({
+      source: { kind: "official", name: skill.metadata.name },
+      target: { kind: "project", locations: [target.location], projectRoot },
+      adoptLegacyOfficial: true
+    });
+  }
+
+  return getDesktopProjectAgentSkills({ projectPath: projectRoot, agentId: target.agentId, now });
+}
+
+export async function getDesktopProjectMcpStatus({
+  projectPath,
+  now = new Date().toISOString()
+}: {
+  projectPath: string;
+  now?: string;
+}): Promise<DesktopProjectMcpStatus> {
+  const projectRoot = resolveDesktopAgentProject(projectPath);
+  try {
+    const result = await createHtmlslideMcpServer({ projectRoot }).start();
+    return {
+      checkedAt: now,
+      implementedToolCount: result.implementedToolCount,
+      message: "Local MCP project harness is ready; provider registration remains explicit.",
+      projectPath: result.projectRoot,
+      registeredToolCount: result.registeredToolCount,
+      status: "ready"
+    };
+  } catch (error) {
+    return {
+      checkedAt: now,
+      implementedToolCount: 0,
+      message: error instanceof Error ? error.message : String(error),
+      projectPath: projectRoot,
+      registeredToolCount: 0,
+      status: "failed"
+    };
+  }
+}
+
+export async function testDesktopExternalAgent({
+  projectPath,
+  agentId,
+  now = new Date().toISOString(),
+  runner
+}: {
+  projectPath: string;
+  agentId: DesktopExternalAgentId;
+  now?: string;
+  runner?: ExternalAgentDetectorRunner;
+}): Promise<DesktopExternalAgentConnectionState> {
+  const projectRoot = resolveDesktopAgentProject(projectPath);
+  await loadDeckProject(projectRoot, { verifyFiles: false });
+  const statuses = await detectExternalAgentStatuses({ cwd: projectRoot, now, runner });
+  const agent = statuses.find((status) => status.id === agentId);
+  if (!agent) {
+    throw new Error(`Unknown external agent: ${agentId}.`);
+  }
+
+  const mcp = await getDesktopProjectMcpStatus({ projectPath: projectRoot, now });
+  const target = projectAgentSkillLocation(agentId);
+  const projectSkills = target
+    ? await getDesktopProjectAgentSkills({ projectPath: projectRoot, agentId: target.agentId, now })
+    : undefined;
+  const status = mcp.status === "failed"
+    ? "failed"
+    : agent.status === "ready" && (!projectSkills || projectSkills.status === "passed")
+      ? "ready"
+      : "warning";
+
+  return {
+    agent,
+    agentId,
+    checkedAt: now,
+    mcp,
+    projectPath: projectRoot,
+    projectSkills,
+    status
+  };
 }
 
 export async function upsertRecentProject(

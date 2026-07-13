@@ -25,6 +25,8 @@ External agent mode runs a user-owned coding agent as a local process against an
 
 The connection guide separates detection and authentication from run readiness. It shows the local command/version, permission summary, whether headless run, cancellation, and diff review are available, and the next remediation step.
 
+The desktop AI Engines panel also provides project-scoped connection checks for an opened local deck. Claude Code and Codex CLI can install the managed official Skill pack into the project's `.claude/skills/htmlslide/` or `.agents/skills/htmlslide/` directory. The MCP row validates the local project harness and reports registered/implemented tool counts; it does not claim that a provider has been configured, so provider registration remains explicit.
+
 ### Local Execution And Permissions
 
 Claude Code, Codex CLI, and Generic command adapters run locally in an OS-temporary copy of the deck source using the user's selected command and login. HTMLslide assembles fixed argv arrays and does not execute interpolated shell text. Only checkpoint-derived changes under `deck.json`, `slides/`, `notes/`, `theme/`, and `assets/` are copied back; unrelated temporary changes are discarded. Generic commands must also account for every changed source file in their write manifest.

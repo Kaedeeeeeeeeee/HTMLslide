@@ -17,8 +17,10 @@ import {
   type DesktopAudienceWindowRequest,
   type DesktopAudienceWindowState,
   type DesktopCliIntegrationState,
+  type DesktopExternalAgentConnectionState,
   type DesktopExportOptions,
   type DesktopOfficialSkillsState,
+  type DesktopProjectAgentSkillsState,
   type DesktopPresenterPreferences,
   type DesktopPresenterDeckResult,
   type DesktopProjectPreview,
@@ -52,6 +54,7 @@ import {
   type QaIssue,
   type SlideSummary
 } from "./model";
+import type { ExternalAgentId } from "./settings-model";
 import {
   buildAiEngineSettingsUpdate,
   createDefaultAiEngineSettings,
@@ -315,6 +318,8 @@ function App(): React.ReactNode {
   const [externalAgentStatuses, setExternalAgentStatuses] = useState<ExternalAgentStatus[]>(() =>
     createDefaultExternalAgentStatuses()
   );
+  const [externalAgentConnection, setExternalAgentConnection] = useState<DesktopExternalAgentConnectionState>();
+  const [projectAgentSkillsStatus, setProjectAgentSkillsStatus] = useState<DesktopProjectAgentSkillsState>();
   const [aiEngineStatus, setAiEngineStatus] = useState<OperationStatus>({
     kind: "idle",
     message: "No AI mode"
@@ -1143,6 +1148,61 @@ function App(): React.ReactNode {
   const activeProjectIsDeckPackage = Boolean(
     directPresenterOpen && activeProject?.path === directPresenterOpen.deckpkgPath
   );
+  const activeProjectPath = activeProject && !activeProject.path.startsWith("~") && !activeProjectIsDeckPackage
+    ? activeProject.path
+    : undefined;
+
+  const handleTestExternalAgent = useCallback((agentId: ExternalAgentId): void => {
+    if (!desktopApi || !activeProjectPath) {
+      setAiEngineStatus({ kind: "failed", message: "Project connection requires a local deck project" });
+      return;
+    }
+
+    setAiEngineStatus({ kind: "running", message: "Testing project connection" });
+    desktopApi.testExternalAgent({ projectPath: activeProjectPath, agentId })
+      .then((result) => {
+        setExternalAgentConnection(result);
+        setProjectAgentSkillsStatus(result.projectSkills);
+        setExternalAgentStatuses((current) => current.map((status) => status.id === result.agentId ? result.agent : status));
+        setAiEngineStatus({
+          kind: result.status === "failed" ? "failed" : result.status === "ready" ? "success" : "idle",
+          message: result.status === "ready" ? "Project connection ready" : result.agent.summary
+        });
+      })
+      .catch((error: unknown) => {
+        setAiEngineStatus({
+          kind: "failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
+  }, [activeProjectPath, desktopApi]);
+
+  const handleInstallProjectAgentSkills = useCallback((agentId: ExternalAgentId): void => {
+    if (!desktopApi || !activeProjectPath) {
+      setAiEngineStatus({ kind: "failed", message: "Project skills require a local deck project" });
+      return;
+    }
+    if (agentId !== "claude-code" && agentId !== "codex-cli") {
+      setAiEngineStatus({ kind: "failed", message: "Project skills are supported for Claude Code and Codex CLI" });
+      return;
+    }
+
+    setAiEngineStatus({ kind: "running", message: "Installing project skills" });
+    desktopApi.installProjectAgentSkills({ projectPath: activeProjectPath, agentId })
+      .then((result) => {
+        setProjectAgentSkillsStatus(result);
+        setExternalAgentConnection((current) => current?.projectPath === activeProjectPath && current.agentId === agentId
+          ? { ...current, projectSkills: result, status: current.agent.status === "ready" ? "ready" : "warning" }
+          : current);
+        setAiEngineStatus({ kind: result.status === "passed" ? "success" : "idle", message: result.message });
+      })
+      .catch((error: unknown) => {
+        setAiEngineStatus({
+          kind: "failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
+  }, [activeProjectPath, desktopApi]);
 
   const handleSaveSlideNotes = useCallback(
     async (slideId: string, content: string): Promise<boolean> => {
@@ -2040,11 +2100,13 @@ function App(): React.ReactNode {
     return (
       <ProjectLibrary
         activeSection={librarySection}
+        activeProjectPath={activeProjectPath}
         aiEngineSettings={aiEngineSettings}
         aiEngineStatus={aiEngineStatus}
         cliIntegration={cliIntegration}
         cliIntegrationStatus={cliIntegrationStatus}
         externalAgentStatuses={externalAgentStatuses}
+        externalAgentConnection={externalAgentConnection}
         onCliIntegrationCopyManualCommand={handleCopyCliManualCommand}
         onCliIntegrationInstall={handleInstallCliIntegration}
         onCliIntegrationRefresh={handleRefreshCliIntegration}
@@ -2057,11 +2119,14 @@ function App(): React.ReactNode {
         onOpenProject={handleOpenProject}
         onRemoveProject={handleRemoveProject}
         onRefreshExternalAgents={handleRefreshExternalAgents}
+        onTestExternalAgent={handleTestExternalAgent}
+        onInstallProjectAgentSkills={handleInstallProjectAgentSkills}
         onSaveAiEngineSettings={handleSaveAiEngineSettings}
         operationStatus={operationStatus}
         officialSkills={officialSkills}
         officialSkillsStatus={officialSkillsStatus}
         projects={projects}
+        projectAgentSkillsStatus={projectAgentSkillsStatus}
         onInstallOfficialSkills={handleInstallOfficialSkills}
         onRemoveOfficialSkill={handleRemoveOfficialSkill}
         workspacePath={workspacePath}

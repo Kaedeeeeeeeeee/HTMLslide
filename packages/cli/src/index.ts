@@ -186,6 +186,49 @@ export type ProjectLoadResult =
       report: CheckReport;
     };
 
+export type RepairTarget = "claude" | "codex" | "generic";
+
+export type RepairPromptOptions = {
+  target: string;
+  projectPath?: string;
+};
+
+export type RepairPromptIssue = {
+  priority: "P0" | "P1" | "P2";
+  severity: CheckReport["issues"][number]["severity"];
+  type: string;
+  message: string;
+  slideId: string;
+  path?: string;
+  selector?: string;
+  measurement?: Record<string, unknown>;
+  suggestedFix: string;
+  agentInstruction: string;
+};
+
+export type RepairPromptCheck = {
+  status: CheckReport["status"];
+  summary: CheckReport["summary"];
+  issues: RepairPromptIssue[];
+};
+
+export type RepairPromptResult = {
+  status: "passed" | "failed";
+  command: "repair";
+  target: RepairTarget;
+  "for": RepairTarget;
+  slideIds: string[];
+  check: RepairPromptCheck;
+  prompt: string;
+  readOnly: true;
+  externalAgentExecuted: false;
+  writes: {
+    source: false;
+    exports: false;
+  };
+  exitCode: number;
+};
+
 export type AgentRunCliOptions = {
   engine: string;
   task: string;
@@ -979,10 +1022,17 @@ const toCompilerInput = (project: LoadedProject): CompilerProjectInput => ({
   }))
 });
 
-export const checkLoadedProject = async (project: LoadedProject): Promise<CheckReport> =>
+export type CheckLoadedProjectOptions = {
+  writeReport?: boolean;
+};
+
+export const checkLoadedProject = async (
+  project: LoadedProject,
+  options: CheckLoadedProjectOptions = {}
+): Promise<CheckReport> =>
   checkProject({
     projectPath: project.projectPath,
-    writeReport: true,
+    writeReport: options.writeReport ?? true,
     slides: project.manifest.slides.map((slide) => ({
       id: slide.id,
       title: slide.title,
@@ -990,6 +1040,194 @@ export const checkLoadedProject = async (project: LoadedProject): Promise<CheckR
       notesPath: slide.notes
     }))
   });
+
+const repairTargetLabels: Readonly<Record<RepairTarget, string>> = {
+  claude: "Claude Code",
+  codex: "Codex CLI",
+  generic: "Generic coding agent"
+};
+
+const normalizeRepairTarget = (value: string): RepairTarget => {
+  const target = value.trim().toLowerCase();
+  if (target === "claude" || target === "codex" || target === "generic") {
+    return target;
+  }
+
+  throw Object.assign(new Error(`Unsupported repair target: ${value}.`), {
+    code: "REPAIR_TARGET_INVALID",
+    exitCode: EXIT_CODES.generic,
+    suggestedFix: "Use --for claude, --for codex, or --for generic."
+  });
+};
+
+const repairPriorityForSeverity = (severity: RepairPromptIssue["severity"]): RepairPromptIssue["priority"] => {
+  if (severity === "error") {
+    return "P0";
+  }
+  if (severity === "warning") {
+    return "P1";
+  }
+  return "P2";
+};
+
+const sanitizeRepairText = (value: string, projectPath: string): string => {
+  let sanitized = sanitizeProviderText(value);
+  const resolvedProjectPath = path.resolve(projectPath);
+  const pathVariants = [
+    resolvedProjectPath,
+    resolvedProjectPath.split(path.sep).join("/"),
+    resolvedProjectPath.split(path.sep).join("\\")
+  ];
+  for (const variant of [...new Set(pathVariants)].sort((left, right) => right.length - left.length)) {
+    sanitized = sanitized.split(variant).join("[project-root]");
+  }
+  return sanitized;
+};
+
+const sanitizeRepairPath = (value: string, projectPath: string): string => {
+  const sanitized = sanitizeRepairText(value, projectPath);
+  const isAbsolute = path.isAbsolute(value) || /^[A-Za-z]:[\\/]/u.test(value);
+  return isAbsolute && !sanitized.includes("[project-root]") ? "[absolute-path-redacted]" : sanitized;
+};
+
+const sanitizeRepairValue = (value: unknown, projectPath: string, key?: string): unknown => {
+  if (typeof value === "string") {
+    return key === "path" || key?.endsWith("Path")
+      ? sanitizeRepairPath(value, projectPath)
+      : sanitizeRepairText(value, projectPath);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeRepairValue(item, projectPath));
+  }
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([entryKey, entryValue]) => [
+        entryKey,
+        sanitizeRepairValue(entryValue, projectPath, entryKey)
+      ])
+    );
+  }
+  return value;
+};
+
+const sanitizeRepairIssue = (issue: CheckReport["issues"][number], projectPath: string): RepairPromptIssue => ({
+  priority: repairPriorityForSeverity(issue.severity),
+  severity: issue.severity,
+  type: sanitizeRepairText(issue.type, projectPath),
+  message: sanitizeRepairText(issue.message, projectPath),
+  slideId: sanitizeRepairText(issue.slideId, projectPath),
+  ...(issue.path ? { path: sanitizeRepairPath(issue.path, projectPath) } : {}),
+  ...(issue.selector ? { selector: sanitizeRepairText(issue.selector, projectPath) } : {}),
+  ...(issue.measurement
+    ? { measurement: sanitizeRepairValue(issue.measurement, projectPath) as Record<string, unknown> }
+    : {}),
+  suggestedFix: sanitizeRepairText(issue.suggestedFix, projectPath),
+  agentInstruction: sanitizeRepairText(issue.agentInstruction, projectPath)
+});
+
+const sanitizeRepairCheck = (report: CheckReport, projectPath: string): RepairPromptCheck => ({
+  status: report.status,
+  summary: report.summary,
+  issues: report.issues.map((issue) => sanitizeRepairIssue(issue, projectPath))
+});
+
+const buildRepairPrompt = (
+  target: RepairTarget,
+  check: RepairPromptCheck,
+  slideIds: readonly string[]
+): string => {
+  const issueText = check.issues.length === 0
+    ? "No check issues were reported. Do not make speculative edits."
+    : check.issues
+        .map((issue, index) => {
+          const location = [
+            `slide id=${issue.slideId}`,
+            issue.path ? `path=${issue.path}` : undefined,
+            issue.selector ? `selector=${issue.selector}` : undefined
+          ]
+            .filter((value): value is string => value !== undefined)
+            .join(", ");
+          return [
+            `${index + 1}. [${issue.priority}] ${issue.severity.toUpperCase()} ${issue.type} (${location})`,
+            `   Message: ${issue.message}`,
+            `   Suggested fix: ${issue.suggestedFix}`,
+            `   Check instruction: ${issue.agentInstruction}`
+          ].join("\n");
+        })
+        .join("\n");
+
+  return [
+    "# HTMLslide repair request",
+    "",
+    `Target agent: ${repairTargetLabels[target]}`,
+    "Mode: prompt-only. HTMLslide has not executed an external agent and has not written project files.",
+    "Use project-relative paths and repair only the issues listed below.",
+    "",
+    `Current check status: ${check.status}`,
+    `Check summary: errors=${check.summary.errors}, warnings=${check.summary.warnings}, info=${check.summary.info}`,
+    `Slide IDs (fixed; do not change): ${slideIds.length > 0 ? slideIds.join(", ") : "preserve the ids in deck.json"}`,
+    "",
+    "Repair priority:",
+    "1. Resolve P0 error-level check issues before warnings or informational issues.",
+    "2. For overflow or density, prioritize content compression first, then adjust layout, then reduce font size as a last resort.",
+    "",
+    "Required constraints:",
+    "- Do not edit exports/; exports are compiler-owned artifacts.",
+    "- Do not change any slide id or the matching data-slide-id value.",
+    "- Keep the fixed 1920x1080 viewport and fixed-canvas layout.",
+    "- Edit only project source areas such as deck.json, slides/, notes/, theme/, or assets/.",
+    "- Run htmlslide check --json after every repair and before declaring the deck repaired.",
+    "- Do not use export output as a source to edit, and do not run an export for this prompt-only request.",
+    "",
+    "Check issues:",
+    issueText,
+    "",
+    "Return a concise summary of source files changed and the final htmlslide check result."
+  ].join("\n");
+};
+
+export const createRepairPrompt = async (options: RepairPromptOptions): Promise<RepairPromptResult> => {
+  const target = normalizeRepairTarget(options.target);
+  const requestedPath = options.projectPath ?? process.cwd();
+  const loaded = await tryLoadProjectForCheck(requestedPath);
+  let report: CheckReport;
+  let projectPath = path.resolve(requestedPath);
+  let slideIds: string[] = [];
+  let exitCode: number = EXIT_CODES.success;
+
+  if (!loaded.ok) {
+    report = loaded.report;
+    exitCode = loaded.exitCode;
+  } else {
+    projectPath = loaded.project.projectPath;
+    slideIds = loaded.project.manifest.slides.map((slide) => slide.id);
+    report = await checkLoadedProject(loaded.project, { writeReport: false });
+    exitCode = report.status === "failed" ? EXIT_CODES.validationFailed : EXIT_CODES.success;
+  }
+
+  const check = sanitizeRepairCheck(report, projectPath);
+  slideIds = [...new Set([
+    ...slideIds,
+    ...check.issues.map((issue) => issue.slideId).filter((slideId) => slideId !== "deck")
+  ].map((slideId) => sanitizeRepairText(slideId, projectPath)))];
+
+  return {
+    status: report.status,
+    command: "repair",
+    target,
+    "for": target,
+    slideIds,
+    check,
+    prompt: buildRepairPrompt(target, check, slideIds),
+    readOnly: true,
+    externalAgentExecuted: false,
+    writes: {
+      source: false,
+      exports: false
+    },
+    exitCode
+  };
+};
 
 export const resolveProjectExportOptions = (
   project: LoadedProject,

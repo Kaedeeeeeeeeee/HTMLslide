@@ -29,6 +29,7 @@ import {
   diffCheckpoint,
   doctor,
   EXIT_CODES,
+  createRepairPrompt,
   exportLoadedProject,
   getCliShimStatus,
   installCliShim,
@@ -99,6 +100,10 @@ type AgentValidateProviderCommandOptions = JsonOption & {
   baseUrl?: string;
   model: string;
   provider: string;
+};
+
+type RepairCommandOptions = JsonOption & {
+  for: string;
 };
 
 type CheckpointCommandOptions = JsonOption & {
@@ -409,6 +414,28 @@ program
       writeResult(report, json);
       if (report.status === "failed") {
         process.exit(EXIT_CODES.validationFailed);
+      }
+    } catch (error) {
+      fail(error, json);
+    }
+  });
+
+program
+  .command("repair")
+  .argument("[path]", "deck project path", process.cwd())
+  .requiredOption("--for <agent>", "repair prompt target: claude, codex, or generic")
+  .option("--json", "print machine-readable JSON")
+  .description("Generate a sanitized, read-only repair prompt from the shared deck check.")
+  .action(async (projectPath: string, options: RepairCommandOptions) => {
+    const json = Boolean(options.json ?? program.opts<JsonOption>().json);
+    try {
+      const result = await createRepairPrompt({
+        projectPath,
+        target: options["for"]
+      });
+      writeResult(json ? result : result.prompt, json);
+      if (result.exitCode !== EXIT_CODES.success) {
+        process.exit(result.exitCode);
       }
     } catch (error) {
       fail(error, json);

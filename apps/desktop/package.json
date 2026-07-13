@@ -22,6 +22,7 @@
     "@htmlslide/agent-adapters": "workspace:*",
     "@htmlslide/compiler": "workspace:*",
     "@htmlslide/core": "workspace:*",
+    "@htmlslide/mcp-server": "workspace:*",
     "@htmlslide/presenter": "workspace:*",
     "@htmlslide/shared-ui": "workspace:*",
     "@htmlslide/skills": "workspace:*",

@@ -9,6 +9,7 @@ Initial commands:
 - `htmlslide templates list --json` lists built-in deck template metadata.
 - `htmlslide open [path] --json` opens a loadable deck project or validated `.deckpkg` in the configured macOS app.
 - `htmlslide check [path] --json` discovers `deck.json` from a project root, nested source path, or direct `deck.json` path, then validates schema, files, notes, and source rules.
+- `htmlslide repair --for claude|codex|generic [path] --json` runs the shared check read-only and emits a sanitized, prompt-only repair request. It never invokes an external agent or writes source files, `.htmlslide` reports, or `exports/`.
 - `htmlslide export [path] --pdf --html --deckpkg --thumbnails` creates export artifacts plus `exports/export-manifest.json` after a successful check. When an output flag is omitted, the command uses the corresponding `deck.json` `export` value.
 - `htmlslide export [path] --no-pdf --no-deckpkg --no-thumbnails` skips selected artifacts while still writing required sidecars such as `notes.json`.
 
@@ -200,3 +201,5 @@ Validation failures return the same shape with `"status": "failed"`, a sanitized
   ]
 }
 ```
+
+`repair --for claude|codex|generic [path] --json` returns the same shared check summary and issue details without the absolute project path. Its `prompt` includes the current slide ids and these mandatory repair constraints: do not edit `exports/`, do not change slide ids, keep the fixed `1920x1080` viewport, compress content before changing layout and reduce font size only as a last resort, and run `htmlslide check --json` after every repair. A failing check returns validation exit code `2`; project-loading failures preserve exit codes `7`, `8`, or `5` as applicable. Invalid `--for` values use the generic exit code `1`. The result also states `readOnly: true`, `externalAgentExecuted: false`, and zero writes for source and `exports/`.

@@ -85,6 +85,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install and verify Poppler
+        run: |
+          if ! brew list --versions poppler >/dev/null 2>&1; then
+            brew install poppler
+          fi
+          command -v pdftoppm
+          pdftoppm -v
+
       - name: Install Playwright Chromium
         run: pnpm exec playwright install chromium
 

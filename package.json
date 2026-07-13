@@ -17,7 +17,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:coverage": "node scripts/test/check-coverage.mjs",
-    "test:visual:browser": "vitest run packages/compiler/test/browser-visual-regression.test.ts",
+    "test:visual:browser": "vitest run packages/compiler/test/browser-visual-regression.test.ts packages/compiler/test/pdf-visual-regression.test.ts",
     "test:watch": "vitest",
     "perf:smoke": "tsx scripts/perf/performance-smoke.ts",
     "security:secrets": "node scripts/security/scan-secrets.mjs",

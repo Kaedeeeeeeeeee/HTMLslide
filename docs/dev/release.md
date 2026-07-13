@@ -99,7 +99,7 @@ Also verify:
 - The exact real-provider desktop run produces 8-12 slides and passes `pnpm rc:byok-evidence -- --project <deck> --provider-validation <validation.json> --run-id <run-id> --commit <commit> --artifact-url <artifact-url>`.
 - Outline, visual directions, and full deck generation work.
 - Checks find `text-overflow`, missing asset, and missing notes issues.
-- Chromium PDF page count, normalized metadata, and repeated-export determinism match the deck; PNG full-slide and real DOM thumbnail goldens stay within 0.2 percent and 0.5 percent respectively. PDF acceptance is structural and same-DOM Chromium evidence, not raster visual regression.
+- Chromium PDF page count, normalized metadata, and repeated-export determinism match the deck; Poppler rasterized PDF page goldens and PNG full-slide goldens stay within 0.2 percent, and real DOM thumbnail goldens stay within 0.5 percent. CI installs and verifies `pdftoppm`; PDF raster failures write before/after/diff artifacts under `dist/visual-regression/pdf/`. PDF bytes remain scoped to the pinned Chromium, OS, and font environment, while raster goldens are reviewed per platform and architecture.
 - deckpkg opens from a direct file argument in both Electron E2E and packaged-app smoke, from a macOS `open-file` event in Electron E2E, through LaunchServices `open -a` in packaged-app smoke, and through Finder default double-click in a manual test.
 - Rehearsal mode works.
 - Audience window opens and syncs in Electron E2E; physical dual-screen presenter placement has been manually tested.

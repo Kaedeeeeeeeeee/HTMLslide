@@ -57,7 +57,7 @@ These gates are expected before each alpha candidate:
 | QA panel shows issues | Electron E2E covers failing check display. |
 | App shell accessibility | Desktop accessibility E2E covers onboarding, Project Library, New Deck gating, canonical preview host states, QA Panel, presenter rehearsal, Settings, and official skills chrome. The sandboxed user-authored preview document is validated separately. |
 | Canonical slide preview | Compiler/renderer tests cover deterministic single-slide documents, fixed manifest viewports, theme and local-asset parity, read-only generation, deny-by-default CSP, and removal of runtime scripts/notes. Electron E2E covers selection, scaling, stale-response handling, error recovery, and hostile authored content. |
-| PDF output is structurally verified | Compiler tests cover page count, normalized metadata, repeated-byte determinism for a pinned Chromium, operating-system image, and font environment, and production from the same staged Chromium DOM as thumbnails. There is no raster PDF visual-regression or cross-platform byte-equality claim. |
+| PDF output is structurally and visually verified | Compiler tests cover page count, normalized metadata, repeated-byte determinism for a pinned Chromium, operating-system image, and font environment, production from the same staged Chromium DOM as thumbnails, and every PDF page rasterized through the CI-installed Poppler `pdftoppm` helper against an OS-and-architecture-specific golden. There is no cross-platform PDF byte-equality claim; Poppler or Chromium updates require intentional golden review. |
 | PNG thumbnails are real DOM captures | Compiler tests cover exact-size Chromium thumbnails, repeated-byte determinism, and vector-only PNG goldens with 0.2 percent full-slide and 0.5 percent thumbnail thresholds. |
 | Browser and resource failures stop export | Browser renderer tests cover missing Chromium, blocked network/file escapes, disabled page JavaScript, invalid or missing images, and readiness failures without a PDF/thumbnail fallback. |
 | Export integrity metadata is enforced | Core/compiler/linter tests cover deterministic SHA-256 metadata, lock and staging cleanup, partial exports, legacy missing-manifest fallback, artifact edits, and invalid or truncated manifests failing closed. |
@@ -126,6 +126,5 @@ The alpha docs and release notes must not claim:
 - Gemini CLI headless deck editing while Gemini remains detection-only;
 - physical dual-screen reliability from Electron E2E alone;
 - real provider safety from fake-fetch tests alone.
-- raster PDF visual-regression coverage from structural PDF checks or PNG goldens.
 
 Use [Testing](testing.md), [Release](release.md), and [dev/release.md](dev/release.md) for the detailed command contracts.

@@ -34,6 +34,18 @@ import {
 import { renderWithChromium, type BrowserRenderResult } from "./browser-renderer.js";
 
 export { BrowserRenderError, inspectChromiumRuntime } from "./browser-renderer.js";
+export {
+  PdfRasterError,
+  rasterizePdfPages,
+  readPdfRasterPngDimensions,
+  runPdfRasterCommand,
+  type PdfRasterCommandResult,
+  type PdfRasterCommandRunner,
+  type PdfRasterErrorCode,
+  type PdfRasterOptions,
+  type PdfRasterPage,
+  type PdfRasterResult
+} from "./pdf-raster.js";
 
 export type CompilerSlideInput = {
   id: string;

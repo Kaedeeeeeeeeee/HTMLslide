@@ -116,7 +116,7 @@ There is no PDF or thumbnail fallback renderer. A missing or unusable Chromium e
 
 The renderer calls `page.pdf` with `printBackground: true` and `preferCSSPageSize: true`. It then uses `pdf-lib` to verify one PDF page per slide and normalize title, creator, producer, creation date, and modification date metadata before returning bytes to the export transaction.
 
-The compiler must fail export if the verified page count differs from `deck.json` slide count. Byte determinism is defined for the same source inputs, pinned Chromium build, operating-system image, and font environment; cross-machine equality is not claimed when host fonts or the OS differ. Automated PDF verification covers page count, normalized metadata, repeated-byte determinism in that pinned environment, and generation from the same staged Chromium DOM as the PNG thumbnails; it is not a raster PDF visual-regression claim.
+The compiler must fail export if the verified page count differs from `deck.json` slide count. Byte determinism is defined for the same source inputs, pinned Chromium build, operating-system image, and font environment; cross-machine equality is not claimed when host fonts or the OS differ. Automated PDF verification covers page count, normalized metadata, repeated-byte determinism in that pinned environment, generation from the same staged Chromium DOM as the PNG thumbnails, and a separate Poppler `pdftoppm` raster visual regression for every page. Raster goldens are isolated by platform and architecture because Chromium and Poppler versions can change pixels; missing or unusable Poppler output fails the visual gate rather than being skipped.
 
 ## PNG Thumbnails
 

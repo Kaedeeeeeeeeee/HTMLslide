@@ -190,6 +190,7 @@ jobs:
             --package-manifest "$manifest" \
             --commit "$GITHUB_SHA" \
             --artifact-url "$run_url" \
+            --fixture-only \
             --output "$output_path"
 
           if [[ ! -s "$output_path" ]]; then
@@ -198,7 +199,22 @@ jobs:
           fi
 
       - name: Contract-only BYOK fixture smoke (fixture only; no real provider acceptance)
-        run: pnpm rc:byok-fixture-smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          dmg="$(find dist/alpha -maxdepth 1 -type f -name '*.dmg' -print | sort | tail -n 1)"
+          if [[ -z "$dmg" || ! -f "$dmg" ]]; then
+            echo "::error title=Missing alpha DMG::The fixture-only BYOK smoke must bind evidence to the packaged alpha DMG."
+            exit 1
+          fi
+
+          artifact_sha256="$(shasum -a 256 "$dmg" | awk '{print $1}')"
+          pnpm rc:byok-fixture-smoke -- \
+            --output "$RUNNER_TEMP/htmlslide-byok-fixture-evidence.json" \
+            --commit "$GITHUB_SHA" \
+            --artifact-url "htmlslide-unsigned-alpha-${GITHUB_RUN_ID}-$(basename "$dmg")" \
+            --artifact-sha256 "$artifact_sha256"
 
       - name: Smoke unsigned alpha package
         run: pnpm smoke:package:alpha

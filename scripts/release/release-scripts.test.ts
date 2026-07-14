@@ -207,6 +207,10 @@ describe("release evidence scripts", () => {
     expect(workflow).toContain("--output release-artifacts/HTMLslide-release-bundle-evidence.json");
     expect(workflow).toContain("pnpm test:coverage");
     expect(workflow).toContain("pnpm rc:byok-fixture-smoke");
+    expect(workflow).toContain("--commit \"$GITHUB_SHA\"");
+    expect(workflow).toContain("--artifact-sha256 \"$artifact_sha256\"");
+    expect(workflow).toContain("--artifact-url \"htmlslide-signed-notarized-");
+    expect(workflow).toContain("--fixture-only");
     expect(workflow).toContain("Upload signed notarized candidate");
     expect(workflow).toContain("Create draft GitHub Release for candidate");
     expect(workflow).not.toContain("rc_checklist_promotion_path");
@@ -228,6 +232,10 @@ describe("release evidence scripts", () => {
     expect(alphaWorkflow).toContain("pnpm test:coverage");
     expect(alphaWorkflow).toContain("pnpm rc:byok-fixture-smoke");
     expect(alphaWorkflow).toContain("htmlslide-byok-fixture-evidence.json");
+    expect(alphaWorkflow).toContain("--commit \"$GITHUB_SHA\"");
+    expect(alphaWorkflow).toContain("--artifact-sha256 \"$artifact_sha256\"");
+    expect(alphaWorkflow).toContain("--artifact-url \"htmlslide-unsigned-alpha-");
+    expect(alphaWorkflow).toContain("--fixture-only");
   });
 
   it("verifies the release promotion contract against the exact candidate run", async () => {
@@ -562,6 +570,7 @@ describe("release evidence scripts", () => {
     expect(checklist).toContain("| Channel | release |");
     expect(checklist).toContain("Release macOS completed with signed, notarized, stapled manifest.");
     expect(checklist).toContain("signed/notarized release behavior");
+    expect(checklist).toContain("--artifact-sha256 <candidate-dmg-sha256>");
   });
 
   it("writes metadata-only real external-agent evidence bound to a package manifest", async () => {
@@ -604,6 +613,28 @@ describe("release evidence scripts", () => {
       });
       expect(evidenceText).not.toContain("/tmp/");
       expect(evidenceText).not.toContain("codex-secret");
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("marks external-agent contract smoke output as fixture-only", async () => {
+    const fixture = await createExternalAgentEvidenceFixture();
+    try {
+      const outputPath = path.join(fixture.root, "fixture-only.json");
+      await verifyExternalAgentEvidence([
+        "--evidence", fixture.evidencePath,
+        "--package-manifest", fixture.manifestPath,
+        "--commit", "f570b88",
+        "--artifact-url", "https://github.test/actions/artifacts/123",
+        "--fixture-only",
+        "--output", outputPath
+      ]);
+
+      await expect(readFile(outputPath, "utf8").then(JSON.parse)).resolves.toMatchObject({
+        fixtureOnly: true,
+        providerBoundary: "fixture-only"
+      });
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
     }
@@ -1118,17 +1149,26 @@ describe("release evidence scripts", () => {
 
   it("keeps the CI BYOK contract smoke explicitly fixture-only", async () => {
     const outputPath = path.join(os.tmpdir(), "htmlslide-byok-fixture-smoke-test.json");
+    const artifactSha256 = createHash("sha256").update("fixture candidate DMG\n", "utf8").digest("hex");
     try {
       await execFileAsync(process.execPath, [
         path.join(currentDir, "run-byok-fixture-smoke.mjs"),
-        "--output", outputPath
+        "--output", outputPath,
+        "--commit", "f570b88",
+        "--artifact-url", "htmlslide-unsigned-alpha-12345-HTMLslide-fixture.dmg",
+        "--artifact-sha256", artifactSha256
       ], { cwd: root });
       const evidence = JSON.parse(await readFile(outputPath, "utf8")) as Record<string, unknown>;
       expect(evidence).toMatchObject({
         kind: "htmlslide-byok-acceptance-evidence",
         status: "passed",
         fixtureOnly: true,
-        providerBoundary: "fixture-only"
+        providerBoundary: "fixture-only",
+        candidate: {
+          artifactSha256,
+          claimedArtifactUrl: "htmlslide-unsigned-alpha-12345-HTMLslide-fixture.dmg",
+          claimedCommit: "f570b88"
+        }
       });
       expect(evidence.verificationNote).toMatch(/not real provider acceptance/iu);
       expect(() => validateByokAcceptanceEvidence(evidence)).toThrow(/Fixture-only BYOK evidence cannot be used for release promotion/iu);

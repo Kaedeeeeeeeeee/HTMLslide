@@ -818,7 +818,7 @@ function assertNoSecrets(value, label, currentPath = "$") {
 
 function validateArtifactReference(value) {
   const clean = cleanMetadata(value, "artifact URL");
-  if (/^htmlslide-signed-notarized-[1-9][0-9]*-[A-Za-z0-9][A-Za-z0-9._-]*\.dmg$/u.test(clean)) {
+  if (/^htmlslide-(?:signed-notarized-[1-9][0-9]*|unsigned-alpha-[1-9][0-9]*)-[A-Za-z0-9][A-Za-z0-9._-]*\.dmg$/u.test(clean)) {
     return clean;
   }
 

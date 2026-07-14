@@ -31,6 +31,7 @@ export async function main(args) {
     commit: options.commit,
     evidence: input,
     evidencePath: evidenceInputPath,
+    fixtureOnly: options.fixtureOnly === true,
     manifest,
     manifestPath
   });
@@ -50,6 +51,10 @@ export function parseArgs(args) {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--") {
+      continue;
+    }
+    if (arg === "--fixture-only") {
+      parsed.fixtureOnly = true;
       continue;
     }
     if (!arg.startsWith("--")) {
@@ -94,6 +99,7 @@ export async function verifyExternalAgentAcceptance(options) {
     kind: "htmlslide-external-agent-acceptance-evidence",
     status: "passed",
     generatedAt: new Date().toISOString(),
+    ...(options.fixtureOnly ? { fixtureOnly: true, providerBoundary: "fixture-only" } : {}),
     provider: {
       id: options.evidence.provider.id,
       version: options.evidence.provider.version

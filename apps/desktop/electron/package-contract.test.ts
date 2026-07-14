@@ -271,8 +271,9 @@ describe("macOS alpha packaging contract", () => {
     expect(mainSource).toContain('"target-disconnected"');
     expect(mainSource).toContain("mainWindow.getNormalBounds()");
     expect(mainSource).toContain("restoreMainWindowPresentation");
-    expect(mainSource).toContain("mainWindow.setBounds(mainTargetBounds)");
-    expect(mainSource).toContain("audienceWindow.setBounds(audienceTargetBounds)");
+    expect(mainSource).toContain("applyPresenterScreenSwapMutation");
+    expect(mainSource).toContain("setAudienceBounds: (bounds) => activeAudienceWindow.setBounds(bounds)");
+    expect(mainSource).toContain("setMainBounds: (bounds) => activeMainWindow.setBounds(bounds)");
     expect(mainSource).toContain("audienceWindowDisplayId = mainDisplay.id");
     expect(mainSource).toContain("selectedDisplayId: mainDisplay.id");
     expect(preloadSource).toContain('ipcRenderer.invoke("htmlslide:swap-presenter-screens", request)');

@@ -101,14 +101,14 @@ umask 077
 htmlslide rc byok --project <deck-path> --provider openai|anthropic|compatible --model <model-id> --api-key-env <ENV_NAME> --task <brief> --target-slide-count <8-12> --json
 ```
 
-Optional candidate binding and run controls are `--base-url <url>`, `--commit <commit>`, `--artifact-url <url>`, `--artifact-sha256 <sha256>`, and `--speaker-notes <mode>`. Use the command from the exact candidate binary being tested; for promotion, pass the SHA-256 of the candidate DMG verified by the release bundle workflow.
+Run controls include `--base-url <url>` and `--speaker-notes <mode>`. For candidate acceptance, `--commit <commit>`, `--artifact-url <url>`, and `--artifact-sha256 <sha256>` are required provenance bindings; use the exact candidate binary and the DMG SHA-256 verified by the release bundle workflow.
 
 The command writes sanitized run-bound evidence under `.htmlslide/reports/rc-evidence-<run-id>/`. For a signed release promotion, attach the resulting evidence JSON as `HTMLslide-byok-acceptance-evidence.json` to the matching Draft Release; promotion verifies its run, 8-12 slide contract, passed checks, candidate commit, artifact reference, and exact candidate DMG SHA-256. The named environment variable and any desktop Keychain-backed credential remain outside the project; API key values are never written to the evidence.
 
 For implementation-level verification of an already captured run, the lower-level verifier remains available:
 
 ```bash
-pnpm rc:byok-evidence -- --project <deck-path> --provider-validation <validation.json> --run-id <run-id> --commit <commit> --artifact-url <artifact-url>
+pnpm rc:byok-evidence -- --project <deck-path> --provider-validation <validation.json> --run-id <run-id> --commit <commit> --artifact-url <artifact-url> --artifact-sha256 <candidate-dmg-sha256>
 ```
 
 That verifier does not replace the unified real-provider acceptance path once `htmlslide rc byok` is available.

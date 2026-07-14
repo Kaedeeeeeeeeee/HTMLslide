@@ -134,6 +134,7 @@ Dual-screen presenter mode is a desktop integration layer over the same package/
 
 - audience view renders a no-chrome BrowserWindow on the selected display and follows the presenter session.
 - presenter console renders current/next previews, notes, timer, progress, display selection, and controls.
+- presenter console searches slides by title, id, or number before jumping to a matching slide; keyboard `G` remains a direct numeric jump.
 - more than one detected display triggers one automatic Audience open on the preferred non-primary display; one-display sessions remain rehearsal-only until the user opens Audience.
 - Audience updates are latest-wins across asynchronous window loads; closing Presenter invalidates in-flight loads, and reconnect load failures are reported as a recoverable Audience state.
 - automated Electron smoke coverage verifies window creation, slide sync, and black/white screen sync without requiring a physical second monitor.

@@ -2030,6 +2030,7 @@ svg {
 }
 
 .field-row select,
+.field-row input,
 .inspector textarea,
 .command-bar input {
   background: var(--hs-surface);
@@ -2040,6 +2041,12 @@ svg {
 
 .field-row select {
   height: 32px;
+  padding: 0 8px;
+}
+
+.field-row input {
+  height: 32px;
+  min-width: 0;
   padding: 0 8px;
 }
 
@@ -3294,6 +3301,13 @@ svg {
 }
 
 .presenter-jump-panel select {
+  background: #10151e;
+  border-color: rgba(221, 228, 238, 0.22);
+  color: #f4f7fb;
+  max-width: 190px;
+}
+
+.presenter-jump-panel input {
   background: #10151e;
   border-color: rgba(221, 228, 238, 0.22);
   color: #f4f7fb;

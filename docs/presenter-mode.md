@@ -12,6 +12,8 @@ Before a first presentation, test keyboard next/previous navigation plus black s
 
 The desktop app can open a no-chrome Audience window and sync navigation, black screen, and white screen state from the presenter session.
 
+Presenter Console includes slide search by title, slide ID, or number. Filter the list, then select a result to jump without leaving the rehearsal view.
+
 When more than one display is detected, Presenter opens Audience once on the preferred external/non-primary display. With
 one display, it stays in rehearsal mode. The `Open audience` control remains available to retry after a failed automatic
 open or to reopen a window that was closed manually.

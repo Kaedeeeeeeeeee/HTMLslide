@@ -108,6 +108,8 @@ import type {
 } from "../desktop-api";
 import { formatAgentTokenUsage } from "../agent-usage";
 import { getDesktopApi } from "../desktop-api";
+import { PresenterAsyncOperationGate } from "../presenter-window-lifecycle";
+import { filterPresenterSlideIndices } from "../presenter-slide-search";
 
 interface WorkspaceProps {
   activeStageIndex: number;
@@ -759,7 +761,10 @@ function PresenterMode({
   const [audienceWindowState, setAudienceWindowState] = useState<DesktopAudienceWindowState>({ open: false });
   const [audienceWindowError, setAudienceWindowError] = useState<string | undefined>();
   const [swapPending, setSwapPending] = useState(false);
+  const [slideSearchQuery, setSlideSearchQuery] = useState("");
   const autoAudienceOpenAttemptedRef = useRef(false);
+  const audienceWindowOperationGateRef = useRef(new PresenterAsyncOperationGate());
+  const swapOperationGateRef = useRef(new PresenterAsyncOperationGate());
 
   useEffect(() => {
     const focusFrame = window.requestAnimationFrame(() => shellRef.current?.focus());
@@ -873,11 +878,21 @@ function PresenterMode({
   }, [onPresenterDisplaysChanged, refreshPresenterDisplays]);
 
   useEffect(() => {
+    const audienceWindowOperationGate = audienceWindowOperationGateRef.current;
+    const swapOperationGate = swapOperationGateRef.current;
+    return () => {
+      audienceWindowOperationGate.invalidate();
+      swapOperationGate.invalidate();
+    };
+  }, []);
+
+  useEffect(() => {
     if (!onAudienceWindowStateChanged) {
       return;
     }
 
     const unsubscribe = onAudienceWindowStateChanged((state) => {
+      audienceWindowOperationGateRef.current.invalidate();
       setAudienceWindowState(state);
       setAudienceWindowError(audienceWindowStateError(state));
     });
@@ -946,6 +961,13 @@ function PresenterMode({
     displayId: selectedDisplayId,
     payload: audiencePayload
   }), [audiencePayload, selectedDisplayId]);
+  const presenterSlideIndices = useMemo(
+    () => filterPresenterSlideIndices(deck.slides, slideSearchQuery),
+    [deck.slides, slideSearchQuery]
+  );
+  const selectedPresenterSlideValue = presenterSlideIndices.includes(view.slideIndex)
+    ? String(view.slideIndex)
+    : "";
 
   const handleSelectedDisplayIdChange = useCallback((displayId: number | undefined): void => {
     selectedDisplayIdRef.current = displayId;
@@ -953,16 +975,20 @@ function PresenterMode({
   }, []);
 
   const handleClosePresenter = useCallback((): void => {
+    audienceWindowOperationGateRef.current.invalidate();
+    swapOperationGateRef.current.invalidate();
     void persistPresenterPreferences().catch(() => undefined);
-    if (audienceWindowState.open) {
-      void closeAudienceWindow?.().catch(() => undefined);
+    if (audienceWindowState.open && closeAudienceWindow) {
+      void closeAudienceWindow().catch(() => undefined);
     }
     setAudienceWindowState({ open: false });
     onExit();
   }, [audienceWindowState.open, closeAudienceWindow, onExit, persistPresenterPreferences]);
 
   useEffect(() => () => {
-    void closeAudienceWindow?.().catch(() => undefined);
+    if (closeAudienceWindow) {
+      void closeAudienceWindow().catch(() => undefined);
+    }
   }, [closeAudienceWindow]);
 
   useEffect(() => {
@@ -970,14 +996,22 @@ function PresenterMode({
       return;
     }
 
+    const operationId = audienceWindowOperationGateRef.current.begin();
     updateAudienceWindow(audienceWindowRequest)
       .then((state) => {
+        if (!audienceWindowOperationGateRef.current.isCurrent(operationId)) {
+          return;
+        }
         setAudienceWindowState(state);
         setAudienceWindowError(audienceWindowStateError(state));
       })
       .catch((error: unknown) => {
+        if (!audienceWindowOperationGateRef.current.isCurrent(operationId)) {
+          return;
+        }
         setAudienceWindowError(error instanceof Error ? error.message : String(error));
       });
+    return () => audienceWindowOperationGateRef.current.invalidate();
   }, [audienceWindowRequest, audienceWindowState.open, updateAudienceWindow]);
 
   useEffect(() => {
@@ -995,13 +1029,20 @@ function PresenterMode({
       return;
     }
 
+    const operationId = audienceWindowOperationGateRef.current.begin();
     openAudienceWindow(audienceWindowRequest)
       .then((state) => {
+        if (!audienceWindowOperationGateRef.current.isCurrent(operationId)) {
+          return;
+        }
         setAudienceWindowState(state);
         setAudienceWindowError(audienceWindowStateError(state));
         window.requestAnimationFrame(() => shellRef.current?.focus());
       })
       .catch((error: unknown) => {
+        if (!audienceWindowOperationGateRef.current.isCurrent(operationId)) {
+          return;
+        }
         setAudienceWindowError(error instanceof Error ? error.message : String(error));
       });
   }, [audienceWindowRequest, openAudienceWindow]);
@@ -1016,24 +1057,42 @@ function PresenterMode({
     }
 
     autoAudienceOpenAttemptedRef.current = true;
+    const operationId = audienceWindowOperationGateRef.current.begin();
     openAudienceWindow(audienceWindowRequest)
       .then((state) => {
+        if (!audienceWindowOperationGateRef.current.isCurrent(operationId)) {
+          return;
+        }
         setAudienceWindowState(state);
         setAudienceWindowError(audienceWindowStateError(state));
         window.requestAnimationFrame(() => shellRef.current?.focus());
       })
       .catch((error: unknown) => {
+        if (!audienceWindowOperationGateRef.current.isCurrent(operationId)) {
+          return;
+        }
         setAudienceWindowError(error instanceof Error ? error.message : String(error));
       });
   }, [audienceWindowRequest, audienceWindowState.open, displayResolutionReady, openAudienceWindow, presenterDisplays.length]);
 
   const handleCloseAudienceWindow = useCallback((): void => {
-    closeAudienceWindow?.()
+    if (!closeAudienceWindow) {
+      return;
+    }
+
+    const operationId = audienceWindowOperationGateRef.current.begin();
+    closeAudienceWindow()
       .then((state) => {
+        if (!audienceWindowOperationGateRef.current.isCurrent(operationId)) {
+          return;
+        }
         setAudienceWindowState(state);
         setAudienceWindowError(undefined);
       })
       .catch((error: unknown) => {
+        if (!audienceWindowOperationGateRef.current.isCurrent(operationId)) {
+          return;
+        }
         setAudienceWindowError(error instanceof Error ? error.message : String(error));
       });
   }, [closeAudienceWindow]);
@@ -1048,9 +1107,17 @@ function PresenterMode({
       return;
     }
 
+    if (swapPending) {
+      return;
+    }
+
+    const operationId = swapOperationGateRef.current.begin();
     setSwapPending(true);
     swapPresenterScreens({ selectedDisplayId })
       .then((state) => {
+        if (!swapOperationGateRef.current.isCurrent(operationId)) {
+          return;
+        }
         if (!state.ok) {
           setAudienceWindowError(state.error.message);
           return;
@@ -1063,10 +1130,17 @@ function PresenterMode({
         setDisplayError(undefined);
       })
       .catch((error: unknown) => {
+        if (!swapOperationGateRef.current.isCurrent(operationId)) {
+          return;
+        }
         setAudienceWindowError(error instanceof Error ? error.message : String(error));
       })
-      .finally(() => setSwapPending(false));
-  }, [audienceWindowState.open, selectedDisplayId, swapPresenterScreens]);
+      .finally(() => {
+        if (swapOperationGateRef.current.isCurrent(operationId)) {
+          setSwapPending(false);
+        }
+      });
+  }, [audienceWindowState.open, selectedDisplayId, swapPending, swapPresenterScreens]);
 
   const runPresenterAction = useCallback(
     (action: PresenterKeyboardAction, jumpSlideIndex?: number): void => {
@@ -1253,19 +1327,45 @@ function PresenterMode({
 
           <section className="presenter-panel presenter-jump-panel">
             <label className="field-row">
+              <span>Search slides</span>
+              <input
+                aria-label="Search slides"
+                onChange={(event) => setSlideSearchQuery(event.currentTarget.value)}
+                placeholder="Title, ID, or number"
+                type="search"
+                value={slideSearchQuery}
+              />
+            </label>
+            <label className="field-row">
               <span>Jump to slide</span>
               <select
+                disabled={presenterSlideIndices.length === 0}
                 onChange={(event) => runPresenterAction("jump", Number(event.currentTarget.value))}
-                value={view.slideIndex}
+                value={selectedPresenterSlideValue}
               >
-                {deck.slides.map((slide, index) => (
-                  <option
-                    key={slide.id}
-                    value={index}
-                  >
-                    {String(slide.slideNumber).padStart(2, "0")} {slide.title}
-                  </option>
-                ))}
+                {presenterSlideIndices.length === 0 ? (
+                  <option value="">No matching slides</option>
+                ) : (
+                  <>
+                    {selectedPresenterSlideValue === "" ? (
+                      <option disabled value="">Choose a matching slide</option>
+                    ) : null}
+                    {presenterSlideIndices.map((index) => {
+                  const slide = deck.slides[index];
+                  if (!slide) {
+                    return null;
+                  }
+                  return (
+                    <option
+                      key={slide.id}
+                      value={index}
+                    >
+                      {String(slide.slideNumber).padStart(2, "0")} {slide.title}
+                    </option>
+                  );
+                    })}
+                  </>
+                )}
               </select>
             </label>
           </section>

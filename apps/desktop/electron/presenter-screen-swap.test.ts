@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { centerPresenterWindowInWorkArea } from "./presenter-screen-swap";
+import {
+  applyPresenterScreenSwapMutation,
+  centerPresenterWindowInWorkArea
+} from "./presenter-screen-swap";
 
 describe("presenter screen swap geometry", () => {
   it("centers the main window in the target display work area", () => {
@@ -35,5 +38,60 @@ describe("presenter screen swap geometry", () => {
       { x: 0, y: 0, width: 1200, height: 800 },
       { x: 0, y: 0, width: Number.NaN, height: 1080 }
     )).toBeUndefined();
+  });
+
+  it("applies a swap mutation and restores presentation state after moving bounds", () => {
+    const calls: string[] = [];
+    const result = applyPresenterScreenSwapMutation({
+      audienceTargetBounds: { x: 1920, y: 0, width: 1920, height: 1080 },
+      mainTargetBounds: { x: 0, y: 0, width: 1920, height: 1080 },
+      mainWasFullScreen: true,
+      mainWasMaximized: false,
+      originalAudienceBounds: { x: 0, y: 0, width: 1920, height: 1080 },
+      originalMainBounds: { x: 1920, y: 0, width: 1920, height: 1080 },
+      originalMainWindowedBounds: { x: 2000, y: 40, width: 1200, height: 800 },
+      restoreMainWindowPresentation: (bounds, wasFullScreen, wasMaximized) => {
+        calls.push(`restore:${bounds.x}:${wasFullScreen}:${wasMaximized}`);
+      },
+      setAudienceBounds: (bounds) => calls.push(`audience:${bounds.x}`),
+      setMainBounds: (bounds) => calls.push(`main:${bounds.x}`)
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(calls).toEqual([
+      "restore:2000:false:false",
+      "main:0",
+      "audience:1920",
+      "restore:0:true:false"
+    ]);
+  });
+
+  it("rolls back both windows when a target move fails", () => {
+    const calls: string[] = [];
+    const result = applyPresenterScreenSwapMutation({
+      audienceTargetBounds: { x: 1920, y: 0, width: 1920, height: 1080 },
+      mainTargetBounds: { x: 0, y: 0, width: 1920, height: 1080 },
+      mainWasFullScreen: false,
+      mainWasMaximized: false,
+      originalAudienceBounds: { x: 0, y: 0, width: 1920, height: 1080 },
+      originalMainBounds: { x: 1920, y: 0, width: 1920, height: 1080 },
+      originalMainWindowedBounds: { x: 1920, y: 0, width: 1200, height: 800 },
+      restoreMainWindowPresentation: (bounds) => calls.push(`restore:${bounds.x}`),
+      setAudienceBounds: (bounds) => {
+        calls.push(`audience:${bounds.x}`);
+        if (bounds.x === 1920) {
+          throw new Error("display move failed");
+        }
+      },
+      setMainBounds: (bounds) => calls.push(`main:${bounds.x}`)
+    });
+
+    expect(result).toMatchObject({ ok: false, error: new Error("display move failed") });
+    expect(calls).toEqual([
+      "main:0",
+      "audience:1920",
+      "restore:1920",
+      "audience:0"
+    ]);
   });
 });

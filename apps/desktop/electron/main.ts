@@ -61,7 +61,10 @@ import {
   type DesktopAgentRunRequest
 } from "./agent-run-registry.js";
 import { AudienceWindowOperationGate } from "./audience-window-lifecycle.js";
-import { centerPresenterWindowInWorkArea } from "./presenter-screen-swap.js";
+import {
+  applyPresenterScreenSwapMutation,
+  centerPresenterWindowInWorkArea
+} from "./presenter-screen-swap.js";
 
 const currentDir = fileURLToPath(new URL(".", import.meta.url));
 const devServerUrl = process.env.HTMLSLIDE_DESKTOP_DEV_SERVER_URL;
@@ -754,41 +757,26 @@ async function swapPresenterScreens(requestValue: unknown): Promise<DesktopPrese
       }
     );
   }
+  const activeMainWindow = mainWindow;
+  const activeAudienceWindow = audienceWindow;
 
-  try {
-    if (mainWasFullScreen || mainWasMaximized) {
-      restoreMainWindowPresentation(mainWindow, originalMainWindowedBounds, false, false);
-    }
-    mainWindow.setBounds(mainTargetBounds);
-    audienceWindow.setBounds(audienceTargetBounds);
-    if (mainWasFullScreen || mainWasMaximized) {
-      restoreMainWindowPresentation(mainWindow, mainTargetBounds, mainWasFullScreen, mainWasMaximized);
-    }
-    audienceWindowDisplayId = mainDisplay.id;
-    return {
-      audienceDisplayId: mainDisplay.id,
-      mainDisplayId: audienceDisplay.id,
-      ok: true,
-      selectedDisplayId: mainDisplay.id
-    };
-  } catch (error: unknown) {
-    try {
-      restoreMainWindowPresentation(mainWindow, originalMainWindowedBounds, mainWasFullScreen, mainWasMaximized);
-    } catch {
-      try {
-        mainWindow.setBounds(originalMainBounds);
-      } catch {
-        // Best-effort rollback; the error below still reports the failed swap.
-      }
-    }
-    try {
-      audienceWindow.setBounds(originalAudienceBounds);
-    } catch {
-      // Best-effort rollback; the error below still reports the failed swap.
-    }
+  const mutation = applyPresenterScreenSwapMutation({
+    audienceTargetBounds,
+    mainTargetBounds,
+    mainWasFullScreen,
+    mainWasMaximized,
+    originalAudienceBounds,
+    originalMainBounds,
+    originalMainWindowedBounds,
+    restoreMainWindowPresentation: (bounds, wasFullScreen, wasMaximized) =>
+      restoreMainWindowPresentation(activeMainWindow, bounds, wasFullScreen, wasMaximized),
+    setAudienceBounds: (bounds) => activeAudienceWindow.setBounds(bounds),
+    setMainBounds: (bounds) => activeMainWindow.setBounds(bounds)
+  });
+  if (!mutation.ok) {
     return presenterScreenSwapFailure(
       "swap-failed",
-      `Screen swap failed without changing the selected display: ${error instanceof Error ? error.message : String(error)}`,
+      `Screen swap failed without changing the selected display: ${mutation.error instanceof Error ? mutation.error.message : String(mutation.error)}`,
       {
         audienceDisplayId: currentAudienceDisplayId,
         mainDisplayId: mainDisplay.id,
@@ -796,6 +784,13 @@ async function swapPresenterScreens(requestValue: unknown): Promise<DesktopPrese
       }
     );
   }
+  audienceWindowDisplayId = mainDisplay.id;
+  return {
+    audienceDisplayId: mainDisplay.id,
+    mainDisplayId: audienceDisplay.id,
+    ok: true,
+    selectedDisplayId: mainDisplay.id
+  };
 }
 
 function closeAudienceWindow() {

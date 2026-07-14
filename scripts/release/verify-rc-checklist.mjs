@@ -8,6 +8,21 @@ import { validateByokAcceptanceEvidence } from "./verify-byok-acceptance.mjs";
 
 const maxChecklistBytes = 2 * 1024 * 1024;
 const expectedManualItems = 13;
+const expectedManualTitles = [
+  "Clean macOS User Account",
+  "Install DMG",
+  "First Launch Setup",
+  "Create Deck With Mock Or Local Provider",
+  "Create Deck With BYOK Provider If Key Available",
+  "Connect Fake External Agents",
+  "Validate Real Claude/Codex Compatibility And Gemini Boundary",
+  "Export PDF And Deckpkg",
+  "Present On External Monitor",
+  "Reopen Project",
+  "Revert An Agent Run",
+  "Uninstall CLI",
+  "Delete App And Check System Files"
+];
 const allowedManualStatuses = new Set(["pass", "fail", "n/a"]);
 const requiredAutomatedGates = ["pnpm test:coverage", "pnpm test:visual:browser"];
 
@@ -125,6 +140,9 @@ export async function verifyChecklist(markdown, metadata = {}) {
     if (number !== index + 1) {
       throw new Error(`Manual acceptance items must be numbered sequentially; found ${number}.`);
     }
+    if (heading[2].trim() !== expectedManualTitles[index]) {
+      throw new Error(`Manual item ${number} has an unexpected title: ${heading[2].trim()}.`);
+    }
 
     const status = fieldValue(section, "Status");
     const normalizedStatus = status.toLowerCase();
@@ -136,6 +154,10 @@ export async function verifyChecklist(markdown, metadata = {}) {
     const notes = fieldValue(section, "Notes");
     if (normalizedStatus === "pass" && isEmptyEvidence(evidence)) {
       throw new Error(`Manual item ${number} is Pass but has no Evidence.`);
+    }
+    const uncheckedSteps = section.match(/^- \[ \] /gmu) ?? [];
+    if (normalizedStatus === "pass" && uncheckedSteps.length > 0) {
+      throw new Error(`Manual item ${number} is Pass but has ${uncheckedSteps.length} unchecked acceptance step(s).`);
     }
     if (normalizedStatus === "fail" && isEmptyEvidence(notes)) {
       throw new Error(`Manual item ${number} is Fail but has no Notes explanation.`);

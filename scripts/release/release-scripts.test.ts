@@ -1093,6 +1093,16 @@ describe("release evidence scripts", () => {
       /Pass but has no Evidence/
     ],
     [
+      "Pass with an unchecked manual step",
+      (text: string) => text.replace("- [x] Start from a clean macOS user account", "- [ ] Start from a clean macOS user account"),
+      /Pass but has 1 unchecked acceptance step/
+    ],
+    [
+      "unexpected manual title",
+      (text: string) => text.replace("### 1. Clean macOS User Account", "### 1. Different acceptance item"),
+      /has an unexpected title/
+    ],
+    [
       "Fail without explanation",
       (text: string) => text.replace("- Status: Pass", "- Status: Fail").replace("- Notes: Manual acceptance record.", "- Notes:"),
       /Fail but has no Notes explanation/
@@ -1447,6 +1457,7 @@ function completeChecklist(metadata = {}) {
     .replace(/^- \[ \] /gmu, "- [x] ");
   const manual = rendered
     .slice(manualStart, resultStart)
+    .replace(/^- \[ \] /gmu, "- [x] ")
     .replace(/^- Status: TODO$/gmu, "- Status: Pass")
     .replace(/^- Evidence:\s*$/gmu, "- Evidence: https://example.test/evidence")
     .replace(/^- Notes:\s*$/gmu, "- Notes: Manual acceptance record.");

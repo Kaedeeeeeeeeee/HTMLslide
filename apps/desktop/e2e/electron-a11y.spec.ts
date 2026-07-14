@@ -265,7 +265,8 @@ test.describe("HTMLslide desktop accessibility smoke", () => {
     await expect(choicePanel).toBeHidden({ timeout: 30_000 });
     await expect(page.getByText("AI generation is disabled in No AI mode.")).toBeHidden();
     await expect(page.getByRole("button", { name: "Run", exact: true })).toBeEnabled();
-    await expect(page.getByText("Mock agent completed check and export")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("generate: Mock generation complete")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(/check: Check passed/)).toBeVisible({ timeout: 30_000 });
 
     await expectNoFrameworkOverlay(page);
     expect(browserErrors).toEqual([]);

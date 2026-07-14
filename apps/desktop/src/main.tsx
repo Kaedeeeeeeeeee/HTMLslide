@@ -2342,6 +2342,7 @@ function App(): React.ReactNode {
       generationEnabled={aiEngineSettings.mode !== "no-ai"}
       agentRunId={agentRunSnapshot?.runId}
       agentRunStatus={agentRunSnapshot?.status}
+      agentRunUsage={agentRunSnapshot?.result?.summary.usage}
       commandValue={commandValue}
       diffReview={diffReview}
       inspectorTab={inspectorTab}

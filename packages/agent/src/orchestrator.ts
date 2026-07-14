@@ -30,6 +30,7 @@ import type {
   JsonObject,
   ModelProvider,
   NormalizedBrief,
+  TokenUsage,
   VisualDirection,
   VisualDirectionSet
 } from "./types.js";
@@ -160,8 +161,26 @@ const issuesFoundForOutput = (output: unknown): number | undefined => {
 const cloneOutputs = (outputs: AgentRunOutputs): AgentRunOutputs => ({
   ...outputs,
   checks: [...outputs.checks],
-  repairs: [...outputs.repairs]
+  repairs: [...outputs.repairs],
+  ...(outputs.usage ? { usage: { ...outputs.usage } } : {})
 });
+
+const addTokenUsage = (current: TokenUsage | undefined, next: TokenUsage | undefined): TokenUsage | undefined => {
+  if (!current && !next) {
+    return undefined;
+  }
+
+  const total: TokenUsage = {};
+  for (const key of ["inputTokens", "outputTokens", "totalTokens"] as const) {
+    const currentValue = current?.[key];
+    const nextValue = next?.[key];
+    if (typeof currentValue === "number" || typeof nextValue === "number") {
+      total[key] = (typeof currentValue === "number" ? currentValue : 0) +
+        (typeof nextValue === "number" ? nextValue : 0);
+    }
+  }
+  return total;
+};
 
 const withTargetSlideCount = <TInput extends Record<string, unknown>>(
   input: TInput,
@@ -539,6 +558,7 @@ export class AgentRunController {
         signal: this.#abortController.signal
       });
       this.#throwIfCancelled(stage);
+      this.#snapshot.outputs.usage = addTokenUsage(this.#snapshot.outputs.usage, response.usage);
       const output = response.output as TOutput;
       validateOutput?.(output);
       this.#emit("stage-completed", stage, "succeeded", response.content, {

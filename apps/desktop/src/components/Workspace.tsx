@@ -103,8 +103,10 @@ import type {
   DesktopPresenterPreferences,
   DesktopPresenterScreenSwapRequest,
   DesktopPresenterScreenSwapResult,
-  DesktopSlidePreviewDocument
+  DesktopSlidePreviewDocument,
+  DesktopTokenUsage
 } from "../desktop-api";
+import { formatAgentTokenUsage } from "../agent-usage";
 import { getDesktopApi } from "../desktop-api";
 
 interface WorkspaceProps {
@@ -117,6 +119,7 @@ interface WorkspaceProps {
   generationEnabled: boolean;
   agentRunId?: string;
   agentRunStatus?: DesktopAgentRunStatus;
+  agentRunUsage?: DesktopTokenUsage;
   commandValue: string;
   inspectorTab: InspectorTab;
   project: ProjectSummary;
@@ -314,6 +317,7 @@ export function Workspace({
   generationEnabled,
   agentRunId,
   agentRunStatus,
+  agentRunUsage,
   agentRunEvents,
   agentRunLogs,
   commandValue,
@@ -673,6 +677,7 @@ export function Workspace({
         generationEnabled={generationEnabled}
         runId={agentRunId}
         runStatus={agentRunStatus}
+        usage={agentRunUsage}
         pendingVisualDirections={pendingVisualDirections}
         running={running}
         statuses={commandActionStatuses}
@@ -2466,6 +2471,7 @@ interface AgentRunConsoleProps {
   generationEnabled: boolean;
   runId?: string;
   runStatus?: DesktopAgentRunStatus;
+  usage?: DesktopTokenUsage;
   stages: ReturnType<typeof buildRuntimeStages>;
   statuses: CommandActionStatuses;
   pendingVisualDirections: readonly VisualDirection[];
@@ -2500,6 +2506,7 @@ function AgentRunConsole({
   generationEnabled,
   runId,
   runStatus,
+  usage,
   running,
   statuses,
   stages,
@@ -2693,22 +2700,34 @@ function AgentRunConsole({
             onClick={onCopyRepairPrompt}
           />
         </div>
-        <div
-          aria-atomic="true"
-          aria-label="Agent command statuses"
-          aria-live="polite"
-          className="command-bar__status"
-          role="status"
-        >
-          {(["generate", "check", "repair", "export", "review"] as const).map((action) => (
-            <span
-              className={`command-status is-${statuses[action].kind}`}
-              key={action}
+        <div className="command-bar__status-row">
+          <div
+            aria-atomic="true"
+            aria-label="Agent command statuses"
+            aria-live="polite"
+            className="command-bar__status"
+            role="status"
+          >
+            {(["generate", "check", "repair", "export", "review"] as const).map((action) => (
+              <span
+                className={`command-status is-${statuses[action].kind}`}
+                key={action}
+              >
+                <strong>{action}</strong>
+                <span>{statuses[action].message}</span>
+              </span>
+            ))}
+          </div>
+          {usage ? (
+            <div
+              aria-label={`Agent token usage: ${formatAgentTokenUsage(usage)}`}
+              className="agent-usage"
+              role="status"
             >
-              <strong>{action}</strong>
-              <span>{statuses[action].message}</span>
-            </span>
-          ))}
+              <span>Usage</span>
+              <strong>{formatAgentTokenUsage(usage)}</strong>
+            </div>
+          ) : null}
         </div>
         <form onSubmit={handleSubmit}>
           <MessageSquareText />

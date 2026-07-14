@@ -377,6 +377,7 @@ export type AgentRunOutputs = {
   repairs: AgentRepairResult[];
   export?: AgentExportResult;
   review?: AgentReviewResult;
+  usage?: TokenUsage;
   speakerNotesMode?: SpeakerNotesMode;
 };
 

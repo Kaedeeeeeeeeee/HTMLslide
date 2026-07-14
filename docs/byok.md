@@ -58,6 +58,8 @@ The planned run order is fixed:
 
 The API key remains outside the project: the CLI receives an environment variable name, and the desktop credential path remains environment/Keychain-backed. Keys and raw provider responses are never written to the evidence directory. The JSON result and evidence may contain sanitized provider/model metadata, run identifiers, artifact fingerprints, and caller-declared candidate labels, but not key values.
 
+Desktop BYOK run reports also include optional numeric token usage from the provider response (`inputTokens`, `outputTokens`, and `totalTokens`). The run console displays the same counts when available. These values provide usage transparency only; they are not a local billing or cost estimate.
+
 This command is required evidence for the manual real-provider Alpha/RC row. It is not a fake-provider test, and a successful run does not by itself prove Claude Code or Codex compatibility, physical dual-screen presenter support, visual quality, or release signing/notarization.
 
 ## Provider Flow

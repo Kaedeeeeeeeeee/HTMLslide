@@ -115,6 +115,36 @@ describe("agent orchestrator", () => {
     expect(requests.find((request) => request.stage === "export")?.prompt).not.toContain("exactly 8 slide(s)");
   });
 
+  it("aggregates provider token usage across every completed model stage", async () => {
+    const baseProvider = createMockProvider({
+      checkResults: [createMockPassedCheck()]
+    });
+    const provider = {
+      ...baseProvider,
+      validateCredentials: () => baseProvider.validateCredentials(),
+      complete: async (request: ModelRequest): Promise<ModelResponse> => ({
+        ...(await baseProvider.complete(request)),
+        usage: {
+          inputTokens: 11,
+          outputTokens: 5,
+          totalTokens: 16
+        }
+      })
+    };
+
+    const result = await runMockAgent({
+      provider,
+      runId: "run-token-usage"
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.outputs.usage).toEqual({
+      inputTokens: 77,
+      outputTokens: 35,
+      totalTokens: 112
+    });
+  });
+
   it("rejects an explicit outline count mismatch before visual and build stages", async () => {
     const baseProvider = createMockProvider({
       checkResults: [createMockPassedCheck()]

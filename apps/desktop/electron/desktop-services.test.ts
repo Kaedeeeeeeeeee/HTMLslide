@@ -2246,12 +2246,19 @@ describe("desktop services", () => {
       runId: "run-byok-openai",
       status: "succeeded"
     });
+    expect(result.summary.usage).toEqual(result.agent?.outputs.usage);
+    expect(result.summary.usage).toMatchObject({
+      inputTokens: expect.any(Number),
+      outputTokens: expect.any(Number),
+      totalTokens: expect.any(Number)
+    });
     expect(report.outputs.outline?.slides.map((slide) => slide.id)).toEqual(["001-title"]);
     expect(report.outputs.visualDirection?.directions.map((direction) => direction.id)).toEqual(["direction-provider"]);
     expect(report.outputs.build).toMatchObject({
       sourceWriteCount: 3,
       sourceWritePaths: ["deck.json", "slides/001-title.html", "notes/001-title.md"]
     });
+    expect(report.outputs.usage).toEqual(result.agent?.outputs.usage);
     expect(report.applied).toMatchObject({
       filesChanged: ["deck.json", "slides/001-title.html", "notes/001-title.md"],
       source: "provider-source-writes",

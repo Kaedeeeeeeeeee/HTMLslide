@@ -1202,6 +1202,7 @@ test.describe("HTMLslide desktop smoke", () => {
       await expect(page.getByText("generate: HTMLslide Agent complete")).toBeVisible();
       await expect(page.getByText(/check: Check passed/)).toBeVisible();
       await expect(page.getByText(/export: [1-9][0-9]* artifacts/)).toBeVisible();
+      await expect(page.locator(".agent-usage")).toContainText("154 total / 91 in / 63 out");
       await expect(page.getByRole("heading", { name: "Review changes" })).toBeVisible();
 
       const stages = fakeProvider.calls.map((call) => call.stage).filter(Boolean);

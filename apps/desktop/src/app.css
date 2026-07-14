@@ -2527,6 +2527,40 @@ svg {
   min-width: 0;
 }
 
+.command-bar__status-row {
+  align-items: stretch;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.command-bar__status-row .command-bar__status {
+  flex: 1 1 auto;
+}
+
+.agent-usage {
+  align-content: center;
+  background: var(--hs-surface-muted);
+  border: 1px solid var(--hs-line);
+  border-radius: var(--hs-radius-sm);
+  display: grid;
+  gap: 2px;
+  min-width: 118px;
+  padding: 5px 8px;
+}
+
+.agent-usage span {
+  color: var(--hs-text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.agent-usage strong {
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .command-status {
   background: var(--hs-surface-muted);
   border: 1px solid var(--hs-line);
@@ -3424,6 +3458,19 @@ svg {
     flex-wrap: wrap;
   }
 
+  .command-bar__status-row {
+    flex-wrap: wrap;
+  }
+
+  .command-bar__status-row .command-bar__status {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .agent-usage {
+    flex: 1 1 118px;
+  }
+
   .command-bar__status {
     grid-template-columns: repeat(5, minmax(0, 1fr));
   }
@@ -3694,6 +3741,19 @@ svg {
 
   .command-bar__status {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .command-bar__status-row {
+    flex-wrap: wrap;
+  }
+
+  .command-bar__status-row .command-bar__status {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .agent-usage {
+    flex: 1 1 118px;
   }
 
   .command-bar__controls {

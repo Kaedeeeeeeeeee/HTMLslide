@@ -267,6 +267,12 @@ export type DesktopMockAgentStageSummary = {
   updatedAt?: string;
 };
 
+export type DesktopTokenUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+};
+
 export type DesktopMockAgentRunSummary = {
   runId: string;
   status: "succeeded" | "failed" | "cancelled";
@@ -278,6 +284,7 @@ export type DesktopMockAgentRunSummary = {
   checkWarnings?: number;
   exportStatus?: string;
   exportArtifacts: string[];
+  usage?: DesktopTokenUsage;
 };
 
 export type DesktopMockAgentRunResult = {
@@ -358,6 +365,7 @@ export type DesktopExternalAgentRunSummary = {
   exportStatus?: string;
   exportArtifacts: string[];
   filesChanged: string[];
+  usage?: DesktopTokenUsage;
 };
 
 export type DesktopExternalAgentRunResult = {

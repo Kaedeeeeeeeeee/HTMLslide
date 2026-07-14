@@ -45,6 +45,7 @@ import {
   type JsonObject,
   type JsonValue,
   type ModelProvider,
+  type TokenUsage,
   type VisualDirection
 } from "@htmlslide/agent";
 import { buildSlidePreviewDocument } from "@htmlslide/compiler";
@@ -383,6 +384,7 @@ export type DesktopMockAgentRunSummary = {
   checkWarnings?: number;
   exportStatus?: string;
   exportArtifacts: string[];
+  usage?: TokenUsage;
 };
 
 export type DesktopAgentRunReportCliResult = {
@@ -411,6 +413,7 @@ export type DesktopAgentRunReport = {
   stages: DesktopMockAgentStageSummary[];
   outputs: {
     speakerNotesMode?: SpeakerNotesMode;
+    usage?: TokenUsage;
     brief?: AgentRunResult["outputs"]["brief"];
     outline?: AgentRunResult["outputs"]["outline"];
     visualDirection?: AgentRunResult["outputs"]["visualDirection"];
@@ -5769,6 +5772,10 @@ function sanitizeAgentOutputsForReport(outputs: AgentRunResult["outputs"]): Desk
     reportOutputs.speakerNotesMode = outputs.speakerNotesMode;
   }
 
+  if (outputs.usage) {
+    reportOutputs.usage = { ...outputs.usage };
+  }
+
   if (outputs.brief) {
     reportOutputs.brief = outputs.brief;
   }
@@ -6215,7 +6222,8 @@ function summarizeDesktopMockAgentRun(
     checkErrors: numberFromRecord(checkSummary, "errors"),
     checkWarnings: numberFromRecord(checkSummary, "warnings"),
     exportStatus: typeof exportJson?.status === "string" ? exportJson.status : undefined,
-    exportArtifacts: collectExportArtifacts(exportJson)
+    exportArtifacts: collectExportArtifacts(exportJson),
+    ...(agent.outputs.usage ? { usage: { ...agent.outputs.usage } } : {})
   };
 }
 

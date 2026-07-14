@@ -157,6 +157,8 @@ Provider `build` and `repair` outputs may include `sourceWrites` so desktop and 
 
 Desktop Local Mock and BYOK runs write a sanitized review artifact under `.htmlslide/reports/agent-run-<runId>.json` and refresh `.htmlslide/reports/latest-agent-run.json` with the same payload. The report records the run id, provider id, explicit target slide count, stage summaries, normalized brief, generated outline, visual-direction options, selected visual direction, build/check/repair/export/review summaries, applied file paths, checkpoint summary, real desktop CLI check/export status, and the completed export manifest's source digest, artifact count, and full manifest SHA-256. BYOK reports include provider/model metadata; compatible-provider reports include a SHA-256 endpoint binding rather than the raw base URL.
 
+When a provider returns token usage, the orchestrator aggregates numeric `inputTokens`, `outputTokens`, and `totalTokens` across completed model stages. Desktop summaries, the Agent Run Console, and sanitized reports expose those counts when available. HTMLslide does not infer a price from token counts; billing remains owned by the configured provider account.
+
 Reports are intentionally not raw `AgentRunResult` dumps. They must not include provider API keys, credential values, raw provider prompts, CLI stdout/stderr, checkpoint text diffs, raw compatible endpoints, or `sourceWrites[].content`. Provider-backed source writes are represented by path lists and counts only. Report and checkpoint writes reject symlinked project runtime directories and use same-directory atomic replacement.
 
 ## Provider Adapters

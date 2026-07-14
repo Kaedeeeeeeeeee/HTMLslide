@@ -244,12 +244,16 @@ describe("macOS alpha packaging contract", () => {
     expect(mainSource).toContain('screen.on("display-removed", notifyPresenterDisplaysChanged)');
     expect(mainSource).toContain('screen.on("display-metrics-changed", notifyPresenterDisplaysChanged)');
     expect(mainSource).toContain("reconcileAudienceWindowDisplay");
+    expect(mainSource).toContain("AudienceWindowOperationGate");
+    expect(mainSource).toContain('reason: "load-failed"');
+    expect(mainSource).toContain("closeAudienceWindow();");
     expect(mainSource).toContain('htmlslide:audience-window-state-changed');
     expect(preloadSource).toContain('ipcRenderer.on("htmlslide:presenter-displays-changed", listener)');
     expect(preloadSource).toContain("onPresenterDisplaysChanged");
     expect(preloadSource).toContain('ipcRenderer.on("htmlslide:audience-window-state-changed", listener)');
     expect(desktopApiSource).toContain("onPresenterDisplaysChanged(handler: () => void): () => void;");
     expect(desktopApiSource).toContain("onAudienceWindowStateChanged(handler: (state: DesktopAudienceWindowState) => void): () => void;");
+    expect(desktopApiSource).toContain('"load-failed"');
   });
 
   it("keeps presenter screen swapping validated, stateful, and window-safe", async () => {

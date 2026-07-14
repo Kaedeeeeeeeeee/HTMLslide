@@ -1576,9 +1576,15 @@ function formatDisplayBounds(bounds: DesktopPresenterDisplay["bounds"]): string 
 }
 
 function audienceWindowStateError(state: DesktopAudienceWindowState): string | undefined {
-  return state.reason === "target-disconnected"
-    ? "Selected display is disconnected. Audience output is paused until it reconnects."
-    : undefined;
+  if (state.reason === "target-disconnected") {
+    return "Selected display is disconnected. Audience output is paused until it reconnects.";
+  }
+  if (state.reason === "load-failed") {
+    return state.error
+      ? `Audience output could not be restored: ${state.error}`
+      : "Audience output could not be restored. Try reopening the Audience window.";
+  }
+  return undefined;
 }
 
 function isPresenterTextInputTarget(target: EventTarget | null): boolean {

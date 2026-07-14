@@ -509,7 +509,8 @@ export type DesktopAudienceWindowRequest = {
 export type DesktopAudienceWindowState = {
   open: boolean;
   displayId?: number;
-  reason?: "target-disconnected" | "target-reconnected" | "closed";
+  reason?: "target-disconnected" | "target-reconnected" | "load-failed" | "closed";
+  error?: string;
 };
 
 export type DesktopPresenterScreenSwapRequest = {

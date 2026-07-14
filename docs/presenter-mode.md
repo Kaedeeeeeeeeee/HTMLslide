@@ -16,6 +16,9 @@ When more than one display is detected, Presenter opens Audience once on the pre
 one display, it stays in rehearsal mode. The `Open audience` control remains available to retry after a failed automatic
 open or to reopen a window that was closed manually.
 
+Audience navigation and display-reconnect loads use latest-wins lifecycle handling. Closing Presenter closes its Audience
+window and cancels stale in-flight loads; a reconnect load failure is surfaced as a retryable Presenter error.
+
 Use the Audience window for a dry run before relying on a projector. If the window does not open or stops syncing, fall back to single-screen rehearsal and include presenter diagnostics in the bug report.
 
 ## Dual-screen

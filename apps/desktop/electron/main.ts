@@ -60,6 +60,7 @@ import {
   DesktopAgentRunRegistry,
   type DesktopAgentRunRequest
 } from "./agent-run-registry.js";
+import { AudienceWindowOperationGate } from "./audience-window-lifecycle.js";
 import { centerPresenterWindowInWorkArea } from "./presenter-screen-swap.js";
 
 const currentDir = fileURLToPath(new URL(".", import.meta.url));
@@ -256,7 +257,8 @@ type DesktopAudienceWindowRequest = {
 type DesktopAudienceWindowState = {
   open: boolean;
   displayId?: number;
-  reason?: "target-disconnected" | "target-reconnected" | "closed";
+  reason?: "target-disconnected" | "target-reconnected" | "load-failed" | "closed";
+  error?: string;
 };
 
 type DesktopPresenterScreenSwapRequest = {
@@ -292,6 +294,7 @@ type DesktopPresenterScreenSwapResult =
 let audienceWindow: BrowserWindow | undefined;
 let audienceWindowDisplayId: number | undefined;
 let audienceWindowPayload: DesktopAudienceSlidePayload | undefined;
+const audienceWindowOperationGate = new AudienceWindowOperationGate();
 
 const invokeCli = async (args: string[]) => {
   if (!cliRuntime) {
@@ -550,6 +553,7 @@ function createAudienceWindow(displayId: number | undefined): BrowserWindow {
 
   browserWindow.on("closed", () => {
     if (audienceWindow === browserWindow) {
+      audienceWindowOperationGate.invalidate();
       const closedDisplayId = audienceWindowDisplayId;
       audienceWindow = undefined;
       audienceWindowDisplayId = undefined;
@@ -563,6 +567,7 @@ function createAudienceWindow(displayId: number | undefined): BrowserWindow {
 
 async function openAudienceWindow(requestValue: unknown) {
   const request = normalizeAudienceWindowRequest(requestValue);
+  const operationId = audienceWindowOperationGate.begin();
   const bounds = audienceWindowBounds(request.displayId);
   if (!bounds) {
     return {
@@ -577,21 +582,27 @@ async function openAudienceWindow(requestValue: unknown) {
 
   if (!audienceWindow || audienceWindow.isDestroyed()) {
     audienceWindow = createAudienceWindow(request.displayId);
-  } else {
-    audienceWindow.setBounds(bounds);
   }
+  const browserWindow = audienceWindow;
+  browserWindow.setBounds(bounds);
 
-  await audienceWindow.loadURL(audienceSlideDataUrl(request.payload));
-  audienceWindow.showInactive();
+  await browserWindow.loadURL(audienceSlideDataUrl(request.payload));
+  if (
+    !audienceWindowOperationGate.isCurrent(operationId) ||
+    audienceWindow !== browserWindow ||
+    browserWindow.isDestroyed()
+  ) {
+    return currentAudienceWindowState();
+  }
+  browserWindow.showInactive();
   return {
     open: true,
-    displayId: audienceWindowDisplayId
+    displayId: request.displayId
   };
 }
 
 async function updateAudienceWindow(requestValue: unknown) {
   const request = normalizeAudienceWindowRequest(requestValue);
-  audienceWindowPayload = request.payload;
   if (!audienceWindow || audienceWindow.isDestroyed()) {
     return {
       open: false,
@@ -599,10 +610,15 @@ async function updateAudienceWindow(requestValue: unknown) {
     };
   }
 
+  const operationId = audienceWindowOperationGate.begin();
+  const browserWindow = audienceWindow;
+  audienceWindowPayload = request.payload;
   audienceWindowDisplayId = request.displayId;
   const bounds = audienceWindowBounds(request.displayId);
   if (!bounds) {
-    audienceWindow.hide();
+    if (!browserWindow.isDestroyed()) {
+      browserWindow.hide();
+    }
     return {
       open: false,
       displayId: request.displayId,
@@ -610,12 +626,19 @@ async function updateAudienceWindow(requestValue: unknown) {
     };
   }
 
-  audienceWindow.setBounds(bounds);
-  await audienceWindow.loadURL(audienceSlideDataUrl(request.payload));
-  audienceWindow.showInactive();
+  browserWindow.setBounds(bounds);
+  await browserWindow.loadURL(audienceSlideDataUrl(request.payload));
+  if (
+    !audienceWindowOperationGate.isCurrent(operationId) ||
+    audienceWindow !== browserWindow ||
+    browserWindow.isDestroyed()
+  ) {
+    return currentAudienceWindowState();
+  }
+  browserWindow.showInactive();
   return {
     open: true,
-    displayId: audienceWindowDisplayId
+    displayId: request.displayId
   };
 }
 
@@ -776,6 +799,7 @@ async function swapPresenterScreens(requestValue: unknown): Promise<DesktopPrese
 }
 
 function closeAudienceWindow() {
+  audienceWindowOperationGate.invalidate();
   if (audienceWindow && !audienceWindow.isDestroyed()) {
     audienceWindow.close();
   }
@@ -787,39 +811,91 @@ function closeAudienceWindow() {
   };
 }
 
+function currentAudienceWindowState(): DesktopAudienceWindowState {
+  if (!audienceWindow || audienceWindow.isDestroyed()) {
+    return { open: false };
+  }
+
+  return {
+    displayId: audienceWindowDisplayId,
+    open: true
+  };
+}
+
 async function reconcileAudienceWindowDisplay(): Promise<void> {
-  if (!audienceWindow || audienceWindow.isDestroyed() || audienceWindowDisplayId === undefined) {
+  const browserWindow = audienceWindow;
+  const displayId = audienceWindowDisplayId;
+  const payload = audienceWindowPayload;
+  if (!browserWindow || browserWindow.isDestroyed() || displayId === undefined) {
     return;
   }
 
-  const displayStillConnected = screen.getAllDisplays().some((display) => display.id === audienceWindowDisplayId);
+  const operationId = audienceWindowOperationGate.begin();
+  const displayStillConnected = screen.getAllDisplays().some((display) => display.id === displayId);
   if (displayStillConnected) {
-    const bounds = audienceWindowBounds(audienceWindowDisplayId);
+    const bounds = audienceWindowBounds(displayId);
     if (bounds) {
-      audienceWindow.setBounds(bounds);
+      browserWindow.setBounds(bounds);
     }
-    if (audienceWindowPayload && audienceWindow.isVisible() === false) {
-      await audienceWindow.loadURL(audienceSlideDataUrl(audienceWindowPayload));
-      audienceWindow.showInactive();
+    if (payload && browserWindow.isVisible() === false) {
+      try {
+        await browserWindow.loadURL(audienceSlideDataUrl(payload));
+      } catch (error: unknown) {
+        if (
+          audienceWindowOperationGate.isCurrent(operationId) &&
+          audienceWindow === browserWindow &&
+          !browserWindow.isDestroyed()
+        ) {
+          browserWindow.hide();
+          sendAudienceWindowState({
+            displayId,
+            error: error instanceof Error ? error.message : String(error),
+            open: false,
+            reason: "load-failed"
+          });
+        }
+        return;
+      }
+      if (
+        !audienceWindowOperationGate.isCurrent(operationId) ||
+        audienceWindow !== browserWindow ||
+        browserWindow.isDestroyed()
+      ) {
+        return;
+      }
+      browserWindow.showInactive();
       sendAudienceWindowState({
         open: true,
-        displayId: audienceWindowDisplayId,
+        displayId,
         reason: "target-reconnected"
       });
     }
     return;
   }
 
-  audienceWindow.hide();
+  if (!browserWindow.isDestroyed()) {
+    browserWindow.hide();
+  }
   sendAudienceWindowState({
     open: false,
-    displayId: audienceWindowDisplayId,
+    displayId,
     reason: "target-disconnected"
   });
 }
 
 function notifyPresenterDisplaysChanged(): void {
-  void reconcileAudienceWindowDisplay();
+  void reconcileAudienceWindowDisplay().catch((error: unknown) => {
+    const displayId = audienceWindowDisplayId;
+    if (audienceWindow && !audienceWindow.isDestroyed()) {
+      audienceWindow.hide();
+    }
+    sendAudienceWindowState({
+      displayId,
+      error: error instanceof Error ? error.message : String(error),
+      open: false,
+      reason: "load-failed"
+    });
+  });
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("htmlslide:presenter-displays-changed");
   }
@@ -1543,10 +1619,14 @@ function createWindow(): void {
   mainWindow = createdWindow;
 
   createdWindow.on("closed", () => {
+    const wasMainWindow = mainWindow === createdWindow;
     if (mainWindow === createdWindow) {
       mainWindow = undefined;
     }
     rendererReadyForOpenRequests = false;
+    if (wasMainWindow) {
+      closeAudienceWindow();
+    }
   });
   createdWindow.webContents.on("did-start-loading", () => {
     rendererReadyForOpenRequests = false;

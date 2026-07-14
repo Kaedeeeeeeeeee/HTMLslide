@@ -11,5 +11,5 @@
     "rootDir": ".",
     "types": ["node"]
   },
-  "include": ["main.ts", "preload.cts", "desktop-services.ts", "agent-run-registry.ts"]
+  "include": ["main.ts", "preload.cts", "desktop-services.ts", "agent-run-registry.ts", "audience-window-lifecycle.ts"]
 }

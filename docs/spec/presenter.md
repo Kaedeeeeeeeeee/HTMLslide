@@ -105,6 +105,9 @@ the slide fragment full bleed. Package-backed sessions extract per-slide HTML fr
 document in sandboxed frames for Presenter and Audience views, and keep the package's validated PNG thumbnails as the
 fallback when package HTML is unavailable. Package-local image and font assets are copied into `.deckpkg` and inlined
 into the sandboxed Presenter/Audience document when the package reader prepares slide previews.
+Audience window updates are latest-wins across asynchronous navigation, display reconnect, and close operations. A stale
+window load cannot show or mutate a newer Audience window, and closing the main window also closes its Audience window.
+If a reconnect load fails, Presenter keeps the output paused and surfaces the failure so the user can retry.
 
 ## Keyboard Controls
 
@@ -132,6 +135,7 @@ Dual-screen presenter mode is a desktop integration layer over the same package/
 - audience view renders a no-chrome BrowserWindow on the selected display and follows the presenter session.
 - presenter console renders current/next previews, notes, timer, progress, display selection, and controls.
 - more than one detected display triggers one automatic Audience open on the preferred non-primary display; one-display sessions remain rehearsal-only until the user opens Audience.
+- Audience updates are latest-wins across asynchronous window loads; closing Presenter invalidates in-flight loads, and reconnect load failures are reported as a recoverable Audience state.
 - automated Electron smoke coverage verifies window creation, slide sync, and black/white screen sync without requiring a physical second monitor.
 - when Audience is open on a different display, `Swap screens` asks the Electron main process to exchange the main and Audience display roles. The request includes the renderer's selected display ID; a successful result returns the new selected display, Audience display, and main display IDs so the renderer can update without guessing.
 - unsupported swap states fail before window mutation with a stable error code for a missing main window, missing Audience window, stale Audience selection, same-display placement, or a disconnected target. If a window move throws after mutation starts, the main process performs a best-effort bounds/state rollback and reports `swap-failed`.

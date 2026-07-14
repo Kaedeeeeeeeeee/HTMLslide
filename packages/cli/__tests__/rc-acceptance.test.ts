@@ -133,6 +133,7 @@ describe("runRcByokAcceptance", { timeout: 120_000 }, () => {
       const result = await runRcByokAcceptance({
         apiKeyEnv: "FAKE_API_KEY",
         artifactUrl: "htmlslide-rc-fixture",
+        artifactSha256: "a".repeat(64),
         commit: "abc1234",
         env: { FAKE_API_KEY: "sk-test-secret" },
         fetch: provider.fetch,
@@ -159,8 +160,9 @@ describe("runRcByokAcceptance", { timeout: 120_000 }, () => {
       expect(evidenceText).not.toContain("sk-test-secret");
       expect(evidenceText).not.toContain(fixture.root);
       expect(providerValidationText).not.toContain("sk-test-secret");
-      const evidence = JSON.parse(evidenceText) as { artifacts: Array<{ kind: string; path: string }> };
+      const evidence = JSON.parse(evidenceText) as { artifacts: Array<{ kind: string; path: string }>; candidate: { artifactSha256?: string } };
       expect(evidence).toMatchObject({
+        candidate: { artifactSha256: "a".repeat(64) },
         checks: {
           agentRun: "passed",
           checkpoint: "passed",
@@ -177,6 +179,26 @@ describe("runRcByokAcceptance", { timeout: 120_000 }, () => {
       const pdfPath = evidence.artifacts.find((artifact) => artifact.kind === "pdf")?.path;
       expect(pdfPath).toMatch(/^exports\/.*\.pdf$/u);
       await expect(access(path.join(fixture.projectPath, pdfPath as string))).resolves.toBeUndefined();
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an invalid candidate artifact SHA-256 before provider work", async () => {
+    const fixture = await createFixture();
+    const provider = createFakeProvider(8);
+    try {
+      await expect(runRcByokAcceptance({
+        apiKeyEnv: "FAKE_API_KEY",
+        artifactSha256: "not-a-sha256",
+        env: { FAKE_API_KEY: "sk-test-secret" },
+        fetch: provider.fetch,
+        model: "fake-model",
+        projectPath: fixture.projectPath,
+        provider: "openai",
+        task: "invalid artifact binding"
+      })).rejects.toMatchObject({ code: "RC_ARTIFACT_SHA256_INVALID" });
+      expect(provider.events).toEqual([]);
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
     }

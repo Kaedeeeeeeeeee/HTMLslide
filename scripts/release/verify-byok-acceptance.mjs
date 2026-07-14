@@ -47,7 +47,8 @@ export function parseArgs(args) {
     "report",
     "output",
     "commit",
-    "artifactUrl"
+    "artifactUrl",
+    "artifactSha256"
   ]);
 
   for (let index = 0; index < args.length; index += 1) {
@@ -193,7 +194,8 @@ export async function verifyByokAcceptance(options) {
     candidate: {
       binding: "caller-declared",
       ...(options.commit ? { claimedCommit: cleanMetadata(options.commit, "commit") } : {}),
-      ...(options.artifactUrl ? { claimedArtifactUrl: validateArtifactReference(options.artifactUrl) } : {})
+      ...(options.artifactUrl ? { claimedArtifactUrl: validateArtifactReference(options.artifactUrl) } : {}),
+      ...(options.artifactSha256 !== undefined ? { artifactSha256: validateArtifactSha256(options.artifactSha256, "BYOK evidence artifact SHA-256") } : {})
     },
     inputs: {
       providerValidationSha256: await sha256File(validationPath),
@@ -256,11 +258,17 @@ function validateCliByokAcceptanceEvidence(value, options) {
   const claimedArtifactUrl = value.candidate.artifactUrl === undefined
     ? undefined
     : validateCliArtifactReference(value.candidate.artifactUrl);
+  const claimedArtifactSha256 = value.candidate.artifactSha256 === undefined
+    ? undefined
+    : validateArtifactSha256(value.candidate.artifactSha256, "BYOK evidence artifact SHA-256");
   if (options.expectedCommit !== undefined && claimedCommit !== options.expectedCommit) {
     throw new Error("BYOK evidence claimed commit does not match the candidate commit.");
   }
   if (options.expectedArtifactUrl !== undefined && claimedArtifactUrl !== options.expectedArtifactUrl) {
     throw new Error("BYOK evidence claimed artifact does not match the checklist artifact reference.");
+  }
+  if (options.expectedArtifactSha256 !== undefined && claimedArtifactSha256 !== options.expectedArtifactSha256) {
+    throw new Error("BYOK evidence artifact SHA-256 does not match the verified candidate.");
   }
 
   const requiredChecks = [
@@ -295,7 +303,8 @@ function validateCliByokAcceptanceEvidence(value, options) {
     candidate: {
       binding: "caller-declared",
       ...(claimedCommit === undefined ? {} : { claimedCommit }),
-      ...(claimedArtifactUrl === undefined ? {} : { claimedArtifactUrl })
+      ...(claimedArtifactUrl === undefined ? {} : { claimedArtifactUrl }),
+      ...(claimedArtifactSha256 === undefined ? {} : { artifactSha256: claimedArtifactSha256 })
     }
   };
 }
@@ -326,6 +335,12 @@ function validateLegacyByokAcceptanceEvidence(value, options) {
   }
   if (options.expectedArtifactUrl !== undefined && value.candidate.claimedArtifactUrl !== options.expectedArtifactUrl) {
     throw new Error("BYOK evidence claimed artifact does not match the checklist artifact reference.");
+  }
+  const claimedArtifactSha256 = value.candidate.artifactSha256 === undefined
+    ? undefined
+    : validateArtifactSha256(value.candidate.artifactSha256, "BYOK evidence artifact SHA-256");
+  if (options.expectedArtifactSha256 !== undefined && claimedArtifactSha256 !== options.expectedArtifactSha256) {
+    throw new Error("BYOK evidence artifact SHA-256 does not match the verified candidate.");
   }
 
   const requiredChecks = [
@@ -374,6 +389,13 @@ function validateExportArtifactEvidence(artifacts) {
   if (!kinds.has("pdf") || !kinds.has("deckpkg") || !kinds.has("thumbnail")) {
     throw new Error("BYOK evidence must include PDF, deckpkg, and thumbnail artifacts.");
   }
+}
+
+function validateArtifactSha256(value, label) {
+  if (typeof value !== "string" || !sha256Pattern.test(value)) {
+    throw new Error(`${label} must be 64 lowercase hexadecimal characters.`);
+  }
+  return value;
 }
 
 function validateProviderValidation(validation) {

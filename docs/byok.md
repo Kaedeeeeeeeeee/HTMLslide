@@ -44,7 +44,7 @@ The shared CLI acceptance path is `htmlslide rc byok`:
 htmlslide rc byok --project <deck-path> --provider openai|anthropic|compatible --model <model-id> --api-key-env <ENV_NAME> --task <brief> --target-slide-count <8-12> --json
 ```
 
-The optional flags are `--base-url <url>` for a compatible provider, `--commit <commit>` and `--artifact-url <url>` for candidate binding, and `--speaker-notes <mode>` for the requested notes mode. The provider value must be one of `openai`, `anthropic`, or `compatible`, and the target slide count must be an integer from 8 through 12.
+The optional flags are `--base-url <url>` for a compatible provider, `--commit <commit>`, `--artifact-url <url>`, and `--artifact-sha256 <sha256>` for candidate binding, and `--speaker-notes <mode>` for the requested notes mode. The provider value must be one of `openai`, `anthropic`, or `compatible`, and the target slide count must be an integer from 8 through 12.
 
 The command is part of the current candidate CLI. Manual evidence must still use the exact packaged candidate under test.
 
@@ -88,6 +88,6 @@ pnpm rc:byok-evidence -- \
 
 The verifier reads only sanitized run/project artifacts. It does not read Keychain, environment values, or raw API keys. A successful evidence file proves that the named run requested and produced an 8-12 slide deck with matching outline/manifest IDs, current export source/artifact fingerprints, an existing reversible checkpoint, passing authoritative check/export, and no common secret patterns in exported text sources. Compatible providers are bound by a sanitized endpoint hash. It does not prove visual quality, provider billing behavior, or the identity of an arbitrary-format provider key.
 
-`--commit` and `--artifact-url` are recorded as candidate labels. The completed RC checklist and promotion verifier must bind those labels to the exact packaged artifact actually tested; the verifier does not download the app artifact itself, while the signed-release promotion workflow downloads and verifies the candidate bundle before publication.
+`--commit` and `--artifact-url` are recorded as candidate labels. `--artifact-sha256` records the candidate DMG fingerprint. The completed RC checklist and promotion verifier bind all supplied values to the exact packaged artifact actually tested; the verifier does not download the app artifact itself, while the signed-release promotion workflow downloads and verifies the candidate bundle before publication. Promotion rejects missing or mismatched DMG SHA-256 evidence.
 
 Automated tests use fake fetch implementations and mock providers. They can validate the `rc byok` command contract and its sanitization, but they do not satisfy the real-provider Alpha/RC gate. A real provider run against the exact candidate remains a manual release step.

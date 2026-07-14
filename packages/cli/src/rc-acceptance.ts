@@ -16,6 +16,7 @@ import {
 const RC_EVIDENCE_SCHEMA_VERSION = 1 as const;
 const ACCEPTED_SLIDE_COUNT_MIN = 8;
 const ACCEPTED_SLIDE_COUNT_MAX = 12;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 
 export type RcByokAcceptanceOptions = {
   projectPath: string;
@@ -28,6 +29,7 @@ export type RcByokAcceptanceOptions = {
   speakerNotesMode?: string;
   commit?: string;
   artifactUrl?: string;
+  artifactSha256?: string;
   env?: Record<string, string | undefined>;
   fetch?: FetchLike;
 };
@@ -62,6 +64,7 @@ export type RcByokAcceptanceResult = {
     binding: "caller-declared";
     commit?: string;
     artifactUrl?: string;
+    artifactSha256?: string;
   };
   checks: {
     providerValidation: "passed";
@@ -102,6 +105,7 @@ export async function runRcByokAcceptance(
 ): Promise<RcByokAcceptanceResult> {
   const projectRoot = await resolveProjectRoot(options.projectPath);
   const targetSlideCount = normalizeTargetSlideCount(options.targetSlideCount);
+  const artifactSha256 = normalizeArtifactSha256(options.artifactSha256);
   const env = options.env ?? process.env;
   const providerValidation = await validateAgentProviderCredentials({
     apiKeyEnv: options.apiKeyEnv,
@@ -147,6 +151,7 @@ export async function runRcByokAcceptance(
     targetSlideCount,
     commit: options.commit,
     artifactUrl: options.artifactUrl,
+    artifactSha256,
     secretValue: env[options.apiKeyEnv]
   });
   return evidence;
@@ -159,6 +164,7 @@ async function buildEvidence({
   targetSlideCount,
   commit,
   artifactUrl,
+  artifactSha256,
   secretValue
 }: {
   project: LoadedProject;
@@ -167,6 +173,7 @@ async function buildEvidence({
   targetSlideCount: number;
   commit?: string;
   artifactUrl?: string;
+  artifactSha256?: string;
   secretValue?: string;
 }): Promise<RcByokAcceptanceResult> {
   const projectRoot = project.projectPath;
@@ -287,7 +294,8 @@ async function buildEvidence({
   const candidate = {
     binding: "caller-declared" as const,
     ...(commit === undefined ? {} : { commit: normalizeCommit(commit) }),
-    ...(artifactUrl === undefined ? {} : { artifactUrl: normalizeArtifactLabel(artifactUrl) })
+    ...(artifactUrl === undefined ? {} : { artifactUrl: normalizeArtifactLabel(artifactUrl) }),
+    ...(artifactSha256 === undefined ? {} : { artifactSha256 })
   };
   const evidencePathAbsolute = path.join(evidenceDirAbsolute, "evidence.json");
   const result: RcByokAcceptanceResult = {
@@ -587,6 +595,21 @@ function normalizeArtifactLabel(value: string): string {
   }
   if (!/^[A-Za-z0-9._-]+$/u.test(normalized)) {
     throw acceptanceError("RC_ARTIFACT_LABEL_INVALID", "Local artifact labels may contain only letters, numbers, dot, underscore, and hyphen.", "Pass an HTTPS URL or a short local label.");
+  }
+  return normalized;
+}
+
+function normalizeArtifactSha256(value: string | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const normalized = value.trim();
+  if (!SHA256_PATTERN.test(normalized)) {
+    throw acceptanceError(
+      "RC_ARTIFACT_SHA256_INVALID",
+      "The caller-declared artifact SHA-256 must be 64 lowercase hexadecimal characters.",
+      "Pass the SHA-256 printed by the release bundle verifier."
+    );
   }
   return normalized;
 }

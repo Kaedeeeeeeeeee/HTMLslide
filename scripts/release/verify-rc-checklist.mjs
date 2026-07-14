@@ -235,7 +235,8 @@ async function verifyByokEvidencePath(evidencePathInput, markdown, metadata) {
   const expectedArtifactUrl = isEmptyEvidence(checklistArtifact) ? undefined : checklistArtifact;
   const summary = validateByokAcceptanceEvidence(evidence, {
     ...(expectedCommit ? { expectedCommit } : {}),
-    ...(expectedArtifactUrl ? { expectedArtifactUrl } : {})
+    ...(expectedArtifactUrl ? { expectedArtifactUrl } : {}),
+    ...(metadata.expectedArtifactSha256 ? { expectedArtifactSha256: metadata.expectedArtifactSha256 } : {})
   });
 
   return {

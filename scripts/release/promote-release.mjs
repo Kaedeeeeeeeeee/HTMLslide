@@ -66,7 +66,8 @@ export async function main(args) {
     checklistPath,
     expectedCommit,
     packageManifestPath: manifestPath,
-    byokEvidencePath: options.byokEvidence
+    byokEvidencePath: options.byokEvidence,
+    expectedArtifactSha256: bundleResult.dmg.sha256
   });
   const checklistSha256 = createHash("sha256").update(checklistMarkdown).digest("hex");
   const result = {

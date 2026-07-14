@@ -810,14 +810,15 @@ describe("release evidence scripts", () => {
         "--run-id", "run-real-provider",
         "--output", byokEvidencePath,
         "--commit", provenance.sourceCommit,
-        "--artifact-url", "htmlslide-signed-notarized-12345-HTMLslide-0.1.0-signed-notarized-arm64.dmg"
+        "--artifact-url", "htmlslide-signed-notarized-12345-HTMLslide-0.1.0-signed-notarized-arm64.dmg",
+        "--artifact-sha256", fixture.dmgSha256
       ]);
       const legacyEvidence = JSON.parse(await readFile(byokEvidencePath, "utf8")) as {
         generatedAt: string;
         runId: string;
         provider: { provider: string; model: string };
         project: { slideCount: number };
-        candidate: { claimedCommit: string; claimedArtifactUrl: string };
+        candidate: { claimedCommit: string; claimedArtifactUrl: string; artifactSha256: string };
         inputs: { agentReportPath: string };
         artifacts: unknown[];
       };
@@ -839,7 +840,8 @@ describe("release evidence scripts", () => {
         candidate: {
           binding: "caller-declared",
           commit: legacyEvidence.candidate.claimedCommit,
-          artifactUrl: legacyEvidence.candidate.claimedArtifactUrl
+          artifactUrl: legacyEvidence.candidate.claimedArtifactUrl,
+          artifactSha256: legacyEvidence.candidate.artifactSha256
         },
         checks: {
           providerValidation: "passed",
@@ -932,6 +934,30 @@ describe("release evidence scripts", () => {
         "--commit", provenance.sourceCommit,
         "--byok-evidence", byokEvidencePath
       ])).rejects.toThrow(/does not identify the verified candidate/iu);
+
+      const missingHashEvidence = JSON.parse(await readFile(byokEvidencePath, "utf8")) as { candidate: { artifactSha256?: string } };
+      delete missingHashEvidence.candidate.artifactSha256;
+      await writeFile(byokEvidencePath, `${JSON.stringify(missingHashEvidence, null, 2)}\n`, "utf8");
+      await expect(verifyReleasePromotion([
+        "--bundle-dir", fixture.bundleDir,
+        "--checklist", checklistPath,
+        "--release-tag", "v0.1.0",
+        "--candidate-run-id", "12345",
+        "--commit", provenance.sourceCommit,
+        "--byok-evidence", byokEvidencePath
+      ])).rejects.toThrow(/artifact SHA-256 does not match the verified candidate/iu);
+
+      const mismatchedEvidence = JSON.parse(await readFile(byokEvidencePath, "utf8")) as { candidate: { artifactSha256?: string } };
+      mismatchedEvidence.candidate.artifactSha256 = "f".repeat(64);
+      await writeFile(byokEvidencePath, `${JSON.stringify(mismatchedEvidence, null, 2)}\n`, "utf8");
+      await expect(verifyReleasePromotion([
+        "--bundle-dir", fixture.bundleDir,
+        "--checklist", checklistPath,
+        "--release-tag", "v0.1.0",
+        "--candidate-run-id", "12345",
+        "--commit", provenance.sourceCommit,
+        "--byok-evidence", byokEvidencePath
+      ])).rejects.toThrow(/artifact SHA-256 does not match the verified candidate/iu);
     } finally {
       await Promise.all([
         rm(fixture.root, { recursive: true, force: true }),
@@ -956,7 +982,7 @@ describe("release evidence scripts", () => {
       model: "gpt-test",
       targetSlideCount: 8,
       slideCount: 8,
-      candidate: { binding: "caller-declared", commit: "abc1234", artifactUrl: "htmlslide-signed-notarized-12345-deck.dmg" },
+      candidate: { binding: "caller-declared", commit: "abc1234", artifactUrl: "htmlslide-signed-notarized-12345-deck.dmg", artifactSha256: "0".repeat(64) },
       checks: {
         providerValidation: "passed",
         agentRun: "passed",
@@ -978,12 +1004,13 @@ describe("release evidence scripts", () => {
       ]
     }, {
       expectedCommit: "abc1234",
-      expectedArtifactUrl: "htmlslide-signed-notarized-12345-deck.dmg"
+      expectedArtifactUrl: "htmlslide-signed-notarized-12345-deck.dmg",
+      expectedArtifactSha256: "0".repeat(64)
     })).toMatchObject({
       runId: "run-cli-evidence",
       provider: "openai",
       slideCount: 8,
-      candidate: { claimedCommit: "abc1234", claimedArtifactUrl: "htmlslide-signed-notarized-12345-deck.dmg" }
+      candidate: { claimedCommit: "abc1234", claimedArtifactUrl: "htmlslide-signed-notarized-12345-deck.dmg", artifactSha256: "0".repeat(64) }
     });
   });
 

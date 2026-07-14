@@ -111,6 +111,7 @@ type AgentValidateProviderCommandOptions = JsonOption & {
 type RcByokCommandOptions = JsonOption & {
   apiKeyEnv: string;
   artifactUrl?: string;
+  artifactSha256?: string;
   baseUrl?: string;
   commit?: string;
   model: string;
@@ -935,6 +936,7 @@ rcCommand
   .option("--speaker-notes <mode>", "speaker notes mode: none, bullet-notes, full-script, or rehearsal-cues")
   .option("--commit <commit>", "caller-declared candidate commit for evidence binding")
   .option("--artifact-url <url-or-label>", "caller-declared candidate artifact URL or local label")
+  .option("--artifact-sha256 <sha256>", "caller-declared candidate DMG SHA-256 for evidence binding")
   .option("--json", "print machine-readable JSON")
   .description("Validate a real provider, generate a deck, check/export it, and write run-bound sanitized evidence.")
   .action(async (options: RcByokCommandOptions) => {
@@ -943,6 +945,7 @@ rcCommand
       const result = await runRcByokAcceptance({
         apiKeyEnv: options.apiKeyEnv,
         artifactUrl: options.artifactUrl,
+        artifactSha256: options.artifactSha256,
         baseUrl: options.baseUrl,
         commit: options.commit,
         model: options.model,

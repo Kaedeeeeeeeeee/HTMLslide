@@ -290,6 +290,28 @@ describe("HTMLslide MCP in-process server", () => {
     });
   });
 
+  it.each(["export_pdf", "export_deckpkg", "export_deck"] as const)(
+    "blocks %s when the shared check has errors",
+    { timeout: 30_000 },
+    async (tool) => {
+      await withTempFixture("linter-text-overflow", async (projectPath) => {
+        const server = createHtmlslideMcpServer({ projectRoot: projectPath });
+
+        await expect(server.callTool(tool)).rejects.toMatchObject({
+          message: expect.stringContaining("MCP export blocked by HTMLslide check"),
+          name: "McpExportCheckError",
+          report: expect.objectContaining({
+            status: "failed",
+            summary: expect.objectContaining({ errors: expect.any(Number) })
+          })
+        });
+        await expect(stat(path.join(projectPath, "exports"))).rejects.toMatchObject({ code: "ENOENT" });
+        await expect(readFile(path.join(projectPath, ".htmlslide", "reports", "check-report.json"), "utf8"))
+          .resolves.toContain('"status": "failed"');
+      });
+    }
+  );
+
   it("reads check reports, exports deckpkg, exposes skills, and manages checkpoints", async () => {
     await withTempFixture("linter-valid-clean", async (projectPath) => {
       const server = createHtmlslideMcpServer({ projectRoot: projectPath });
@@ -495,6 +517,45 @@ describe("HTMLslide MCP stdio server", () => {
       }
 
       expect(Buffer.concat(stderrChunks).toString("utf8")).not.toContain("MCP alpha harness ready");
+    });
+  }, 20000);
+
+  it("returns a structured export-blocked error over stdio", async () => {
+    await withTempFixture("linter-text-overflow", async (projectPath) => {
+      const transport = new StdioClientTransport({
+        args: [cliBin, "mcp", projectPath],
+        command: tsxBin,
+        cwd: repoRoot,
+        stderr: "pipe"
+      });
+      const client = new Client({
+        name: "htmlslide-mcp-export-gate-test-client",
+        version: "0.0.0"
+      });
+
+      try {
+        await client.connect(transport);
+        const blocked = await client.callTool({
+          name: "export_pdf"
+        }) as CallToolResult;
+        expect(blocked.isError).toBe(true);
+        expect(blocked.content[0]).toMatchObject({
+          text: expect.stringContaining('"error": "export-blocked"'),
+          type: "text"
+        });
+        expect(blocked.structuredContent).toMatchObject({
+          result: {
+            check: {
+              status: "failed"
+            },
+            error: "export-blocked"
+          }
+        });
+      } finally {
+        await client.close();
+      }
+
+      await expect(stat(path.join(projectPath, "exports"))).rejects.toMatchObject({ code: "ENOENT" });
     });
   }, 20000);
 });

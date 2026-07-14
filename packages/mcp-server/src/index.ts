@@ -166,6 +166,16 @@ export type CheckpointRevertToolResult = FileCopyCheckpointRevertResult & {
   audit: McpAuditEntry;
 };
 
+export class McpExportCheckError extends Error {
+  constructor(public readonly report: CheckReport) {
+    super(
+      `MCP export blocked by HTMLslide check: ${report.summary.errors} error(s), ` +
+        `${report.summary.warnings} warning(s), and status "${report.status}".`
+    );
+    this.name = "McpExportCheckError";
+  }
+}
+
 export type HtmlslideMcpToolResult =
   | ProjectManifestResult
   | ProjectSlideListResult
@@ -437,10 +447,27 @@ const toProtocolToolError = (error: unknown): CallToolResult => ({
   content: [
     {
       type: "text",
-      text: error instanceof Error ? error.message : String(error)
+      text: error instanceof McpExportCheckError
+        ? JSON.stringify({
+            error: "export-blocked",
+            message: error.message,
+            check: error.report
+          }, null, 2)
+        : error instanceof Error ? error.message : String(error)
     }
   ],
-  isError: true
+  isError: true,
+  ...(error instanceof McpExportCheckError
+    ? {
+        structuredContent: {
+          result: {
+            error: "export-blocked",
+            message: error.message,
+            check: error.report
+          } as JsonObject
+        }
+      }
+    : {})
 });
 
 export const isProjectRelativePathSafe = (relativePath: string): boolean => {
@@ -975,6 +1002,14 @@ const readCheckpointReferenceInput = (projectRoot: string, input: Record<string,
 });
 
 const exportLoadedDeck = async (projectRoot: string, options: ExportOptions): Promise<ExportResult> => {
+  const report = await checkProject({
+    projectPath: projectRoot,
+    writeReport: true
+  });
+  if (report.status !== "passed" || report.summary.errors > 0) {
+    throw new McpExportCheckError(report);
+  }
+
   const project = await loadDeckProject(projectRoot);
   return exportDeck(toCompilerInput(project), options);
 };

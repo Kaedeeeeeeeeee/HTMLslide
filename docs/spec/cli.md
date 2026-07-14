@@ -22,6 +22,7 @@ Each explicit `--pdf`/`--no-pdf`, `--html`/`--no-html`, `--deckpkg`/`--no-deckpk
 - `htmlslide skill inspect <name> [--project <path>] --json` returns official metadata and installed ownership/integrity details.
 - `htmlslide skill remove <name> [--project <path>] --yes --json` removes only integrity-verified HTMLslide-managed installs.
 - `htmlslide mcp [path]` starts the project-scoped stdio MCP server and reserves stdout for MCP protocol messages.
+- MCP `export_pdf`, `export_deckpkg`, and `export_deck` use the same shared Check gate as the CLI and desktop export paths. A failed Check returns a structured `export-blocked` error and does not create export artifacts.
 - `htmlslide mcp --list-tools --json` lists registered MCP tool descriptors, safety labels, and implementation status.
 - `htmlslide mcp [path] --status --json` validates the project-scoped MCP in-process harness for a deck project and returns the project root plus registered and implemented tool counts.
 - `htmlslide setup install-cli` installs or updates the local `htmlslide` command shim.

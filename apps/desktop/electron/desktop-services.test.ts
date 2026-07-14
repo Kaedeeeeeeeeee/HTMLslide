@@ -894,6 +894,24 @@ describe("desktop services", () => {
     });
   });
 
+  it("prefers a packaged CLI runtime when the app bundle lives inside a workspace", async () => {
+    const root = await tempDir();
+    const resourcesPath = path.join(root, "dist", "alpha", "HTMLslide.app", "Contents", "Resources");
+    const cliPath = path.join(resourcesPath, "app", "cli-runtime", "dist", "bin", "htmlslide.js");
+    await mkdir(path.dirname(cliPath), { recursive: true });
+    await writeFile(cliPath, "#!/usr/bin/env node\n");
+    await writeFile(path.join(root, "pnpm-workspace.yaml"), "packages: []\n");
+    const developmentCliPath = path.join(root, "packages", "cli", "dist", "bin", "htmlslide.js");
+    await mkdir(path.dirname(developmentCliPath), { recursive: true });
+    await writeFile(developmentCliPath, "#!/usr/bin/env node\n");
+
+    expect(findCliRuntime(path.join(resourcesPath, "app", "dist", "electron"), resourcesPath)).toEqual({
+      mode: "packaged",
+      cliPath,
+      cwd: path.join(resourcesPath, "app", "cli-runtime")
+    });
+  });
+
   it("finds the development CLI runtime from a workspace child path", async () => {
     const root = await tempDir();
     const cliPath = path.join(root, "packages", "cli", "dist", "bin", "htmlslide.js");

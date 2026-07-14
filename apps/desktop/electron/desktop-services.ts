@@ -3898,19 +3898,6 @@ function isDesktopAgentReviewState(value: unknown): value is DesktopAgentReviewS
 }
 
 export function findCliRuntime(startPath: string, resourcesPath?: string): CliRuntime | undefined {
-  const repoRoot = findRepositoryRoot(startPath);
-  if (repoRoot) {
-    const cliPath = path.join(repoRoot, "packages", "cli", "dist", "bin", "htmlslide.js");
-    if (pathExistsSync(cliPath)) {
-      return {
-        mode: "development",
-        cliPath,
-        cwd: repoRoot,
-        rootPath: repoRoot
-      };
-    }
-  }
-
   const processResourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
   const resourceRoots = [
     resourcesPath,
@@ -3926,6 +3913,19 @@ export function findCliRuntime(startPath: string, resourcesPath?: string): CliRu
         mode: "packaged",
         cliPath,
         cwd: path.join(appResourcesRoot, "cli-runtime")
+      };
+    }
+  }
+
+  const repoRoot = findRepositoryRoot(startPath);
+  if (repoRoot) {
+    const cliPath = path.join(repoRoot, "packages", "cli", "dist", "bin", "htmlslide.js");
+    if (pathExistsSync(cliPath)) {
+      return {
+        mode: "development",
+        cliPath,
+        cwd: repoRoot,
+        rootPath: repoRoot
       };
     }
   }

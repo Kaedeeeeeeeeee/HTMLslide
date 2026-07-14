@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const sha256Pattern = /^[a-f0-9]{64}$/u;
 const releaseArtifactName = "HTMLslide-${version}-signed-notarized-${arch}";
+export const RELEASE_ARCHITECTURES = Object.freeze(["arm64", "x64"]);
 export const REQUIRED_RELEASE_SECURITY_CHECKS = Object.freeze([
   "codesign.app.verify",
   "codesign.app.display",
@@ -54,6 +55,13 @@ export const REQUIRED_RELEASE_SECRETS = Object.freeze([
   "APPLE_APP_SPECIFIC_PASSWORD",
   "KEYCHAIN_PASSWORD"
 ]);
+
+export function validateReleaseArchitecture(value, label = "Release architecture") {
+  if (!RELEASE_ARCHITECTURES.includes(value)) {
+    throw new Error(`${label} must be one of ${RELEASE_ARCHITECTURES.join(" or ")}; got ${String(value)}.`);
+  }
+  return value;
+}
 
 export function validateReleasePackageConfig(config, { expectedChannel = "release" } = {}) {
   const errors = [];
@@ -166,6 +174,7 @@ export async function validateReleaseManifest(
   manifestPath,
   { expectedArch = "arm64", expectedTeamIdentifier } = {}
 ) {
+  validateReleaseArchitecture(expectedArch, "Expected release architecture");
   const resolvedManifestPath = path.resolve(manifestPath);
   let manifest;
   try {
@@ -180,6 +189,9 @@ export async function validateReleaseManifest(
   }
   if (manifest.appName !== "HTMLslide") errors.push("appName must be HTMLslide.");
   if (manifest.channel !== "release") errors.push("channel must be release.");
+  if (!RELEASE_ARCHITECTURES.includes(manifest.arch)) {
+    errors.push(`arch must be one of ${RELEASE_ARCHITECTURES.join(" or ")}.`);
+  }
   if (manifest.arch !== expectedArch) errors.push(`arch must be ${expectedArch}.`);
   if (manifest.signing !== "developer-id") errors.push("signing must be developer-id.");
   if (manifest.notarized !== true) errors.push("notarized must be true.");
@@ -210,12 +222,20 @@ export async function validateReleaseManifest(
   }
 
   const artifactDirectory = path.dirname(resolvedManifestPath);
+  if (!path.basename(resolvedManifestPath).endsWith(`-${expectedArch}.json`)) {
+    errors.push(`release manifest filename must end with -${expectedArch}.json.`);
+  }
   const resolvedReleaseArtifactPath = typeof artifacts[0] === "string"
     ? resolveManifestReference(artifacts[0], artifactDirectory)
     : "";
   for (const artifact of artifacts) {
     if (typeof artifact !== "string" || artifact.length === 0) {
       errors.push("every release artifact must be a non-empty path string.");
+      continue;
+    }
+
+    if (!isBasenameReference(artifact)) {
+      errors.push(`release artifact must be a basename-only path: ${artifact}.`);
       continue;
     }
 
@@ -227,7 +247,7 @@ export async function validateReleaseManifest(
 
     let artifactStats;
     try {
-      artifactStats = await stat(resolvedArtifactPath);
+      artifactStats = await lstat(resolvedArtifactPath);
     } catch {
       errors.push(`release artifact is missing: ${artifact}.`);
       continue;
@@ -235,6 +255,9 @@ export async function validateReleaseManifest(
     if (!artifactStats.isFile()) {
       errors.push(`release artifact must be a regular file: ${artifact}.`);
       continue;
+    }
+    if (!path.basename(resolvedArtifactPath).endsWith(`-${expectedArch}.dmg`)) {
+      errors.push(`release DMG filename must end with -${expectedArch}.dmg.`);
     }
 
     const metadata = artifactMetadata.find((entry) =>
@@ -267,7 +290,7 @@ export async function validateReleaseManifest(
   } else {
     const securityEvidencePath = path.join(artifactDirectory, manifest.securityEvidence.fileName);
     try {
-      const securityEvidenceStats = await stat(securityEvidencePath);
+      const securityEvidenceStats = await lstat(securityEvidencePath);
       if (!securityEvidenceStats.isFile()) {
         errors.push("securityEvidence must be a regular file.");
       } else {
@@ -275,6 +298,8 @@ export async function validateReleaseManifest(
         const checks = Array.isArray(securityEvidence.checks) ? securityEvidence.checks : [];
         const manifestEvidence = securityEvidence.artifacts?.manifest;
         const signature = securityEvidence.signature;
+        const dmgSignature = securityEvidence.dmgSignature;
+        const architecture = securityEvidence.architecture;
         const appEvidence = securityEvidence.artifacts?.app;
         const dmgEvidence = securityEvidence.artifacts?.dmg;
         const checkTools = checks.map((check) => isRecord(check) ? check.tool : undefined);
@@ -299,6 +324,18 @@ export async function validateReleaseManifest(
           signature.teamIdentifier.trim().length === 0 ||
           (expectedTeamIdentifier !== undefined && signature.teamIdentifier !== expectedTeamIdentifier) ||
           signature.hardenedRuntime !== true ||
+          !isRecord(dmgSignature) ||
+          typeof dmgSignature.identity !== "string" ||
+          !dmgSignature.identity.startsWith("Developer ID Application:") ||
+          typeof dmgSignature.teamIdentifier !== "string" ||
+          dmgSignature.teamIdentifier.trim().length === 0 ||
+          (expectedTeamIdentifier !== undefined && dmgSignature.teamIdentifier !== expectedTeamIdentifier) ||
+          !isRecord(architecture) ||
+          typeof architecture.executable !== "string" ||
+          architecture.executable.trim().length === 0 ||
+          !Array.isArray(architecture.architectures) ||
+          architecture.architectures.length !== 1 ||
+          architecture.architectures[0] !== expectedArch ||
           !evidenceArtifactMetadataValid ||
           !isRecord(manifestArtifact) ||
           dmgEvidence.fileName !== manifestArtifact.fileName ||
@@ -391,6 +428,17 @@ function resolveManifestReference(reference, manifestDirectory) {
   return path.isAbsolute(reference)
     ? path.resolve(reference)
     : path.resolve(manifestDirectory, reference);
+}
+
+function isBasenameReference(reference) {
+  const normalized = reference.replaceAll("\\", "/");
+  return !path.posix.isAbsolute(normalized) &&
+    !path.win32.isAbsolute(reference) &&
+    !normalized.includes("/") &&
+    normalized !== "." &&
+    normalized !== ".." &&
+    !normalized.includes("../") &&
+    !normalized.includes("./");
 }
 
 async function readJson(filePath) {

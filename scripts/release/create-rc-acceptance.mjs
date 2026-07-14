@@ -4,6 +4,7 @@ import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { automatedGateEntries } from "./rc-automated-gates.mjs";
 import { readPackageManifestProvenance, validateCommit } from "./rc-provenance.mjs";
+import { validateReleaseArchitecture } from "./validate-release-contract.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
@@ -43,6 +44,13 @@ export async function main(args) {
   if (packageProvenance && packageProvenance.sourceCommit !== commit) {
     throw new Error("Candidate commit does not match package manifest sourceCommit.");
   }
+  const targetArch = validateReleaseArchitecture(
+    options.expectedArch ?? packageProvenance?.manifest.arch ?? "arm64",
+    "RC checklist target architecture"
+  );
+  if (packageProvenance && packageProvenance.manifest.arch !== targetArch) {
+    throw new Error(`RC checklist architecture ${targetArch} does not match package manifest architecture ${packageProvenance.manifest.arch}.`);
+  }
 
   const checklist = renderChecklist({
     artifactUrl: options.artifactUrl,
@@ -54,6 +62,7 @@ export async function main(args) {
     packageRunUrl: options.packageRunUrl,
     candidateRunId: options.candidateRunId,
     releaseTag: options.releaseTag,
+    targetArch,
     version
   });
 
@@ -120,6 +129,7 @@ export function renderChecklist(metadata) {
 | CI run | ${metadata.ciRunUrl ?? "TODO"} |
 | Package workflow run | ${metadata.packageRunUrl ?? "TODO"} |
 | Candidate run ID | ${metadata.candidateRunId ?? "TODO"} |
+| Target architecture | ${metadata.targetArch ?? "arm64"} |
 | DMG / artifact URL | ${metadata.artifactUrl ?? "TODO"} |
 | Commit | ${metadata.commit ?? "TODO"} |
 | Package manifest SHA256 | ${metadata.packageManifestSha256 ?? "TODO"} |

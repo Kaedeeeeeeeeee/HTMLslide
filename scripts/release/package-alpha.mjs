@@ -762,6 +762,7 @@ if (channel === "release") {
   const securityEvidence = await verifyReleaseSecurity({
     appPath,
     dmgPath,
+    expectedArch: arch,
     expectedIdentity: developerIdIdentity(),
     expectedTeamIdentifier: process.env.APPLE_TEAM_ID,
     manifestPath

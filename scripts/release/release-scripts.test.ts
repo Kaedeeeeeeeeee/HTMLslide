@@ -40,9 +40,10 @@ describe("release evidence scripts", () => {
       const appPath = path.join(tempRoot, "HTMLslide.app");
       const dmgPath = path.join(tempRoot, "HTMLslide-0.1.0-signed-notarized-arm64.dmg");
       const manifestPath = path.join(tempRoot, "HTMLslide-0.1.0-signed-notarized-arm64.json");
-      await mkdir(path.join(appPath, "Contents"), { recursive: true });
+      await mkdir(path.join(appPath, "Contents", "MacOS"), { recursive: true });
       await Promise.all([
         writeFile(path.join(appPath, "Contents", "Info.plist"), "signed app fixture\n", "utf8"),
+        writeFile(path.join(appPath, "Contents", "MacOS", "Electron"), "signed executable fixture\n", "utf8"),
         writeFile(dmgPath, "signed dmg fixture\n", "utf8"),
         writeFile(manifestPath, "manifest fixture\n", "utf8")
       ]);
@@ -55,7 +56,10 @@ describe("release evidence scripts", () => {
         expectedIdentity: "Developer ID Application: HTMLslide (TEAM123456)",
         runCommand(command, args) {
           commands.push(`${command} ${args.join(" ")}`);
-          if (command === "codesign" && args[0] === "--display" && args.at(-1) === appPath) {
+          if (command === "lipo") {
+            return "arm64";
+          }
+          if (command === "codesign" && args[0] === "--display") {
             return [
               "Identifier=app.htmlslide",
               "Authority=Developer ID Application: HTMLslide (TEAM123456)",
@@ -73,6 +77,14 @@ describe("release evidence scripts", () => {
         teamIdentifier: "TEAM123456",
         hardenedRuntime: true
       });
+      expect(evidence.dmgSignature).toMatchObject({
+        identity: "Developer ID Application: HTMLslide (TEAM123456)",
+        teamIdentifier: "TEAM123456"
+      });
+      expect(evidence.architecture).toEqual({
+        executable: "Electron",
+        architectures: ["arm64"]
+      });
       expect(evidence.checks.map((check) => check.tool)).toEqual(expect.arrayContaining([
         "codesign.app.verify",
         "spctl.app.execute",
@@ -83,8 +95,49 @@ describe("release evidence scripts", () => {
       expect(commands).toEqual(expect.arrayContaining([
         expect.stringContaining("codesign --verify --deep --strict --verbose=4"),
         expect.stringContaining("spctl --assess --type execute"),
+        expect.stringContaining("lipo -archs"),
         expect.stringContaining("xcrun stapler validate")
       ]));
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when the app architecture does not match the candidate contract", async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-release-arch-invalid-"));
+    try {
+      const appPath = path.join(tempRoot, "HTMLslide.app");
+      const dmgPath = path.join(tempRoot, "HTMLslide-0.1.0-signed-notarized-x64.dmg");
+      const manifestPath = path.join(tempRoot, "HTMLslide-0.1.0-signed-notarized-x64.json");
+      await mkdir(path.join(appPath, "Contents", "MacOS"), { recursive: true });
+      await Promise.all([
+        writeFile(path.join(appPath, "Contents", "MacOS", "Electron"), "executable\n", "utf8"),
+        writeFile(dmgPath, "dmg\n", "utf8"),
+        writeFile(manifestPath, "manifest\n", "utf8")
+      ]);
+
+      let lipoOutput = "x86_64";
+      const securityOptions = {
+        appPath,
+        dmgPath,
+        manifestPath,
+        expectedArch: "x64",
+        runCommand(command, args) {
+          if (command === "codesign" && args[0] === "--display") {
+            return "Identifier=app.htmlslide\nAuthority=Developer ID Application: HTMLslide (TEAM123456)\nTeamIdentifier=TEAM123456\nflags=0x10000(runtime)";
+          }
+          if (command === "lipo") {
+            return lipoOutput;
+          }
+          return "passed";
+        }
+      };
+
+      await expect(verifyReleaseSecurity(securityOptions)).resolves.toMatchObject({
+        architecture: { architectures: ["x64"] }
+      });
+      lipoOutput = "arm64";
+      await expect(verifyReleaseSecurity(securityOptions)).rejects.toThrow(/architecture does not match x64/iu);
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
@@ -279,7 +332,7 @@ describe("release evidence scripts", () => {
         signing: "developer-id",
         notarized: true,
         stapled: true,
-        artifacts: [artifactPath],
+        artifacts: [path.basename(artifactPath)],
         artifactMetadata: await buildArtifactMetadata([artifactPath]),
         securityEvidence: { fileName: "release-security-evidence-arm64.json" }
       };
@@ -300,6 +353,14 @@ describe("release evidence scripts", () => {
           bundleIdentifier: "app.htmlslide",
           teamIdentifier: "TEAM123456",
           hardenedRuntime: true
+        },
+        dmgSignature: {
+          identity: "Developer ID Application: HTMLslide (TEAM123456)",
+          teamIdentifier: "TEAM123456"
+        },
+        architecture: {
+          executable: "Electron",
+          architectures: ["arm64"]
         },
         artifacts: {
           app: appMetadata,
@@ -373,6 +434,23 @@ describe("release evidence scripts", () => {
 
       await expect(verifyReleaseBundle({ bundleDir: fixture.bundleDir })).rejects.toThrow(
         /artifact metadata SHA-256 mismatch|securityEvidence does not prove/iu
+      );
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects release evidence with a mismatched architecture claim", async () => {
+    const fixture = await createReleaseBundleFixture();
+    try {
+      const evidence = JSON.parse(await readFile(fixture.securityEvidencePath, "utf8")) as {
+        architecture: { architectures: string[] };
+      };
+      evidence.architecture.architectures = ["x64"];
+      await writeFile(fixture.securityEvidencePath, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
+
+      await expect(verifyReleaseBundle({ bundleDir: fixture.bundleDir })).rejects.toThrow(
+        /securityEvidence does not prove/iu
       );
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
@@ -734,6 +812,21 @@ describe("release evidence scripts", () => {
         Pass: result.manualItemCount,
         Fail: 0,
         "N/A": 0
+      });
+    } finally {
+      await rm(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("records and verifies an x64 RC target architecture without treating it as a real package", async () => {
+    const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-rc-checklist-arch-"));
+    const inputPath = path.join(fixtureRoot, "completed-x64.md");
+    try {
+      await writeFile(inputPath, completeChecklist({ targetArch: "x64" }), "utf8");
+
+      await expect(verifyChecklist(["--checklist", inputPath])).resolves.toMatchObject({
+        status: "passed",
+        arch: "x64"
       });
     } finally {
       await rm(fixtureRoot, { recursive: true, force: true });
@@ -1622,6 +1715,14 @@ async function createReleaseBundleFixture() {
       bundleIdentifier: "app.htmlslide",
       teamIdentifier: "TEAM123456",
       hardenedRuntime: true
+    },
+    dmgSignature: {
+      identity: "Developer ID Application: HTMLslide (TEAM123456)",
+      teamIdentifier: "TEAM123456"
+    },
+    architecture: {
+      executable: "Electron",
+      architectures: ["arm64"]
     },
     artifacts: {
       app: {

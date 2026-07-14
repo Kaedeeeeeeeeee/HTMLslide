@@ -235,6 +235,27 @@ describe("macOS alpha packaging contract", () => {
     expect(movedAppSmokeBlock).toContain('run(shimPath, ["doctor"');
   });
 
+  it("keeps packaged GUI generation acceptance in the desktop E2E surface", async () => {
+    const e2eSpec = await readText("apps/desktop/e2e/packaged-electron-acceptance.spec.ts");
+    const desktopPackage = await readJson<{ scripts?: Record<string, string> }>("apps/desktop/package.json");
+    const workflow = await readText(".github/workflows/alpha-package.yml");
+
+    expect(desktopPackage.scripts?.e2e).toBe("pnpm build && playwright test -c e2e/playwright.config.ts");
+    expect(e2eSpec).toContain("HTMLSLIDE_PACKAGED_APP_PATH");
+    expect(e2eSpec).toContain("window.htmlslideDesktop.getSetup()");
+    expect(e2eSpec).toContain('setup.cli.mode).toBe("packaged")');
+    expect(e2eSpec).toContain("setup.cli.cliPath");
+    expect(e2eSpec).toContain('getByRole("button", { name: "Create & Generate", exact: true })');
+    expect(e2eSpec).toContain("HTMLslide Agent completed check and export");
+    expect(e2eSpec).toContain("readPdfPageCount(pdfPath)").toContain("readDeckPackage(deckpkgPath)");
+    expect(e2eSpec).toContain('path.join(projectDir, ".htmlslide", "reports", "latest-agent-run.json")');
+
+    const e2eIndex = workflow.indexOf("run: pnpm e2e:desktop");
+    const packageIndex = workflow.indexOf("run: pnpm package:alpha");
+    expect(e2eIndex).toBeGreaterThan(-1);
+    expect(packageIndex).toBeGreaterThan(e2eIndex);
+  });
+
   it("keeps presenter display reconnect events wired through the isolated preload", async () => {
     const mainSource = await readText("apps/desktop/electron/main.ts");
     const preloadSource = await readText("apps/desktop/electron/preload.cts");
@@ -274,25 +295,27 @@ describe("macOS alpha packaging contract", () => {
 
   it("keeps presenter screen swapping validated, stateful, and window-safe", async () => {
     const mainSource = await readText("apps/desktop/electron/main.ts");
+    const swapSource = await readText("apps/desktop/electron/presenter-screen-swap.ts");
     const preloadSource = await readText("apps/desktop/electron/preload.cts");
     const desktopApiSource = await readText("apps/desktop/src/desktop-api.ts");
     const workspaceSource = await readText("apps/desktop/src/components/Workspace.tsx");
 
     expect(mainSource).toContain("normalizePresenterScreenSwapRequest");
+    expect(mainSource).toContain("executePresenterScreenSwap");
     expect(mainSource).toContain('ipcMain.handle("htmlslide:swap-presenter-screens"');
-    expect(mainSource).toContain('"main-window-unavailable"');
-    expect(mainSource).toContain('"audience-window-unavailable"');
-    expect(mainSource).toContain('"audience-state-mismatch"');
-    expect(mainSource).toContain('"same-display"');
-    expect(mainSource).toContain('"target-disconnected"');
-    expect(mainSource).toContain("mainWindow.getNormalBounds()");
-    expect(mainSource).toContain("restoreMainWindowPresentation");
-    expect(mainSource).toContain("restoreAudienceWindowPresentation");
-    expect(mainSource).toContain("applyPresenterScreenSwapMutation");
-    expect(mainSource).toContain("setAudienceBounds: (bounds) => activeAudienceWindow.setBounds(bounds)");
-    expect(mainSource).toContain("setMainBounds: (bounds) => activeMainWindow.setBounds(bounds)");
-    expect(mainSource).toContain("audienceWindowDisplayId = mainDisplay.id");
-    expect(mainSource).toContain("selectedDisplayId: mainDisplay.id");
+    expect(swapSource).toContain('"main-window-unavailable"');
+    expect(swapSource).toContain('"audience-window-unavailable"');
+    expect(swapSource).toContain('"audience-state-mismatch"');
+    expect(swapSource).toContain('"same-display"');
+    expect(swapSource).toContain('"target-disconnected"');
+    expect(swapSource).toContain("getNormalBounds()");
+    expect(swapSource).toContain("restoreMainWindowPresentation");
+    expect(swapSource).toContain("restoreAudienceWindowPresentation");
+    expect(swapSource).toContain("applyPresenterScreenSwapMutation");
+    expect(swapSource).toContain("setAudienceBounds: (bounds) => audienceWindow.setBounds(bounds)");
+    expect(swapSource).toContain("setMainBounds: (bounds) => mainWindow.setBounds(bounds)");
+    expect(mainSource).toContain("audienceWindowDisplayId = result.audienceDisplayId");
+    expect(swapSource).toContain("selectedDisplayId: mainDisplay.id");
     expect(preloadSource).toContain('ipcRenderer.invoke("htmlslide:swap-presenter-screens", request)');
     expect(desktopApiSource).toContain("DesktopPresenterScreenSwapRequest");
     expect(desktopApiSource).toContain("DesktopPresenterScreenSwapResult");

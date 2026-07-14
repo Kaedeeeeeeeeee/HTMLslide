@@ -5,6 +5,7 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { automatedGateEntries } from "./rc-automated-gates.mjs";
 import { readPackageManifestProvenance, validateCommit } from "./rc-provenance.mjs";
+import { validateReleaseArchitecture } from "./validate-release-contract.mjs";
 import { validateByokAcceptanceEvidence } from "./verify-byok-acceptance.mjs";
 import { validateExternalAgentAcceptanceEvidence } from "./verify-external-agent-acceptance.mjs";
 
@@ -110,6 +111,10 @@ export async function verifyChecklist(markdown, metadata = {}) {
   if (channel !== "alpha" && channel !== "release") {
     throw new Error(`RC checklist has unsupported Channel: ${channel || "empty"}.`);
   }
+  const targetArch = validateReleaseArchitecture(
+    metadataFieldValue(metadataSection, "Target architecture"),
+    "RC checklist target architecture"
+  );
 
   const automatedSection = sectionBetween(markdown, "## Automated Gates", "## Manual Acceptance Script");
   const automatedItems = automatedSection.split("\n").filter((line) => /^- \[[ xX]\] /u.test(line));
@@ -243,6 +248,7 @@ export async function verifyChecklist(markdown, metadata = {}) {
     manualStatuses: statusCounts,
     statusCounts,
     result: resultStatus,
+    arch: targetArch,
     ...(byokEvidence ? { byokEvidence } : {}),
     ...(externalAgentEvidence ? { externalAgentEvidence } : {}),
     ...(provenance ? { provenance } : {})
@@ -335,6 +341,10 @@ async function verifyProvenance(markdown, metadata) {
   const metadataSection = sectionBetween(markdown, "## Metadata", "## Automated Gates");
   const checklistVersion = metadataFieldValue(metadataSection, "Version");
   const checklistChannel = metadataFieldValue(metadataSection, "Channel").toLowerCase();
+  const targetArch = validateReleaseArchitecture(
+    metadataFieldValue(metadataSection, "Target architecture"),
+    "RC checklist target architecture"
+  );
   const checklistCommit = metadataFieldValue(metadataSection, "Commit");
   const checklistManifestSha256 = metadataFieldValue(metadataSection, "Package manifest SHA256");
   const checklistArtifactSha256 = metadataFieldValue(metadataSection, "Primary DMG SHA256");
@@ -353,6 +363,9 @@ async function verifyProvenance(markdown, metadata) {
   }
   if (checklistArtifactSha256 !== provenance.primaryArtifactSha256) {
     throw new Error("RC checklist Primary DMG SHA256 does not match the supplied package manifest.");
+  }
+  if (targetArch !== provenance.manifest.arch) {
+    throw new Error("RC checklist Target architecture does not match the supplied package manifest.");
   }
 
   return {

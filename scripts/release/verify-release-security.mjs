@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
+import { validateReleaseArchitecture } from "./validate-release-contract.mjs";
 
 function defaultRunCommand(command, args) {
   const result = spawnSync(command, args, {
@@ -101,10 +102,67 @@ function assertSignatureDisplay(output, { expectedIdentity, expectedBundleIdenti
   };
 }
 
+function assertDmgSignatureDisplay(output, { expectedIdentity, expectedTeamIdentifier }) {
+  const identity = valueFromOutput(output, "Authority") ?? "";
+  const teamIdentifier = valueFromOutput(output, "TeamIdentifier") ?? "";
+  if (!identity.startsWith("Developer ID Application:")) {
+    throw new Error("Release DMG signature is not a Developer ID Application signature.");
+  }
+  if (expectedIdentity && identity !== expectedIdentity) {
+    throw new Error("Release DMG signature identity does not match the configured Developer ID identity.");
+  }
+  if (!teamIdentifier) {
+    throw new Error("Release DMG signature is missing a TeamIdentifier.");
+  }
+  if (expectedTeamIdentifier && teamIdentifier !== expectedTeamIdentifier) {
+    throw new Error("Release DMG signature TeamIdentifier does not match the configured Apple team.");
+  }
+  return { identity, teamIdentifier };
+}
+
+async function assertAppArchitecture(appPath, expectedArch, runCommand) {
+  validateReleaseArchitecture(expectedArch, "Expected release architecture");
+  const macOsPath = path.join(appPath, "Contents", "MacOS");
+  let entries;
+  try {
+    entries = await readdir(macOsPath, { withFileTypes: true });
+  } catch (error) {
+    throw new Error(`Release app main executable directory is missing: ${macOsPath}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  const executableEntries = [];
+  for (const entry of entries) {
+    if (entry.isSymbolicLink()) {
+      throw new Error(`Release app main executable must not be a symlink: ${entry.name}.`);
+    }
+    if (entry.isFile()) {
+      executableEntries.push(entry.name);
+    }
+  }
+  if (executableEntries.length !== 1) {
+    throw new Error(`Release app must contain exactly one main executable; found ${executableEntries.length}.`);
+  }
+
+  const executable = executableEntries[0];
+  const output = runCommand("lipo", ["-archs", path.join(macOsPath, executable)]);
+  const architectures = output.trim().split(/\s+/u).filter(Boolean).map(normalizeMachArchitecture);
+  if (architectures.length !== 1 || architectures[0] !== expectedArch) {
+    throw new Error(`Release app architecture does not match ${expectedArch}: ${architectures.join(" ") || "missing"}.`);
+  }
+  return { executable, architectures };
+}
+
+function normalizeMachArchitecture(value) {
+  if (value === "x86_64") return "x64";
+  if (value === "arm64") return "arm64";
+  return value;
+}
+
 export async function verifyReleaseSecurity({
   appPath,
   dmgPath,
   manifestPath,
+  expectedArch = "arm64",
   expectedIdentity,
   expectedTeamIdentifier,
   expectedBundleIdentifier = "app.htmlslide",
@@ -118,10 +176,12 @@ export async function verifyReleaseSecurity({
     expectedBundleIdentifier,
     expectedTeamIdentifier
   });
+  const architecture = await assertAppArchitecture(appPath, expectedArch, runCommand);
   runCommand("spctl", ["--assess", "--type", "execute", "--verbose=4", appPath]);
 
   runCommand("codesign", ["--verify", "--strict", "--verbose=4", dmgPath]);
-  runCommand("codesign", ["--display", "--verbose=4", dmgPath]);
+  const dmgDisplay = runCommand("codesign", ["--display", "--verbose=4", dmgPath]);
+  const dmgSignature = assertDmgSignatureDisplay(dmgDisplay, { expectedIdentity, expectedTeamIdentifier });
   runCommand("xcrun", ["stapler", "validate", dmgPath]);
   runCommand("spctl", ["--assess", "--type", "open", "--context", "context:primary-signature", "--verbose=4", dmgPath]);
 
@@ -143,6 +203,8 @@ export async function verifyReleaseSecurity({
       { tool: "spctl.dmg.open", status: "passed" }
     ],
     signature,
+    dmgSignature,
+    architecture,
     artifacts: { app, dmg, manifest }
   };
 }
@@ -174,6 +236,7 @@ export async function main(args = process.argv.slice(2)) {
     appPath: path.resolve(options.app),
     dmgPath: path.resolve(options.dmg),
     manifestPath: path.resolve(options.manifest),
+    expectedArch: options.expectedArch ?? "arm64",
     expectedIdentity: options.identity,
     expectedTeamIdentifier: options.teamId,
     expectedBundleIdentifier: options.bundleIdentifier ?? "app.htmlslide"

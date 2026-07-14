@@ -32,6 +32,7 @@ type DeckJson = {
 type BrowserVisualFixture = {
   name: string;
   slideIds: string[];
+  platformBrowserGolden?: boolean;
 };
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
@@ -49,19 +50,23 @@ const browserVisualFixtures = [
   },
   {
     name: "data-chart-deck",
-    slideIds: ["001-chart", "002-table"]
+    slideIds: ["001-chart", "002-table"],
+    platformBrowserGolden: true
   },
   {
     name: "image-heavy-deck",
-    slideIds: ["001-gallery", "002-srcset"]
+    slideIds: ["001-gallery", "002-srcset"],
+    platformBrowserGolden: true
   },
   {
     name: "multi-theme-deck",
-    slideIds: ["001-light", "002-dark", "003-report"]
+    slideIds: ["001-light", "002-dark", "003-report"],
+    platformBrowserGolden: true
   },
   {
     name: "text-heavy-deck",
-    slideIds: ["001-longform", "002-columns"]
+    slideIds: ["001-longform", "002-columns"],
+    platformBrowserGolden: true
   }
 ] satisfies BrowserVisualFixture[];
 
@@ -150,6 +155,7 @@ describe("browser-rendered visual regression", () => {
   let browser: Browser | undefined;
 
   beforeAll(async () => {
+    await rm(browserVisualDiffOutputPath, { recursive: true, force: true });
     browser = await chromium.launch();
   });
 
@@ -162,6 +168,7 @@ describe("browser-rendered visual regression", () => {
     async ({ name, slideIds }) => {
       const { root, project } = await copyCompilerFixture(name);
       const thumbnailDiffFailures: string[] = [];
+      const browserDiffFailures: string[] = [];
       if (!browser) {
         throw new Error("Chromium was not available for browser visual regression.");
       }
@@ -174,7 +181,6 @@ describe("browser-rendered visual regression", () => {
         viewport: project.viewport
       });
       try {
-        await rm(browserVisualDiffOutputPath, { recursive: true, force: true });
         const exported = await exportDeck(project);
         expect(exported.artifacts.html).toBeTruthy();
 
@@ -204,7 +210,15 @@ describe("browser-rendered visual regression", () => {
           });
           expect(readPngSize(await readFile(screenshotPath))).toEqual(project.viewport);
 
-          const goldenPath = path.join(goldenOutputRootPath, name, "browser", `${slideId}.png`);
+          const goldenPath = path.join(
+            goldenOutputRootPath,
+            name,
+            "browser",
+            ...(browserVisualFixtures.find((fixture) => fixture.name === name)?.platformBrowserGolden
+              ? [thumbnailGoldenPlatform]
+              : []),
+            `${slideId}.png`
+          );
           if (updateBrowserGoldens) {
             await mkdir(path.dirname(goldenPath), { recursive: true });
             await copyFile(screenshotPath, goldenPath);
@@ -218,11 +232,15 @@ describe("browser-rendered visual regression", () => {
               maxDiffRatio: browserSlideDiffThreshold
             });
 
-            expect({
-              height: result.height,
-              width: result.width
-            }).toEqual(project.viewport);
-            expect(result.diffRatio, result.message).toBeLessThanOrEqual(browserSlideDiffThreshold);
+            if (
+              result.width !== project.viewport.width ||
+              result.height !== project.viewport.height ||
+              result.diffRatio > browserSlideDiffThreshold
+            ) {
+              browserDiffFailures.push(
+                `${result.message} expected ${project.viewport.width}x${project.viewport.height}.`
+              );
+            }
           }
 
           const thumbnailPath = exported.artifacts.thumbnails?.find(
@@ -263,6 +281,7 @@ describe("browser-rendered visual regression", () => {
         }
 
         expect(thumbnailDiffFailures, thumbnailDiffFailures.join("\n")).toEqual([]);
+        expect(browserDiffFailures, browserDiffFailures.join("\n")).toEqual([]);
 
         await page.close();
 

@@ -579,6 +579,9 @@ export class DesktopAgentRunRegistry {
       ...(result.check ? { check: this.#compactCliResult(result.check) } : {}),
       ...(result.export ? { export: this.#compactCliResult(result.export) } : {}),
       ...(result.project ? { project: compactIpcValue(result.project) } : {}),
+      ...(result.agentReportPath
+        ? { agentReportPath: truncateSanitizedText(result.agentReportPath, MAX_DESKTOP_IPC_TEXT_CHARS) }
+        : {}),
       ...(result.error ? { error: truncateSanitizedText(result.error, MAX_DESKTOP_IPC_TEXT_CHARS) } : {})
     };
   }

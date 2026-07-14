@@ -97,6 +97,8 @@ For desktop headless runs, the review and revert boundary is restricted to deck 
 
 After the run completes, `Accept changes` persists the review decision under `.htmlslide/reports/agent-review-<run-id>.json` and closes the review panel. The source checkpoint remains available for a later `Revert changes` action; reverting removes the matching acceptance record. Reopening the project must preserve the accepted/revertable state, so acceptance is not a renderer-only session flag.
 
+Every desktop external-agent run also writes `.htmlslide/reports/agent-run-<run-id>.json` and updates `latest-agent-run.json`. The report contains only the selected provider id/version, authentication command/status, permission summary, relative changed source files, Check/Export status, diff-review state, and revert state. It never contains a temporary workspace path, prompt contents, raw agent output, credentials, or tokens. The release verifier accepts this report only after it contains a distinct successful run with Check, Export, diff review, and revert marked `passed`, plus a cancelled run with no post-cancel Check or Export. Fixture input remains supported through the fixture-only path.
+
 Forbidden writes fail the run even when the command exits successfully. The app should then offer checkpoint revert and show the path.
 
 ## Detector Helpers

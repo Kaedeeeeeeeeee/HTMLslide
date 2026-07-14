@@ -3270,6 +3270,37 @@ function requireArg(args, name) {
       ["export", projectPath, "--json"]
     ]);
 
+    expect(result.agentReportPath).toBe(
+      path.join(projectPath, ".htmlslide", "reports", "agent-run-run-external-test.json")
+    );
+    const externalReportText = await readFile(
+      path.join(projectPath, ".htmlslide", "reports", "latest-agent-run.json"),
+      "utf8"
+    );
+    const externalReport = JSON.parse(externalReportText) as DesktopAgentRunReport;
+    expect(externalReport).toMatchObject({
+      kind: "htmlslide-agent-run-report",
+      providerId: "external-agent",
+      status: "succeeded",
+      provider: { id: "generic", version: "configured command" },
+      permissionSummary: { sandbox: "project-copy" },
+      acceptance: {
+        successfulRun: {
+          runId: "run-external-test",
+          status: "succeeded",
+          edit: "passed",
+          changedFiles: ["slides/001-title.html"],
+          check: "passed",
+          export: "passed",
+          diffReview: "available",
+          revert: "available"
+        }
+      }
+    });
+    expect(externalReport).not.toHaveProperty("projectPath");
+    expect(externalReportText).not.toContain(projectPath);
+    expect(externalReportText).not.toContain("sk-external-secret123456");
+
     const prompt = await readFile(path.join(projectPath, ".htmlslide", "runs", "run-external-test", "prompt.md"), "utf8");
     expect(prompt).toContain("Tighten the title slide.");
     expect(prompt).toContain("deck.json, slides/, notes/, theme/, or assets/");
@@ -3325,6 +3356,11 @@ function requireArg(args, name) {
     expect(result.export).toBeUndefined();
     expect(cliCalls).toEqual([]);
     expect(result.summary.filesChanged).toEqual(["slides/001-title.html"]);
+    const failedReport = JSON.parse(
+      await readFile(path.join(projectPath, ".htmlslide", "reports", "latest-agent-run.json"), "utf8")
+    ) as DesktopAgentRunReport;
+    expect(failedReport.status).toBe("failed");
+    expect(failedReport.acceptance?.successfulRun).toBeUndefined();
     await expect(access(path.join(projectPath, "exports", "discarded.txt"))).rejects.toThrow();
   });
 
@@ -3386,6 +3422,25 @@ function requireArg(args, name) {
     expect(result.adapter?.adapter.capabilities.cancelRun).toBe(true);
     expect(result.logs).toEqual(observedLogs);
     expect(JSON.stringify(result)).not.toContain("sk-external-observer-secret123456");
+    const cancelledReportText = await readFile(
+      path.join(projectPath, ".htmlslide", "reports", "latest-agent-run.json"),
+      "utf8"
+    );
+    const cancelledReport = JSON.parse(cancelledReportText) as DesktopAgentRunReport;
+    expect(cancelledReport).toMatchObject({
+      status: "cancelled",
+      providerId: "external-agent",
+      acceptance: {
+        cancellationRun: {
+          runId: "run-external-cancel",
+          status: "cancelled",
+          postCancelCheckExport: "not-started"
+        }
+      }
+    });
+    expect(cancelledReport).not.toHaveProperty("projectPath");
+    expect(cancelledReportText).not.toContain(projectPath);
+    expect(cancelledReportText).not.toContain("sk-external-observer-secret123456");
   });
 
   it.each([
@@ -3495,6 +3550,101 @@ function requireArg(args, name) {
       ["check", projectPath, "--json"],
       ["export", projectPath, "--json"]
     ]);
+    const builtInReportPath = path.join(projectPath, ".htmlslide", "reports", "latest-agent-run.json");
+    const builtInReport = JSON.parse(await readFile(builtInReportPath, "utf8")) as DesktopAgentRunReport;
+    expect(builtInReport).toMatchObject({
+      providerId: "external-agent",
+      provider: { id: selectedId, version: "9.9.9" },
+      authentication: {
+        status: "passed",
+        command: selectedId === "claude-code" ? "claude auth status" : "codex login status"
+      },
+      externalCli: { check: "passed", export: "passed" },
+      acceptance: {
+        successfulRun: {
+          changedFiles: ["slides/001-title.html"],
+          diffReview: "available",
+          revert: "available"
+        }
+      }
+    });
+    expect(builtInReport).not.toHaveProperty("projectPath");
+    expect(JSON.stringify(builtInReport)).not.toContain(agentInvocations[0]?.cwd ?? "");
+    await acceptDesktopAgentChanges({
+      projectPath,
+      runId: result.summary.runId,
+      checkpointId: result.checkpointDiff?.checkpoint.id
+    });
+    await expect(readFile(builtInReportPath, "utf8").then(JSON.parse)).resolves.toMatchObject({
+      acceptance: { successfulRun: { diffReview: "passed", revert: "available" } }
+    });
+    await revertDesktopCheckpoint({
+      confirmed: true,
+      projectPath,
+      runId: result.summary.runId,
+      checkpointId: result.checkpointDiff?.checkpoint.id
+    });
+    await expect(readFile(builtInReportPath, "utf8").then(JSON.parse)).resolves.toMatchObject({
+      acceptance: { successfulRun: { diffReview: "passed", revert: "passed" } }
+    });
+  });
+
+  it("keeps acceptance updates run-bound when latest points to another external run", async () => {
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const commandTemplate = "fake-agent --project \"{{projectPath}}\" --prompt-file \"{{promptFile}}\" --writes-manifest \"{{writeManifest}}\"";
+    const run = async (runId: string): Promise<Awaited<ReturnType<typeof runDesktopExternalAgent>>> => runDesktopExternalAgent(
+      { brief: `Edit ${runId}.`, projectPath, runId },
+      {
+        agentRunner: async (invocation) => {
+          const args = new Map<string, string>();
+          for (let index = 0; index < invocation.args.length; index += 2) {
+            const key = invocation.args[index];
+            const value = invocation.args[index + 1];
+            if (key !== undefined && value !== undefined) {
+              args.set(key, value);
+            }
+          }
+          await writeFile(
+            path.join(invocation.cwd, "slides", "001-title.html"),
+            `<section class="slide" data-slide-id="001-title"><h1>${runId}</h1></section>\n`,
+            "utf8"
+          );
+          await writeFile(args.get("--writes-manifest") ?? "", JSON.stringify({ writes: ["slides/001-title.html"] }), "utf8");
+          return { exitCode: 0, stdout: "", stderr: "" };
+        },
+        cliRunner: async (args) => {
+          if (args[0] === "check") {
+            return { ok: true, exitCode: 0, stdout: "", stderr: "", json: { status: "passed", summary: { errors: 0, warnings: 0 } } };
+          }
+          if (args[0] === "export") {
+            return { ok: true, exitCode: 0, stdout: "", stderr: "", json: { status: "passed", artifacts: {} } };
+          }
+          throw new Error(`Unexpected CLI call: ${args.join(" ")}`);
+        },
+        cliRuntime: TEST_CLI_RUNTIME,
+        settings: externalAgentSettings(commandTemplate)
+      }
+    );
+
+    const first = await run("run-external-first");
+    const second = await run("run-external-second");
+    expect(first).toMatchObject({ ok: true, summary: { status: "succeeded" } });
+    expect(second).toMatchObject({ ok: true, summary: { status: "succeeded" } });
+    await acceptDesktopAgentChanges({
+      projectPath,
+      runId: first.summary.runId,
+      checkpointId: first.checkpointDiff?.checkpoint.id
+    });
+
+    await expect(readFile(path.join(projectPath, ".htmlslide", "reports", "latest-agent-run.json")).then(JSON.parse)).resolves.toMatchObject({
+      runId: second.summary.runId,
+      acceptance: { successfulRun: { runId: second.summary.runId, diffReview: "available" } }
+    });
+    await expect(readFile(path.join(projectPath, ".htmlslide", "reports", "agent-run-run-external-first.json")).then(JSON.parse)).resolves.toMatchObject({
+      runId: first.summary.runId,
+      acceptance: { successfulRun: { diffReview: "passed" } }
+    });
   });
 
   it("rejects source symlinks before a built-in external agent starts", async () => {

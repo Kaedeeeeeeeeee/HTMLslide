@@ -71,18 +71,18 @@ pnpm rc:checklist -- --channel alpha --ci-run-url <ci-url> --package-run-url <al
 
 The generated Markdown file under `dist/acceptance/` is intentionally ignored by git. For a candidate checklist, always bind the exact package manifest and commit as shown above; the verifier also checks the primary DMG fingerprint recorded in that manifest. Attach or paste the completed checklist into the release candidate notes. Its Automated Gates section is generated from the shared release gate contract; the verifier rejects missing, duplicate, unexpected, or unchecked gates, as well as a checklist that leaves a Pass item with unchecked manual steps. It also records the mandatory manual script from Phase 19.16: clean macOS account, DMG install, first launch, mock/local deck creation, real BYOK provider, fake external agent, real Claude/Codex compatibility, Gemini detection-only boundary, PDF/deckpkg export, external-monitor presentation, reopen, agent-run revert, CLI uninstall, and post-delete file cleanup. The promotion verifier requires `Accepted` plus `Pass` for every manual item; missing credentials or a no-claim external-agent result cannot be marked `N/A` to bypass Alpha requirements.
 
-For a real Claude Code or Codex CLI compatibility claim, start from the fixed sanitized example at [`docs/examples/external-agent-rc-evidence-input.json`](../examples/external-agent-rc-evidence-input.json), replace only its fake provider/run metadata with the tester's sanitized results, and verify it against the exact candidate package manifest:
+For a real Claude Code or Codex CLI compatibility claim, use the sanitized product report written by the packaged app under `<project>/.htmlslide/reports/agent-run-<run-id>.json`. Run a successful edit through Check and Export, review the diff, revert it, then run a distinct cancellation attempt. The report accumulates those run-bound states in `acceptance`; it never contains prompt text, raw output, credentials, temporary workspace paths, or project absolute paths. Verify that report against the exact candidate package manifest:
 
 ```bash
 pnpm rc:external-agent-evidence -- \
-  --evidence /path/to/external-agent-evidence-input.json \
+  --evidence /path/to/project/.htmlslide/reports/agent-run-<run-id>.json \
   --package-manifest /path/to/HTMLslide-alpha-manifest.json \
   --commit <candidate-commit> \
   --artifact-url <candidate-artifact-reference> \
   --output /path/to/external-agent-acceptance-evidence.json
 ```
 
-The verifier rejects raw logs, secrets, absolute paths, unsupported fields, mismatched provider auth commands, incomplete Check/Export/Revert evidence, and package manifests whose signing/channel contract is inconsistent. Its output contains only sanitized metadata and input/package SHA-256 digests; it does not prove the manual run occurred by itself, so the human tester must retain the evidence link and exact artifact notes in the RC checklist.
+The verifier also accepts the fixed sanitized input at [`docs/examples/external-agent-rc-evidence-input.json`](../examples/external-agent-rc-evidence-input.json) for deterministic fixture and compatibility workflows. It rejects raw logs, secrets, absolute paths, unsupported fields, mismatched provider auth commands, incomplete Check/Export/Revert evidence, and package manifests whose signing/channel contract is inconsistent. Its output contains only sanitized metadata and input/package SHA-256 digests; it does not prove the manual run occurred by itself, so the human tester must retain the evidence link and exact artifact notes in the RC checklist.
 
 For a signed release candidate, use the checklist's stable `htmlslide-signed-notarized-<candidate-run-id>-<DMG-file-name>` reference as the artifact value so Promotion can bind the evidence to the downloaded candidate.
 

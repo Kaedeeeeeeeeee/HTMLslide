@@ -481,6 +481,7 @@ describe("DesktopAgentRunRegistry", () => {
           stderr: huge,
           reportedWrites: Array.from({ length: 250 }, (_, index) => `slides/${index}.html`)
         },
+        agentReportPath: "/tmp/external/.htmlslide/reports/agent-run-run-adapter-bounds.json",
         summary: {
           runId: request.runId,
           status: "succeeded",
@@ -504,6 +505,7 @@ describe("DesktopAgentRunRegistry", () => {
     expect(snapshot.result.adapter.stderr?.length).toBeLessThanOrEqual(32_768);
     expect(snapshot.result.adapter.reportedWrites).toHaveLength(200);
     expect(snapshot.result.adapter.command?.args).toHaveLength(200);
+    expect(snapshot.result.agentReportPath).toBe("/tmp/external/.htmlslide/reports/agent-run-run-adapter-bounds.json");
     expect(JSON.stringify(snapshot)).not.toContain(secret);
   });
 

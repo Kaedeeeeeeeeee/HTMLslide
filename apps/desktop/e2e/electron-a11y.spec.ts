@@ -263,6 +263,9 @@ test.describe("HTMLslide desktop accessibility smoke", () => {
     await expectNoAccessibilityViolations(page, "visual direction choices");
     await choices.nth(1).press("Enter");
     await expect(choicePanel).toBeHidden({ timeout: 30_000 });
+    await expect(page.getByText("AI generation is disabled in No AI mode.")).toBeHidden();
+    await expect(page.getByRole("button", { name: "Run", exact: true })).toBeEnabled();
+    await expect(page.getByText("Mock agent completed check and export")).toBeVisible({ timeout: 30_000 });
 
     await expectNoFrameworkOverlay(page);
     expect(browserErrors).toEqual([]);

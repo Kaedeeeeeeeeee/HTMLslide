@@ -700,6 +700,99 @@ describe("release evidence scripts", () => {
     }
   });
 
+  it("accepts a sanitized desktop external-agent report after successful and cancelled runs accumulate", async () => {
+    const fixture = await createExternalAgentEvidenceFixture();
+    try {
+      const input = JSON.parse(await readFile(fixture.evidencePath, "utf8")) as {
+        provider: { id: string; version: string };
+        authentication: { status: string; command: string };
+        permissionSummary: { sandbox: string; permissionFlags: string[] };
+        successfulRun: Record<string, unknown>;
+        cancellationRun: Record<string, unknown>;
+      };
+      const reportPath = path.join(fixture.root, "desktop-agent-report.json");
+      await writeFile(reportPath, JSON.stringify({
+        schemaVersion: "0.1.0",
+        kind: "htmlslide-agent-run-report",
+        runId: "run-success-123",
+        providerId: "external-agent",
+        generatedAt: "2026-07-14T00:00:00.000Z",
+        ok: true,
+        status: "succeeded",
+        stages: [],
+        outputs: { checks: [], repairs: [] },
+        provider: input.provider,
+        authentication: input.authentication,
+        permissionSummary: input.permissionSummary,
+        acceptance: {
+          successfulRun: input.successfulRun,
+          cancellationRun: input.cancellationRun
+        },
+        checkpoint: { id: "checkpoint-run-success-123", strategy: "file-copy", canRevert: true },
+        cli: {},
+        externalCli: { check: "passed", export: "passed" },
+        secretSafety: "passed"
+      }, null, 2), "utf8");
+
+      const outputPath = path.join(fixture.root, "desktop-report-verified.json");
+      await verifyExternalAgentEvidence([
+        "--evidence", reportPath,
+        "--package-manifest", fixture.manifestPath,
+        "--commit", "f570b88",
+        "--artifact-url", "https://github.test/actions/artifacts/123",
+        "--output", outputPath
+      ]);
+
+      await expect(readFile(outputPath, "utf8").then(JSON.parse)).resolves.toMatchObject({
+        status: "passed",
+        provider: { id: "codex-cli" },
+        runs: {
+          successful: { runId: "run-success-123", check: "passed", export: "passed", diffReview: "passed", revert: "passed" },
+          cancellation: { runId: "run-cancel-456", status: "cancelled" }
+        }
+      });
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a desktop external-agent report that has not recorded the cancellation run", async () => {
+    const fixture = await createExternalAgentEvidenceFixture();
+    try {
+      const input = JSON.parse(await readFile(fixture.evidencePath, "utf8")) as Record<string, unknown>;
+      const reportPath = path.join(fixture.root, "desktop-agent-report-incomplete.json");
+      await writeFile(reportPath, JSON.stringify({
+        schemaVersion: "0.1.0",
+        kind: "htmlslide-agent-run-report",
+        runId: "run-success-123",
+        providerId: "external-agent",
+        generatedAt: "2026-07-14T00:00:00.000Z",
+        ok: true,
+        status: "succeeded",
+        stages: [],
+        outputs: { checks: [], repairs: [] },
+        provider: input.provider,
+        authentication: input.authentication,
+        permissionSummary: input.permissionSummary,
+        acceptance: { successfulRun: input.successfulRun },
+        checkpoint: { id: "checkpoint-run-success-123", strategy: "file-copy", canRevert: true },
+        cli: {},
+        externalCli: { check: "passed", export: "passed" },
+        secretSafety: "passed"
+      }, null, 2), "utf8");
+
+      await expect(verifyExternalAgentEvidence([
+        "--evidence", reportPath,
+        "--package-manifest", fixture.manifestPath,
+        "--commit", "f570b88",
+        "--artifact-url", "https://github.test/actions/artifacts/123",
+        "--output", path.join(fixture.root, "should-not-exist.json")
+      ])).rejects.toThrow(/cancellation run/iu);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   it("marks external-agent contract smoke output as fixture-only", async () => {
     const fixture = await createExternalAgentEvidenceFixture();
     try {

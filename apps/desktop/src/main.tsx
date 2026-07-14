@@ -2262,7 +2262,10 @@ function App(): React.ReactNode {
 
   const runAgentGeneration = useCallback(
     (brief: string): void => {
+      const currentEngine = agentRunSnapshotRef.current?.engine;
       startAgentGeneration(brief, {
+        engine: currentEngine === "mock-agent" ? "mock-agent" : undefined,
+        forceMock: currentEngine === "mock-agent",
         projectPath: activeProject && !activeProject.path.startsWith("~") && !activeProjectIsDeckPackage
           ? activeProject.path
           : undefined
@@ -2362,7 +2365,7 @@ function App(): React.ReactNode {
       agentCanRetry={Boolean(agentRunSnapshot?.canRetry && !running)}
       agentCancelPending={agentCancelPendingRunId === agentRunSnapshot?.runId || agentRunSnapshot?.status === "cancelling"}
       agentEngine={agentRunSnapshot?.engine ?? selectedAgentEngine(aiEngineSettings)}
-      generationEnabled={aiEngineSettings.mode !== "no-ai"}
+      generationEnabled={aiEngineSettings.mode !== "no-ai" || agentRunSnapshot?.engine === "mock-agent"}
       agentRunId={agentRunSnapshot?.runId}
       agentRunStatus={agentRunSnapshot?.status}
       agentRunUsage={agentRunSnapshot?.result?.summary.usage}

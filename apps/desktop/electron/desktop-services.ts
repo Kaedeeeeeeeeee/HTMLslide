@@ -396,18 +396,59 @@ export type DesktopAgentRunReportCliResult = {
   artifactPaths: string[];
 };
 
+export type DesktopExternalAgentAcceptanceStatus =
+  | "passed"
+  | "available"
+  | "failed"
+  | "not-started"
+  | "not-available";
+
+export type DesktopExternalAgentSuccessfulRunEvidence = {
+  runId: string;
+  status: "succeeded";
+  edit: "passed" | "failed";
+  changedFiles: string[];
+  check: DesktopExternalAgentAcceptanceStatus;
+  export: DesktopExternalAgentAcceptanceStatus;
+  diffReview: DesktopExternalAgentAcceptanceStatus;
+  revert: DesktopExternalAgentAcceptanceStatus;
+};
+
+export type DesktopExternalAgentCancellationEvidence = {
+  runId: string;
+  status: "cancelled";
+  postCancelCheckExport: "not-started" | "started";
+};
+
+export type DesktopExternalAgentAcceptance = {
+  successfulRun?: DesktopExternalAgentSuccessfulRunEvidence;
+  cancellationRun?: DesktopExternalAgentCancellationEvidence;
+};
+
+export type DesktopExternalAgentPermissionSummary = {
+  sandbox: string;
+  permissionFlags: string[];
+};
+
+export type DesktopExternalAgentReportProvider = {
+  id: DesktopExternalAgentId;
+  version: string;
+};
+
 export type DesktopAgentRunReport = {
   schemaVersion: typeof AGENT_RUN_REPORT_SCHEMA_VERSION;
   kind: "htmlslide-agent-run-report";
   runId: string;
-  providerId: "htmlslide-mock" | "htmlslide-byok";
+  providerId: "htmlslide-mock" | "htmlslide-byok" | "external-agent";
   provider?: {
-    provider: DesktopApiKeyProvider;
-    model: string;
+    provider?: DesktopApiKeyProvider;
+    model?: string;
     baseUrlSha256?: string;
+    id?: DesktopExternalAgentId;
+    version?: string;
   };
   targetSlideCount?: number;
-  projectPath: string;
+  projectPath?: string;
   generatedAt: string;
   ok: boolean;
   status: AgentRunResult["status"];
@@ -467,6 +508,17 @@ export type DesktopAgentRunReport = {
     artifactCount: number;
     sha256: string;
   };
+  authentication?: {
+    status: "passed" | "failed" | "not-applicable";
+    command: string;
+  };
+  permissionSummary?: DesktopExternalAgentPermissionSummary;
+  acceptance?: DesktopExternalAgentAcceptance;
+  externalCli?: {
+    check: DesktopExternalAgentAcceptanceStatus;
+    export: DesktopExternalAgentAcceptanceStatus;
+  };
+  secretSafety?: "passed";
 };
 
 export type DesktopMockAgentRunResult = {
@@ -567,6 +619,7 @@ export type DesktopExternalAgentRunResult = {
   project?: DesktopProjectPreview;
   error?: string;
   summary: DesktopExternalAgentRunSummary;
+  agentReportPath?: string;
 };
 
 export type DesktopCheckpointRequest = {
@@ -3117,6 +3170,42 @@ export async function runDesktopExternalAgent(
   options: DesktopExternalAgentRunnerOptions = {}
 ): Promise<DesktopExternalAgentRunResult> {
   const projectPath = path.resolve(request.projectPath);
+  const settings = sanitizeAiEngineSettings(options.settings ?? (options.settingsPath
+    ? await readAiEngineSettings(options.settingsPath)
+    : DEFAULT_AI_ENGINE_SETTINGS));
+  let effectiveOptions: DesktopExternalAgentRunnerOptions = {
+    ...options,
+    settings
+  };
+  if (
+    !options.signal?.aborted &&
+    options.externalAgentStatuses === undefined &&
+    (settings.externalAgent.selectedId === "claude-code" || settings.externalAgent.selectedId === "codex-cli")
+  ) {
+    effectiveOptions = {
+      ...effectiveOptions,
+      externalAgentStatuses: await detectExternalAgentStatuses({ cwd: projectPath })
+    };
+  }
+
+  const result = await runDesktopExternalAgentInternal(request, effectiveOptions);
+  const agentReportPath = await writeDesktopExternalAgentRunReport({
+    projectPath,
+    provider: externalAgentReportProvider(settings.externalAgent.selectedId, effectiveOptions.externalAgentStatuses),
+    statuses: effectiveOptions.externalAgentStatuses,
+    result
+  });
+  return {
+    ...result,
+    agentReportPath
+  };
+}
+
+async function runDesktopExternalAgentInternal(
+  request: DesktopExternalAgentRunRequest,
+  options: DesktopExternalAgentRunnerOptions = {}
+): Promise<DesktopExternalAgentRunResult> {
+  const projectPath = path.resolve(request.projectPath);
   const runId = normalizeExternalAgentRunId(request.runId);
   const brief = request.brief.trim();
   const events: AgentRunEvent[] = [];
@@ -3740,6 +3829,9 @@ export async function acceptDesktopAgentChanges(
   const diff = await diffDesktopCheckpoint(request);
   const review = createDesktopAgentReviewState(diff, request);
   await writeDesktopAgentReview(request.projectPath, review);
+  await updateDesktopExternalAgentAcceptance(request.projectPath, review.runId, {
+    diffReview: "passed"
+  });
   return review;
 }
 
@@ -3801,6 +3893,9 @@ export async function revertDesktopCheckpoint(
     checkpointId: request.checkpointId
   });
   await removeDesktopAgentReview(projectPath, reverted.checkpoint.runId, reverted.checkpoint.id);
+  await updateDesktopExternalAgentAcceptance(projectPath, reverted.checkpoint.runId, {
+    revert: "passed"
+  });
 
   return {
     ...reverted,
@@ -5605,6 +5700,373 @@ async function writeDesktopAgentRunReport({
   ]);
 
   return reportPath;
+}
+
+async function writeDesktopExternalAgentRunReport({
+  projectPath,
+  provider,
+  statuses,
+  result
+}: {
+  projectPath: string;
+  provider: DesktopExternalAgentReportProvider;
+  statuses?: DesktopExternalAgentStatus[];
+  result: DesktopExternalAgentRunResult;
+}): Promise<string> {
+  const reportsPath = await ensureProjectRuntimeDirectory(projectPath, [".htmlslide", "reports"]);
+  const latestPath = path.join(reportsPath, "latest-agent-run.json");
+  const previousAcceptance = await readExternalAgentAcceptance(latestPath);
+  const acceptance = mergeExternalAgentAcceptance(previousAcceptance, result);
+  const checkStatus = externalAgentCliStatus(result.check);
+  const exportStatus = externalAgentCliStatus(result.export);
+  const report: DesktopAgentRunReport = {
+    schemaVersion: AGENT_RUN_REPORT_SCHEMA_VERSION,
+    kind: "htmlslide-agent-run-report",
+    runId: result.summary.runId,
+    providerId: "external-agent",
+    generatedAt: new Date().toISOString(),
+    ok: result.ok,
+    status: result.summary.status,
+    stages: [],
+    outputs: {
+      checks: [],
+      repairs: []
+    },
+    provider,
+    authentication: externalAgentAuthentication(provider.id, statuses),
+    permissionSummary: externalAgentPermissionSummary(provider.id),
+    acceptance,
+    checkpoint: result.checkpointDiff
+      ? {
+          id: result.checkpointDiff.checkpoint.id,
+          strategy: result.checkpointDiff.checkpoint.strategy,
+          canRevert: result.checkpointDiff.checkpoint.restore.canRevert
+        }
+      : undefined,
+    cli: {},
+    externalCli: {
+      check: checkStatus,
+      export: exportStatus
+    },
+    secretSafety: "passed"
+  };
+  const payload = `${JSON.stringify(report, null, 2)}\n`;
+  const reportPath = path.join(reportsPath, `agent-run-${safeAgentRunReportId(result.summary.runId)}.json`);
+  await Promise.all([
+    writeRuntimeFileAtomic(reportPath, payload),
+    writeRuntimeFileAtomic(latestPath, payload)
+  ]);
+  return reportPath;
+}
+
+function externalAgentReportProvider(
+  id: DesktopExternalAgentId,
+  statuses: DesktopExternalAgentStatus[] | undefined
+): DesktopExternalAgentReportProvider {
+  const detected = statuses?.find((status) => status.id === id);
+  const version = safeExternalAgentReportMetadata(
+    detected?.version ?? (id === "generic" ? "configured command" : "version unavailable"),
+    "version unavailable"
+  );
+  return { id, version };
+}
+
+function externalAgentAuthentication(
+  id: DesktopExternalAgentId,
+  statuses?: DesktopExternalAgentStatus[]
+): { status: "passed" | "failed" | "not-applicable"; command: string } {
+  if (id === "generic") {
+    return { status: "not-applicable", command: "generic command authentication not applicable" };
+  }
+  const status = statuses?.find((candidate) => candidate.id === id);
+  return {
+    status: status?.authenticated === true && status.status === "ready" ? "passed" : "failed",
+    command: id === "claude-code" ? "claude auth status" : "codex login status"
+  };
+}
+
+function externalAgentPermissionSummary(id: DesktopExternalAgentId): DesktopExternalAgentPermissionSummary {
+  if (id === "claude-code") {
+    return {
+      sandbox: "project-copy",
+      permissionFlags: [
+        "--setting-sources empty",
+        "--strict-mcp-config",
+        "--disable-slash-commands",
+        "--permission-mode acceptEdits",
+        "--tools Read,Glob,Grep,Edit,Write",
+        "--no-session-persistence"
+      ]
+    };
+  }
+  if (id === "codex-cli") {
+    return {
+      sandbox: "workspace-write",
+      permissionFlags: [
+        "--sandbox workspace-write",
+        "--ephemeral",
+        "--ignore-user-config",
+        "--skip-git-repo-check",
+        "--json",
+        "--color never"
+      ]
+    };
+  }
+  return {
+    sandbox: id === "generic" ? "project-copy" : "detection-only",
+    permissionFlags: ["project-boundary", "checkpoint-diff", "no-raw-output"]
+  };
+}
+
+function externalAgentCliStatus(
+  result: CliRunResult | undefined
+): DesktopExternalAgentAcceptanceStatus {
+  return result === undefined ? "not-started" : result.ok ? "passed" : "failed";
+}
+
+function mergeExternalAgentAcceptance(
+  previous: DesktopExternalAgentAcceptance | undefined,
+  result: DesktopExternalAgentRunResult
+): DesktopExternalAgentAcceptance {
+  const acceptance: DesktopExternalAgentAcceptance = {
+    ...(previous?.successfulRun ? { successfulRun: previous.successfulRun } : {}),
+    ...(previous?.cancellationRun ? { cancellationRun: previous.cancellationRun } : {})
+  };
+  if (result.summary.status === "succeeded") {
+    acceptance.successfulRun = {
+      runId: result.summary.runId,
+      status: "succeeded",
+      edit: result.summary.filesChanged.length > 0 ? "passed" : "failed",
+      changedFiles: safeExternalAgentSourcePaths(result.summary.filesChanged),
+      check: externalAgentCliStatus(result.check),
+      export: externalAgentCliStatus(result.export),
+      diffReview: result.checkpointDiff ? "available" : "not-available",
+      revert: result.checkpointDiff?.checkpoint.restore.canRevert === true ? "available" : "not-available"
+    };
+  }
+  if (result.summary.status === "cancelled") {
+    acceptance.cancellationRun = {
+      runId: result.summary.runId,
+      status: "cancelled",
+      postCancelCheckExport: result.check === undefined && result.export === undefined ? "not-started" : "started"
+    };
+  }
+  return acceptance;
+}
+
+async function readExternalAgentAcceptance(
+  reportPath: string
+): Promise<DesktopAgentRunReport["acceptance"] | undefined> {
+  try {
+    const stats = await fs.lstat(reportPath);
+    if (!stats.isFile() || stats.isSymbolicLink()) {
+      return undefined;
+    }
+    const value = JSON.parse(await fs.readFile(reportPath, "utf8")) as unknown;
+    if (!isRecord(value) || value.providerId !== "external-agent" || !isRecord(value.acceptance)) {
+      return undefined;
+    }
+    return sanitizeExternalAgentAcceptance(value.acceptance);
+  } catch {
+    return undefined;
+  }
+}
+
+function sanitizeExternalAgentAcceptance(value: unknown): DesktopExternalAgentAcceptance {
+  if (!isRecord(value)) {
+    return {};
+  }
+  const acceptance: DesktopExternalAgentAcceptance = {};
+  const successful = sanitizeExternalAgentSuccessfulRun(value.successfulRun);
+  if (successful) {
+    acceptance.successfulRun = successful;
+  }
+  const cancellation = sanitizeExternalAgentCancellationRun(value.cancellationRun);
+  if (cancellation) {
+    acceptance.cancellationRun = cancellation;
+  }
+  return acceptance;
+}
+
+function sanitizeExternalAgentSuccessfulRun(value: unknown): DesktopExternalAgentSuccessfulRunEvidence | undefined {
+  if (!isRecord(value) || value.status !== "succeeded" || !isSafeExternalAgentRunId(value.runId)) {
+    return undefined;
+  }
+  const changedFiles = safeExternalAgentSourcePaths(value.changedFiles);
+  if (changedFiles.length === 0) {
+    return undefined;
+  }
+  const statuses = [value.check, value.export, value.diffReview, value.revert].map(externalAcceptanceStatus);
+  if (statuses.some((status) => status === undefined)) {
+    return undefined;
+  }
+  return {
+    runId: value.runId,
+    status: "succeeded",
+    edit: value.edit === "passed" ? "passed" : "failed",
+    changedFiles,
+    check: statuses[0] as DesktopExternalAgentAcceptanceStatus,
+    export: statuses[1] as DesktopExternalAgentAcceptanceStatus,
+    diffReview: statuses[2] as DesktopExternalAgentAcceptanceStatus,
+    revert: statuses[3] as DesktopExternalAgentAcceptanceStatus
+  };
+}
+
+function sanitizeExternalAgentCancellationRun(value: unknown): DesktopExternalAgentCancellationEvidence | undefined {
+  if (!isRecord(value) || value.status !== "cancelled" || !isSafeExternalAgentRunId(value.runId)) {
+    return undefined;
+  }
+  return {
+    runId: value.runId,
+    status: "cancelled",
+    postCancelCheckExport: value.postCancelCheckExport === "started" ? "started" : "not-started"
+  };
+}
+
+function externalAcceptanceStatus(value: unknown): DesktopExternalAgentAcceptanceStatus | undefined {
+  return value === "passed" || value === "available" || value === "failed" || value === "not-started" || value === "not-available"
+    ? value
+    : undefined;
+}
+
+function safeExternalAgentSourcePaths(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return [...new Set(value.filter((item): item is string =>
+    typeof item === "string" &&
+    item.length > 0 &&
+    item.length <= 256 &&
+    !path.isAbsolute(item) &&
+    !item.includes("\\") &&
+    !item.startsWith("exports/") &&
+    !item.startsWith(".htmlslide/") &&
+    !item.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ))].slice(0, 128);
+}
+
+function isSafeExternalAgentRunId(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/u.test(value);
+}
+
+function safeExternalAgentReportMetadata(value: string, fallback: string): string {
+  const sanitized = sanitizeDesktopAgentText(value)
+    .replace(/[\r\n]+/gu, " ")
+    .replace(/[^A-Za-z0-9 .:+_-]/gu, "")
+    .trim()
+    .slice(0, 128);
+  return sanitized.length > 0 ? sanitized : fallback;
+}
+
+async function updateDesktopExternalAgentAcceptance(
+  projectPath: string,
+  runId: string,
+  patch: { diffReview?: "passed"; revert?: "passed" }
+): Promise<void> {
+  const reportsPath = await ensureProjectRuntimeDirectory(projectPath, [".htmlslide", "reports"]);
+  const reportPath = path.join(reportsPath, `agent-run-${safeAgentRunReportId(runId)}.json`);
+  let report: unknown;
+  try {
+    const stats = await fs.lstat(reportPath);
+    if (!stats.isFile() || stats.isSymbolicLink()) {
+      return;
+    }
+    report = JSON.parse(await fs.readFile(reportPath, "utf8")) as unknown;
+  } catch {
+    return;
+  }
+  if (!isRecord(report) || report.providerId !== "external-agent" || report.runId !== runId) {
+    return;
+  }
+  const acceptance = sanitizeExternalAgentAcceptance(report.acceptance);
+  const successfulRun = acceptance.successfulRun;
+  if (!successfulRun) {
+    return;
+  }
+  acceptance.successfulRun = {
+    ...successfulRun,
+    ...(patch.diffReview ? { diffReview: patch.diffReview } : {}),
+    ...(patch.revert ? { revert: patch.revert } : {})
+  };
+  const updated = {
+    schemaVersion: AGENT_RUN_REPORT_SCHEMA_VERSION,
+    kind: "htmlslide-agent-run-report",
+    runId,
+    providerId: "external-agent",
+    generatedAt: safeExternalAgentReportMetadata(String(report.generatedAt ?? ""), new Date().toISOString()),
+    ok: report.ok === true,
+    status: report.status === "cancelled" || report.status === "failed" ? report.status : "succeeded",
+    stages: [],
+    outputs: {
+      checks: [],
+      repairs: []
+    },
+    provider: isRecord(report.provider)
+      ? {
+          id: normalizeExternalAgentId(report.provider.id),
+          version: safeExternalAgentReportMetadata(String(report.provider.version ?? ""), "version unavailable")
+        }
+      : { id: "generic", version: "version unavailable" },
+    authentication: isRecord(report.authentication)
+      ? {
+          status: report.authentication.status === "passed" || report.authentication.status === "failed"
+            ? report.authentication.status
+            : "not-applicable",
+          command: safeExternalAgentReportMetadata(String(report.authentication.command ?? ""), "authentication status unavailable")
+        }
+      : { status: "not-applicable", command: "authentication status unavailable" },
+    permissionSummary: isRecord(report.permissionSummary)
+      ? {
+          sandbox: safeExternalAgentReportMetadata(String(report.permissionSummary.sandbox ?? ""), "unknown"),
+          permissionFlags: Array.isArray(report.permissionSummary.permissionFlags)
+            ? report.permissionSummary.permissionFlags
+                .filter((flag): flag is string => typeof flag === "string")
+                .map((flag) => safeExternalAgentReportMetadata(flag, "permission flag"))
+                .slice(0, 32)
+            : []
+        }
+      : { sandbox: "unknown", permissionFlags: [] },
+    acceptance,
+    ...(isRecord(report.checkpoint)
+      ? {
+          checkpoint: {
+            id: safeExternalAgentReportMetadata(String(report.checkpoint.id ?? ""), "checkpoint"),
+            strategy: safeExternalAgentReportMetadata(String(report.checkpoint.strategy ?? ""), "file-copy"),
+            canRevert: report.checkpoint.canRevert === true
+          }
+        }
+      : {}),
+    cli: {},
+    ...(isRecord(report.externalCli)
+      ? { externalCli: sanitizeExternalAgentCli(report.externalCli) }
+      : {}),
+    secretSafety: "passed"
+  } satisfies DesktopAgentRunReport;
+  const payload = `${JSON.stringify(updated, null, 2)}\n`;
+  await writeRuntimeFileAtomic(reportPath, payload);
+  const latestPath = path.join(reportsPath, "latest-agent-run.json");
+  try {
+    const latestStats = await fs.lstat(latestPath);
+    if (!latestStats.isFile() || latestStats.isSymbolicLink()) {
+      return;
+    }
+    const latest = JSON.parse(await fs.readFile(latestPath, "utf8")) as unknown;
+    if (isRecord(latest) && latest.providerId === "external-agent" && latest.runId === runId) {
+      await writeRuntimeFileAtomic(latestPath, payload);
+    }
+  } catch {
+    // The run-bound report remains authoritative when the latest pointer is unavailable.
+  }
+}
+
+function sanitizeExternalAgentCli(value: Record<string, unknown>): {
+  check: DesktopExternalAgentAcceptanceStatus;
+  export: DesktopExternalAgentAcceptanceStatus;
+} {
+  return {
+    check: externalAcceptanceStatus(value.check) ?? "not-started",
+    export: externalAcceptanceStatus(value.export) ?? "not-started"
+  };
 }
 
 function createDesktopAgentRunReport({

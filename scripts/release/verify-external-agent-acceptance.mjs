@@ -85,7 +85,9 @@ export function parseArgs(args) {
 
 export async function verifyExternalAgentAcceptance(options) {
   assertNoSecrets(options.evidence, "external agent evidence");
-  validateInputEvidence(options.evidence);
+  const inputEvidence = normalizeExternalAgentEvidence(options.evidence);
+  assertNoSecrets(inputEvidence, "normalized external agent evidence");
+  validateInputEvidence(inputEvidence);
 
   const commit = String(options.commit).trim();
   if (!commitPattern.test(commit)) {
@@ -101,8 +103,8 @@ export async function verifyExternalAgentAcceptance(options) {
     generatedAt: new Date().toISOString(),
     ...(options.fixtureOnly ? { fixtureOnly: true, providerBoundary: "fixture-only" } : {}),
     provider: {
-      id: options.evidence.provider.id,
-      version: options.evidence.provider.version
+      id: inputEvidence.provider.id,
+      version: inputEvidence.provider.version
     },
     candidate: {
       binding: "caller-declared",
@@ -113,24 +115,24 @@ export async function verifyExternalAgentAcceptance(options) {
     },
     authentication: {
       status: "passed",
-      command: options.evidence.authentication.command
+      command: inputEvidence.authentication.command
     },
     permissionSummary: {
-      sandbox: options.evidence.permissionSummary.sandbox,
-      permissionFlags: [...options.evidence.permissionSummary.permissionFlags]
+      sandbox: inputEvidence.permissionSummary.sandbox,
+      permissionFlags: [...inputEvidence.permissionSummary.permissionFlags]
     },
     runs: {
       successful: {
-        runId: options.evidence.successfulRun.runId,
+        runId: inputEvidence.successfulRun.runId,
         status: "succeeded",
-        changedFiles: [...options.evidence.successfulRun.changedFiles].sort(byteCompare),
+        changedFiles: [...inputEvidence.successfulRun.changedFiles].sort(byteCompare),
         check: "passed",
         export: "passed",
         diffReview: "passed",
         revert: "passed"
       },
       cancellation: {
-        runId: options.evidence.cancellationRun.runId,
+        runId: inputEvidence.cancellationRun.runId,
         status: "cancelled",
         postCancelCheckExport: "not-started"
       }
@@ -156,6 +158,112 @@ export async function verifyExternalAgentAcceptance(options) {
   };
   assertNoSecrets(evidence, "generated external agent evidence");
   return evidence;
+}
+
+function normalizeExternalAgentEvidence(value) {
+  if (!isRecord(value) || value.kind !== "htmlslide-agent-run-report" || value.providerId !== "external-agent") {
+    return value;
+  }
+  validateProductExternalAgentReport(value);
+  return {
+    schemaVersion: 1,
+    kind: "htmlslide-external-agent-rc-evidence-input",
+    status: "passed",
+    provider: value.provider,
+    authentication: value.authentication,
+    permissionSummary: value.permissionSummary,
+    successfulRun: value.acceptance.successfulRun,
+    cancellationRun: value.acceptance.cancellationRun,
+    secretSafety: value.secretSafety
+  };
+}
+
+function validateProductExternalAgentReport(value) {
+  const allowedKeys = new Set([
+    "schemaVersion", "kind", "runId", "providerId", "generatedAt", "ok", "status", "stages", "outputs",
+    "provider", "authentication", "permissionSummary", "acceptance", "checkpoint", "cli", "externalCli", "secretSafety"
+  ]);
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.has(key)) {
+      throw new Error("Product external-agent report contains unsupported fields.");
+    }
+  }
+  if (value.schemaVersion !== "0.1.0" || value.providerId !== "external-agent" ||
+      (value.status !== "succeeded" && value.status !== "failed" && value.status !== "cancelled") ||
+      typeof value.ok !== "boolean") {
+    throw new Error("Product external-agent report does not match the desktop report contract.");
+  }
+  requireSafeRunId(value.runId, "product external-agent runId");
+  requireSafeMetadataString(value.generatedAt, "product external-agent generatedAt", 128);
+  if (!Array.isArray(value.stages) || value.stages.length !== 0 || !isRecord(value.outputs)) {
+    throw new Error("Product external-agent report must omit agent output and live stage details.");
+  }
+  assertExactKeys(value.outputs, ["checks", "repairs"], "product external-agent report outputs");
+  if (!Array.isArray(value.outputs.checks) || value.outputs.checks.length !== 0 ||
+      !Array.isArray(value.outputs.repairs) || value.outputs.repairs.length !== 0) {
+    throw new Error("Product external-agent report must not contain raw agent output.");
+  }
+  if (!isRecord(value.provider)) {
+    throw new Error("Product external-agent report is missing provider metadata.");
+  }
+  assertExactKeys(value.provider, ["id", "version"], "product external-agent provider");
+  const providerId = requireSafeMetadataString(value.provider.id, "product external-agent provider id", 64);
+  if (!allowedProviders.has(providerId)) {
+    throw new Error(`Unsupported real external agent provider: ${providerId}.`);
+  }
+  const providerVersion = requireSafeMetadataString(value.provider.version, "product external-agent provider version", 128);
+  if (providerVersion.includes("/")) {
+    throw new Error("Provider version must not contain paths.");
+  }
+  if (!isRecord(value.authentication)) {
+    throw new Error("Product external-agent report is missing authentication metadata.");
+  }
+  assertExactKeys(value.authentication, ["status", "command"], "product external-agent authentication");
+  if (value.authentication.status !== "passed" || value.authentication.command !== allowedProviders.get(providerId)) {
+    throw new Error("Product external-agent authentication evidence does not match the selected provider.");
+  }
+  validateGeneratedPermissionSummary(value.permissionSummary);
+  if (!isRecord(value.acceptance)) {
+    throw new Error("Product external-agent report is missing acceptance metadata.");
+  }
+  assertAllowedOptionalKeys(value.acceptance, ["successfulRun", "cancellationRun"], "product external-agent acceptance");
+  if (value.acceptance.successfulRun === undefined && value.acceptance.cancellationRun === undefined) {
+    throw new Error("Product external-agent report must include a successful or cancelled run.");
+  }
+  if (value.checkpoint !== undefined) {
+    if (!isRecord(value.checkpoint)) {
+      throw new Error("Product external-agent checkpoint metadata is malformed.");
+    }
+    assertExactKeys(value.checkpoint, ["id", "strategy", "canRevert"], "product external-agent checkpoint");
+    requireSafeMetadataString(value.checkpoint.id, "product external-agent checkpoint id", 128);
+    requireSafeMetadataString(value.checkpoint.strategy, "product external-agent checkpoint strategy", 64);
+    if (typeof value.checkpoint.canRevert !== "boolean") {
+      throw new Error("Product external-agent checkpoint revert metadata is invalid.");
+    }
+  }
+  if (!isRecord(value.cli)) {
+    throw new Error("Product external-agent report is missing CLI metadata.");
+  }
+  assertExactKeys(value.cli, [], "product external-agent CLI metadata");
+  if (!isRecord(value.externalCli)) {
+    throw new Error("Product external-agent report is missing Check/Export metadata.");
+  }
+  assertExactKeys(value.externalCli, ["check", "export"], "product external-agent Check/Export metadata");
+  for (const key of ["check", "export"]) {
+    if (!["passed", "available", "failed", "not-started", "not-available"].includes(value.externalCli[key])) {
+      throw new Error(`Product external-agent ${key} status is invalid.`);
+    }
+  }
+  if (value.secretSafety !== "passed") {
+    throw new Error("Product external-agent report must record secretSafety as passed.");
+  }
+}
+
+function assertAllowedOptionalKeys(value, allowedKeys, label) {
+  const allowed = new Set(allowedKeys);
+  if (Object.keys(value).some((key) => !allowed.has(key))) {
+    throw new Error(`${label} contains unsupported fields.`);
+  }
 }
 
 export function validateExternalAgentAcceptanceEvidence(value, options = {}) {

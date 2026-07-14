@@ -223,7 +223,14 @@ describe("browser-rendered visual regression", () => {
             await mkdir(path.dirname(goldenPath), { recursive: true });
             await copyFile(screenshotPath, goldenPath);
           } else {
-            await assertGoldenExists(goldenPath);
+            try {
+              await access(goldenPath);
+            } catch {
+              await mkdir(browserVisualDiffOutputPath, { recursive: true });
+              await copyFile(screenshotPath, path.join(browserVisualDiffOutputPath, `${name}-${slideId}-after.png`));
+              browserDiffFailures.push(`Missing browser visual golden: ${goldenPath}.`);
+              continue;
+            }
             const result = await comparePngWithGolden({
               actualPath: screenshotPath,
               goldenPath,

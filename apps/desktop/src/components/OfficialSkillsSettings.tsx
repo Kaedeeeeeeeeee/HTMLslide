@@ -2,7 +2,11 @@ import { Button, PanelHeader, StatusPill } from "@htmlslide/shared-ui";
 import { Sparkles, Trash2, Wrench } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import type { DesktopOfficialSkillSummary, DesktopOfficialSkillsState } from "../desktop-api";
+import type {
+  DesktopOfficialSkillInstallTarget,
+  DesktopOfficialSkillSummary,
+  DesktopOfficialSkillsState
+} from "../desktop-api";
 import type { OperationStatus } from "../model";
 
 type SkillStatusFilter = "all" | DesktopOfficialSkillSummary["status"];
@@ -10,8 +14,9 @@ type SkillStatusFilter = "all" | DesktopOfficialSkillSummary["status"];
 interface OfficialSkillsSettingsPanelProps {
   operationStatus: OperationStatus;
   state?: DesktopOfficialSkillsState;
-  onInstall: () => void;
-  onRemove: (skillName: string) => void;
+  projectPath?: string;
+  onInstall: (target: DesktopOfficialSkillInstallTarget) => void;
+  onRemove: (skillName: string, target: DesktopOfficialSkillInstallTarget) => void;
 }
 
 const statusFilters = [
@@ -25,14 +30,43 @@ export function OfficialSkillsSettingsPanel({
   onInstall,
   onRemove,
   operationStatus,
+  projectPath,
   state
 }: OfficialSkillsSettingsPanelProps): ReactNode {
   const [statusFilter, setStatusFilter] = useState<SkillStatusFilter>("all");
   const [typeFilter, setTypeFilter] = useState("all");
+  const [installTarget, setInstallTarget] = useState<DesktopOfficialSkillInstallTarget>("global");
   const [expandedSkillName, setExpandedSkillName] = useState<string | undefined>();
   const busy = operationStatus.kind === "running";
-  const pending = (state?.missing.length ?? 0) + (state?.stale.length ?? 0);
   const skills = state?.skills ?? [];
+  const projectTargetAvailable = Boolean(
+    projectPath &&
+    state?.projectPath === projectPath &&
+    skills.some((skill) => skill.targets.project?.available)
+  );
+  const selectedTarget: DesktopOfficialSkillInstallTarget = installTarget === "project" && projectTargetAvailable
+    ? "project"
+    : "global";
+  const selectedTargetState = (skill: DesktopOfficialSkillSummary) =>
+    skill.targets[selectedTarget] ?? skill.targets.global;
+  const pending = skills.filter((skill) => {
+    const target = selectedTargetState(skill);
+    return target.status === "missing" || target.status === "stale";
+  }).length;
+  const selectedTargetStatus: DesktopOfficialSkillsState["status"] = selectedTarget === "project"
+    ? !projectTargetAvailable
+      ? "warning"
+      : state?.projectInstalledCount === state?.skillCount && pending === 0
+        ? "passed"
+        : "warning"
+    : state?.status ?? "info";
+  const selectedTargetMessage = selectedTarget === "project"
+    ? projectTargetAvailable
+      ? pending === 0
+        ? `${state?.projectInstalledCount ?? 0} project skills installed.`
+        : `${pending} project skill${pending === 1 ? "" : "s"} need installation or update.`
+      : "Open a local deck project to inspect project skill state."
+    : state?.message ?? "Official skills have not been checked yet.";
   const typeOptions = useMemo(() => {
     const types = Array.from(new Set(skills.map((skill) => skill.type))).sort();
     return ["all", ...types];
@@ -40,10 +74,10 @@ export function OfficialSkillsSettingsPanel({
   const filteredSkills = useMemo(
     () =>
       skills.filter((skill) =>
-        (statusFilter === "all" || skill.status === statusFilter) &&
+        (statusFilter === "all" || selectedTargetState(skill).status === statusFilter) &&
         (typeFilter === "all" || skill.type === typeFilter)
       ),
-    [skills, statusFilter, typeFilter]
+    [selectedTarget, skills, statusFilter, typeFilter]
   );
   const lowRiskCount = skills.filter((skill) => skill.riskLevel === "low").length;
   const mediumRiskCount = skills.filter((skill) => skill.riskLevel === "medium").length;
@@ -51,7 +85,11 @@ export function OfficialSkillsSettingsPanel({
   return (
     <section className="cli-settings-card">
       <PanelHeader
-        actions={<StatusPill tone={skillsStatusTone(state?.status)}>{state?.installed ? "installed" : "needs install"}</StatusPill>}
+        actions={<StatusPill tone={skillsStatusTone(selectedTargetStatus)}>
+          {selectedTarget === "project"
+            ? `${state?.projectInstalledCount ?? 0} / ${state?.skillCount ?? 0} project`
+            : state?.installed ? "installed" : "needs install"}
+        </StatusPill>}
         eyebrow="Official Pack"
         title="HTMLslide Skills"
       />
@@ -61,7 +99,7 @@ export function OfficialSkillsSettingsPanel({
           <Sparkles />
         </span>
         <div>
-          <strong>{state?.message ?? "Official skills have not been checked yet."}</strong>
+          <strong>{selectedTargetMessage}</strong>
           {state?.suggestedFix ? <small>{state.suggestedFix}</small> : null}
         </div>
       </div>
@@ -69,7 +107,13 @@ export function OfficialSkillsSettingsPanel({
       <dl className="cli-settings-details">
         <div>
           <dt>Installed</dt>
-          <dd>{state ? `${state.installedCount} / ${state.skillCount}` : "Unknown"}</dd>
+          <dd>{state
+            ? `${selectedTarget === "project" ? state.projectInstalledCount ?? 0 : state.installedCount} / ${state.skillCount}`
+            : "Unknown"}</dd>
+        </div>
+        <div>
+          <dt>Target</dt>
+          <dd>{selectedTarget === "project" ? "Active project" : "Global"}</dd>
         </div>
         <div>
           <dt>Pending</dt>
@@ -98,6 +142,26 @@ export function OfficialSkillsSettingsPanel({
       {skills.length > 0 ? (
         <section className="official-skills-library" aria-label="Official skills library">
           <div className="official-skills-toolbar">
+            <div className="official-skills-filter" aria-label="Choose official skill install target">
+              <button
+                aria-pressed={selectedTarget === "global"}
+                className={selectedTarget === "global" ? "official-skills-filter__button is-selected" : "official-skills-filter__button"}
+                onClick={() => setInstallTarget("global")}
+                type="button"
+              >
+                Global
+              </button>
+              <button
+                aria-pressed={selectedTarget === "project"}
+                className={selectedTarget === "project" ? "official-skills-filter__button is-selected" : "official-skills-filter__button"}
+                disabled={!projectTargetAvailable}
+                onClick={() => setInstallTarget("project")}
+                title={projectTargetAvailable ? `Install into ${projectPath}` : "Open a local deck project to enable project skills"}
+                type="button"
+              >
+                Active project
+              </button>
+            </div>
             <div className="official-skills-filter" aria-label="Filter official skills by install state">
               {statusFilters.map((filter) => (
                 <button
@@ -131,10 +195,11 @@ export function OfficialSkillsSettingsPanel({
               {filteredSkills.map((skill) => {
                 const detailsId = `official-skill-${skill.name}-details`;
                 const expanded = expandedSkillName === skill.name;
+                const targetState = selectedTargetState(skill);
                 return (
                   <li
-                    aria-label={`${skill.name} ${skill.status}`}
-                    className={`official-skill-row is-${skill.status}`}
+                    aria-label={`${skill.name} ${targetState.status}`}
+                    className={`official-skill-row is-${targetState.status}`}
                     key={skill.name}
                   >
                     <div className="official-skill-row__main">
@@ -146,10 +211,10 @@ export function OfficialSkillsSettingsPanel({
                       <span>{skill.riskLevel} risk</span>
                       <span>{skill.license}</span>
                       <span>{skill.version}</span>
-                      {skill.integrity !== "missing" ? <span>{skill.integrity}</span> : null}
+                      {targetState.integrity !== "missing" ? <span>{targetState.integrity}</span> : null}
                     </div>
                     <div className="official-skill-row__actions">
-                      <StatusPill tone={skillStatusTone(skill)}>{skill.status}</StatusPill>
+                      <StatusPill tone={skillStatusTone(targetState.status)}>{targetState.status}</StatusPill>
                       <Button
                         aria-controls={detailsId}
                         aria-expanded={expanded}
@@ -160,23 +225,27 @@ export function OfficialSkillsSettingsPanel({
                       >
                         {expanded ? "Close" : "Inspect"}
                       </Button>
-                      {skill.status !== "missing" ? (
+                      {targetState.status !== "missing" ? (
                         <Button
-                          aria-label={`${skill.removeEnabled ? "Remove" : "Remove unavailable"} ${skill.name}`}
-                          disabled={busy || !skill.removeEnabled}
+                          aria-label={`${targetState.removeEnabled ? "Remove" : "Remove unavailable"} ${skill.name}`}
+                          disabled={busy || !targetState.removeEnabled}
                           icon={<Trash2 />}
-                          onClick={() => onRemove(skill.name)}
+                          onClick={() => onRemove(skill.name, selectedTarget)}
                           size="sm"
-                          title={skill.removeDisabledReason ?? `Remove ${skill.name}`}
-                          variant={skill.removeEnabled ? "danger" : "quiet"}
+                          title={targetState.removeDisabledReason ?? `Remove ${skill.name}`}
+                          variant={targetState.removeEnabled ? "danger" : "quiet"}
                         >
-                          {skill.removeEnabled ? "Remove" : "Remove unavailable"}
+                          {targetState.removeEnabled ? "Remove" : "Remove unavailable"}
                         </Button>
                       ) : null}
                     </div>
                     {expanded ? (
                       <div className="official-skill-row__details" id={detailsId}>
                         <dl className="official-skill-inspection">
+                          <div>
+                            <dt>Target</dt>
+                            <dd>{selectedTarget === "project" ? "Active project" : "Global"}</dd>
+                          </div>
                           <div>
                             <dt>Author</dt>
                             <dd>{skill.author}</dd>
@@ -212,7 +281,7 @@ export function OfficialSkillsSettingsPanel({
                           <div>
                             <dt>Install path</dt>
                             <dd>
-                              <code>{skill.installPath}</code>
+                              <code>{targetState.installPath}</code>
                             </dd>
                           </div>
                         </dl>
@@ -240,9 +309,9 @@ export function OfficialSkillsSettingsPanel({
 
       <div className="settings-actions">
         <Button
-          disabled={busy || state?.available === false}
+          disabled={busy || state?.available === false || (selectedTarget === "project" && !projectTargetAvailable)}
           icon={<Wrench />}
-          onClick={onInstall}
+          onClick={() => onInstall(selectedTarget)}
           variant="primary"
         >
           Install Official Skills
@@ -275,11 +344,11 @@ function skillsStatusTone(status: DesktopOfficialSkillsState["status"] | undefin
   return "neutral";
 }
 
-function skillStatusTone(skill: DesktopOfficialSkillSummary): "neutral" | "success" | "warning" {
-  if (skill.status === "installed") {
+function skillStatusTone(status: DesktopOfficialSkillSummary["status"]): "neutral" | "success" | "warning" {
+  if (status === "installed") {
     return "success";
   }
-  if (skill.status === "stale") {
+  if (status === "stale") {
     return "warning";
   }
   return "neutral";

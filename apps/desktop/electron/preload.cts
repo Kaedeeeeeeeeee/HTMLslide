@@ -11,8 +11,16 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
   completeOnboarding: () => ipcRenderer.invoke("htmlslide:complete-onboarding"),
   getCliIntegration: () => ipcRenderer.invoke("htmlslide:get-cli-integration"),
   installCliIntegration: () => ipcRenderer.invoke("htmlslide:install-cli-integration"),
-  installOfficialSkills: () => ipcRenderer.invoke("htmlslide:install-official-skills"),
-  removeOfficialSkill: (request: { name: string; confirmed?: boolean }) =>
+  getOfficialSkills: (request?: { projectPath?: string }) =>
+    ipcRenderer.invoke("htmlslide:get-official-skills", request),
+  installOfficialSkills: (request?: { projectPath?: string; target?: "global" | "project" }) =>
+    ipcRenderer.invoke("htmlslide:install-official-skills", request),
+  removeOfficialSkill: (request: {
+    name: string;
+    confirmed?: boolean;
+    projectPath?: string;
+    target?: "global" | "project";
+  }) =>
     ipcRenderer.invoke("htmlslide:remove-official-skill", request),
   uninstallCliIntegration: () => ipcRenderer.invoke("htmlslide:uninstall-cli-integration"),
   copyCliManualInstallCommand: () => ipcRenderer.invoke("htmlslide:copy-cli-manual-install-command"),

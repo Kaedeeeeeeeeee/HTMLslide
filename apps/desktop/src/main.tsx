@@ -20,6 +20,7 @@ import {
   type DesktopCliIntegrationState,
   type DesktopExternalAgentConnectionState,
   type DesktopExportOptions,
+  type DesktopOfficialSkillInstallTarget,
   type DesktopOfficialSkillsState,
   type DesktopProjectAgentSkillsState,
   type DesktopPresenterPreferences,
@@ -1199,6 +1200,37 @@ function App(): React.ReactNode {
     ? activeProject.path
     : undefined;
 
+  useEffect(() => {
+    if (!desktopApi || !activeProjectPath) {
+      return;
+    }
+
+    let cancelled = false;
+    desktopApi.getOfficialSkills({ projectPath: activeProjectPath })
+      .then((status) => {
+        if (cancelled) {
+          return;
+        }
+        setOfficialSkills(status);
+        setOfficialSkillsStatus({
+          kind: status.status === "failed" ? "failed" : status.installed ? "success" : "idle",
+          message: status.message
+        });
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setOfficialSkillsStatus({
+            kind: "failed",
+            message: error instanceof Error ? error.message : String(error)
+          });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProjectPath, desktopApi]);
+
   const handleTestExternalAgent = useCallback((agentId: ExternalAgentId): void => {
     if (!desktopApi || !activeProjectPath) {
       setAiEngineStatus({ kind: "failed", message: "Project connection requires a local deck project" });
@@ -1705,14 +1737,17 @@ function App(): React.ReactNode {
       });
   }, [desktopApi]);
 
-  const handleInstallOfficialSkills = useCallback((): void => {
+  const handleInstallOfficialSkills = useCallback((target: DesktopOfficialSkillInstallTarget = "global"): void => {
     if (!desktopApi) {
       setOfficialSkillsStatus({ kind: "failed", message: "Desktop API unavailable" });
       return;
     }
 
     setOfficialSkillsStatus({ kind: "running", message: "Installing official skills" });
-    desktopApi.installOfficialSkills()
+    desktopApi.installOfficialSkills({
+      projectPath: target === "project" ? activeProjectPath : undefined,
+      target
+    })
       .then((status) => {
         setOfficialSkills(status);
         setOfficialSkillsStatus({
@@ -1726,18 +1761,19 @@ function App(): React.ReactNode {
           message: error instanceof Error ? error.message : String(error)
         });
       });
-  }, [desktopApi]);
+  }, [activeProjectPath, desktopApi]);
 
-  const handleRemoveOfficialSkill = useCallback((skillName: string): void => {
+  const handleRemoveOfficialSkill = useCallback((skillName: string, target: DesktopOfficialSkillInstallTarget = "global"): void => {
     if (!desktopApi) {
       setOfficialSkillsStatus({ kind: "failed", message: "Desktop API unavailable" });
       return;
     }
     const skill = officialSkills?.skills.find((candidate) => candidate.name === skillName);
-    if (!skill?.removeEnabled) {
+    const targetState = skill?.targets[target] ?? (target === "global" ? skill?.targets.global : undefined);
+    if (!targetState?.removeEnabled) {
       setOfficialSkillsStatus({
         kind: "failed",
-        message: skill?.removeDisabledReason ?? `Skill ${skillName} cannot be removed`
+        message: targetState?.removeDisabledReason ?? `Skill ${skillName} cannot be removed`
       });
       return;
     }
@@ -1746,7 +1782,12 @@ function App(): React.ReactNode {
     }
 
     setOfficialSkillsStatus({ kind: "running", message: `Removing ${skillName}` });
-    desktopApi.removeOfficialSkill({ name: skillName, confirmed: true })
+    desktopApi.removeOfficialSkill({
+      name: skillName,
+      confirmed: true,
+      projectPath: target === "project" ? activeProjectPath : undefined,
+      target
+    })
       .then((status) => {
         setOfficialSkills(status);
         setOfficialSkillsStatus({
@@ -1760,7 +1801,7 @@ function App(): React.ReactNode {
           message: error instanceof Error ? error.message : String(error)
         });
       });
-  }, [desktopApi, officialSkills]);
+  }, [activeProjectPath, desktopApi, officialSkills]);
 
   const handleUninstallCliIntegration = useCallback((): void => {
     if (!desktopApi) {

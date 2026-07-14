@@ -37,6 +37,7 @@ import {
 import type {
   DesktopCliIntegrationState,
   DesktopExternalAgentConnectionState,
+  DesktopOfficialSkillInstallTarget,
   DesktopOfficialSkillsState,
   DesktopProjectAgentSkillsState,
   DesktopSourceFileSelection
@@ -73,8 +74,8 @@ interface ProjectLibraryProps {
   onCliIntegrationInstall: () => void;
   onCliIntegrationRefresh: () => void;
   onCliIntegrationUninstall: () => void;
-  onInstallOfficialSkills: () => void;
-  onRemoveOfficialSkill: (skillName: string) => void;
+  onInstallOfficialSkills: (target: DesktopOfficialSkillInstallTarget) => void;
+  onRemoveOfficialSkill: (skillName: string, target: DesktopOfficialSkillInstallTarget) => void;
   onLibrarySectionChange: (section: LibrarySection) => void;
   onRefreshExternalAgents: () => void;
   onTestExternalAgent: (agentId: ExternalAgentStatus["id"]) => void;
@@ -268,6 +269,7 @@ export function ProjectLibrary({
               state={cliIntegration}
             />
             <OfficialSkillsSettingsPanel
+              projectPath={activeProjectPath}
               onInstall={onInstallOfficialSkills}
               onRemove={onRemoveOfficialSkill}
               operationStatus={officialSkillsStatus}
@@ -290,6 +292,7 @@ export function ProjectLibrary({
 
         {activeSection === "skills" ? (
           <OfficialSkillsSettingsPanel
+            projectPath={activeProjectPath}
             onInstall={onInstallOfficialSkills}
             onRemove={onRemoveOfficialSkill}
             operationStatus={officialSkillsStatus}

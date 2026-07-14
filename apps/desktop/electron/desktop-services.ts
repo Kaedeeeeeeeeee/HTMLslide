@@ -88,6 +88,7 @@ import {
   OFFICIAL_SKILLS,
   removeSkill,
   SkillStoreError,
+  type SkillInstallTarget,
   type SkillStoreIntegrity,
   type SkillInstallResult,
   type ProjectSkillInstallLocation,
@@ -273,15 +274,34 @@ export type DesktopOfficialSkillsState = {
   action?: "installed" | "updated" | "removed" | "unchanged";
   htmlslideHomeDir: string;
   skillsDir: string;
+  projectPath?: string;
+  projectSkillsDir?: string;
   skillCount: number;
   installedCount: number;
   missing: string[];
   stale: string[];
+  projectInstalledCount?: number;
+  projectMissing?: string[];
+  projectStale?: string[];
   names: string[];
   skills: DesktopOfficialSkillSummary[];
   message: string;
   suggestedFix?: string;
   updatedAt: string;
+};
+
+export type DesktopOfficialSkillInstallTarget = "global" | "project";
+
+export type DesktopOfficialSkillTargetState = {
+  target: DesktopOfficialSkillInstallTarget;
+  available: boolean;
+  installPath: string;
+  installed: boolean;
+  stale: boolean;
+  status: "installed" | "missing" | "stale";
+  integrity: SkillStoreIntegrity | "missing";
+  removeEnabled: boolean;
+  removeDisabledReason?: string;
 };
 
 export type DesktopOfficialSkillSummary = {
@@ -308,6 +328,11 @@ export type DesktopOfficialSkillSummary = {
   license: string;
   installPath: string;
   markdownPreview: string;
+  previewTruncated: false;
+  targets: {
+    global: DesktopOfficialSkillTargetState;
+    project?: DesktopOfficialSkillTargetState;
+  };
   installed: boolean;
   stale: boolean;
   status: "installed" | "missing" | "stale";
@@ -319,11 +344,14 @@ export type DesktopOfficialSkillSummary = {
 export type DesktopOfficialSkillsOptions = {
   env?: NodeJS.ProcessEnv;
   now?: string;
+  projectPath?: string;
+  installTarget?: DesktopOfficialSkillInstallTarget;
 };
 
 export type DesktopOfficialSkillRemoveRequest = {
   name: string;
   confirmed?: boolean;
+  target?: DesktopOfficialSkillInstallTarget;
 };
 
 export type DesktopMockAgentRunRequest = {
@@ -1996,6 +2024,8 @@ function cancelledDesktopCliResult(
 function officialSkillsBaseState(options: DesktopOfficialSkillsOptions = {}): DesktopOfficialSkillsState {
   const htmlslideHomeDir = resolveHtmlslideHomeDir(options.env);
   const skillsDir = path.join(htmlslideHomeDir, "skills");
+  const projectPath = options.projectPath?.trim() ? path.resolve(options.projectPath) : undefined;
+  const projectSkillsDir = projectPath ? path.join(projectPath, "skills", "project") : undefined;
   return {
     available: true,
     htmlslideHomeDir,
@@ -2005,10 +2035,21 @@ function officialSkillsBaseState(options: DesktopOfficialSkillsOptions = {}): De
     message: "Official skills have not been checked yet.",
     missing: [],
     names: OFFICIAL_SKILLS.map((skill) => skill.metadata.name),
-    skills: OFFICIAL_SKILLS.map((skill) => officialSkillSummary(htmlslideHomeDir, skill, "missing")),
+    projectInstalledCount: projectPath ? 0 : undefined,
+    projectMissing: projectPath ? OFFICIAL_SKILLS.map((skill) => skill.metadata.name) : undefined,
+    projectPath,
+    projectSkillsDir,
+    skills: OFFICIAL_SKILLS.map((skill) => {
+      const global = missingOfficialSkillTargetState("global", officialSkillEntryPath(htmlslideHomeDir, skill.metadata.name));
+      const project = projectPath
+        ? missingOfficialSkillTargetState("project", officialSkillProjectEntryPath(projectPath, skill.metadata.name))
+        : undefined;
+      return officialSkillSummary(skill, { global, project });
+    }),
     skillCount: OFFICIAL_SKILLS.length,
     skillsDir,
     stale: [],
+    projectStale: projectPath ? [] : undefined,
     status: "info",
     updatedAt: options.now ?? new Date().toISOString()
   };
@@ -2016,6 +2057,10 @@ function officialSkillsBaseState(options: DesktopOfficialSkillsOptions = {}): De
 
 function officialSkillEntryPath(htmlslideHomeDir: string, skillName: string): string {
   return path.join(htmlslideHomeDir, "skills", skillName, "SKILL.md");
+}
+
+function officialSkillProjectEntryPath(projectPath: string, skillName: string): string {
+  return path.join(projectPath, "skills", "project", skillName, "SKILL.md");
 }
 
 function officialSkillRemovalReason(integrity: DesktopOfficialSkillSummary["integrity"]): string | undefined {
@@ -2031,7 +2076,7 @@ function officialSkillRemovalReason(integrity: DesktopOfficialSkillSummary["inte
   return undefined;
 }
 
-function officialSkillIntegrityFromError(error: unknown): DesktopOfficialSkillSummary["integrity"] {
+function officialSkillIntegrityFromError(error: unknown): SkillStoreIntegrity {
   if (error instanceof SkillStoreError && error.code === "SKILL_TARGET_UNMANAGED") {
     return "unmanaged";
   }
@@ -2041,12 +2086,90 @@ function officialSkillIntegrityFromError(error: unknown): DesktopOfficialSkillSu
   return "invalid";
 }
 
-function officialSkillSummary(
-  htmlslideHomeDir: string,
+function missingOfficialSkillTargetState(
+  target: DesktopOfficialSkillInstallTarget,
+  installPath: string,
+  available = true,
+  removeDisabledReason?: string
+): DesktopOfficialSkillTargetState {
+  return {
+    target,
+    available,
+    installPath,
+    installed: false,
+    stale: false,
+    status: "missing",
+    integrity: "missing",
+    removeEnabled: false,
+    removeDisabledReason
+  };
+}
+
+function officialSkillTargetState(
+  target: DesktopOfficialSkillInstallTarget,
+  installPath: string,
+  status: DesktopOfficialSkillTargetState["status"],
+  integrity: DesktopOfficialSkillTargetState["integrity"],
+  available = true,
+  removeDisabledReason?: string
+): DesktopOfficialSkillTargetState {
+  return {
+    target,
+    available,
+    installPath,
+    installed: status === "installed",
+    stale: status === "stale",
+    status,
+    integrity,
+    removeEnabled: integrity === "verified",
+    removeDisabledReason: removeDisabledReason ?? officialSkillRemovalReason(integrity)
+  };
+}
+
+async function inspectOfficialSkillTarget(
   skill: (typeof OFFICIAL_SKILLS)[number],
-  status: DesktopOfficialSkillSummary["status"],
-  integrity: DesktopOfficialSkillSummary["integrity"] = "missing"
+  target: SkillInstallTarget,
+  targetKind: DesktopOfficialSkillInstallTarget,
+  installPath: string
+): Promise<DesktopOfficialSkillTargetState> {
+  try {
+    const [inspection] = await inspectInstalledSkill({ target, name: skill.metadata.name });
+    if (!inspection) {
+      return missingOfficialSkillTargetState(targetKind, installPath);
+    }
+    const installed = inspection.managed === true &&
+      inspection.integrity === "verified" &&
+      inspection.markdown === skill.markdown;
+    return officialSkillTargetState(
+      targetKind,
+      installPath,
+      installed ? "installed" : "stale",
+      inspection.integrity
+    );
+  } catch (error) {
+    if (error instanceof SkillStoreError && error.code === "SKILL_NOT_FOUND") {
+      return missingOfficialSkillTargetState(targetKind, installPath);
+    }
+    const unavailable = targetKind === "project" && error instanceof SkillStoreError && error.code === "SKILL_TARGET_UNSAFE";
+    return officialSkillTargetState(
+      targetKind,
+      installPath,
+      unavailable ? "missing" : "stale",
+      unavailable ? "missing" : officialSkillIntegrityFromError(error),
+      !unavailable,
+      unavailable ? "Project skill target is unavailable until the project directory exists." : undefined
+    );
+  }
+}
+
+function officialSkillSummary(
+  skill: (typeof OFFICIAL_SKILLS)[number],
+  targets: {
+    global: DesktopOfficialSkillTargetState;
+    project?: DesktopOfficialSkillTargetState;
+  }
 ): DesktopOfficialSkillSummary {
+  const global = targets.global;
   return {
     name: skill.metadata.name,
     version: skill.metadata.version,
@@ -2069,14 +2192,16 @@ function officialSkillSummary(
       modifiesSource: skill.metadata.deck.risk.modifiesSource
     },
     license: skill.metadata.license,
-    installPath: officialSkillEntryPath(htmlslideHomeDir, skill.metadata.name),
-    markdownPreview: skill.markdown.slice(0, 900).trim(),
-    installed: status === "installed",
-    integrity,
-    removeEnabled: integrity === "verified",
-    removeDisabledReason: officialSkillRemovalReason(integrity),
-    stale: status === "stale",
-    status
+    installPath: global.installPath,
+    markdownPreview: skill.markdown.trim(),
+    previewTruncated: false,
+    targets,
+    installed: global.installed,
+    integrity: global.integrity,
+    removeEnabled: global.removeEnabled,
+    removeDisabledReason: global.removeDisabledReason,
+    stale: global.stale,
+    status: global.status
   };
 }
 
@@ -2095,46 +2220,30 @@ export async function getDesktopOfficialSkills(
     };
   }
 
-  const target = { kind: "global" as const, htmlslideHomeDir: base.htmlslideHomeDir };
+  const globalTarget = { kind: "global" as const, htmlslideHomeDir: base.htmlslideHomeDir };
+  const projectTarget = base.projectPath
+    ? { kind: "project" as const, projectRoot: base.projectPath, locations: ["project"] as const }
+    : undefined;
   const states = await Promise.all(OFFICIAL_SKILLS.map(async (skill) => {
-    try {
-      const [inspection] = await inspectInstalledSkill({ target, name: skill.metadata.name });
-      if (!inspection) {
-        return {
-          name: skill.metadata.name,
-          summary: officialSkillSummary(base.htmlslideHomeDir, skill, "missing"),
-          status: "missing" as const
-        };
-      }
-      const installed =
-        inspection.managed === true &&
-        inspection.integrity === "verified" &&
-        inspection.markdown === skill.markdown;
-      return {
-        name: skill.metadata.name,
-        summary: officialSkillSummary(
-          base.htmlslideHomeDir,
+    const global = await inspectOfficialSkillTarget(
+      skill,
+      globalTarget,
+      "global",
+      officialSkillEntryPath(base.htmlslideHomeDir, skill.metadata.name)
+    );
+    const project = projectTarget && base.projectPath
+      ? await inspectOfficialSkillTarget(
           skill,
-          installed ? "installed" : "stale",
-          inspection.integrity
-        ),
-        status: installed ? ("installed" as const) : ("stale" as const)
-      };
-    } catch (error) {
-      if (error instanceof SkillStoreError && error.code === "SKILL_NOT_FOUND") {
-        return {
-          name: skill.metadata.name,
-          summary: officialSkillSummary(base.htmlslideHomeDir, skill, "missing"),
-          status: "missing" as const
-        };
-      }
-      const integrity = officialSkillIntegrityFromError(error);
-      return {
-        name: skill.metadata.name,
-        summary: officialSkillSummary(base.htmlslideHomeDir, skill, "stale", integrity),
-        status: "stale" as const
-      };
-    }
+          projectTarget,
+          "project",
+          officialSkillProjectEntryPath(base.projectPath, skill.metadata.name)
+        )
+      : undefined;
+    return {
+      name: skill.metadata.name,
+      summary: officialSkillSummary(skill, { global, project }),
+      status: global.status
+    };
   }));
 
   const missing = states.filter((state) => state.status === "missing").map((state) => state.name).sort();
@@ -2142,6 +2251,12 @@ export async function getDesktopOfficialSkills(
   const installedCount = states.filter((state) => state.status === "installed").length;
   const installed = missing.length === 0 && stale.length === 0 && installedCount === OFFICIAL_SKILLS.length;
   const pendingCount = missing.length + stale.length;
+  const projectStates = states
+    .map((state) => ({ name: state.name, target: state.summary.targets.project }))
+    .filter((state): state is { name: string; target: DesktopOfficialSkillTargetState } => state.target !== undefined);
+  const projectMissing = projectStates.filter((state) => state.target.status === "missing").map((state) => state.name).sort();
+  const projectStale = projectStates.filter((state) => state.target.status === "stale").map((state) => state.name).sort();
+  const projectInstalledCount = projectStates.filter((state) => state.target.status === "installed").length;
 
   return {
     ...base,
@@ -2151,6 +2266,9 @@ export async function getDesktopOfficialSkills(
       ? `${installedCount} official skills installed.`
       : `${pendingCount} official skill${pendingCount === 1 ? "" : "s"} need installation or update.`,
     missing,
+    projectInstalledCount: base.projectPath ? projectInstalledCount : undefined,
+    projectMissing: base.projectPath ? projectMissing : undefined,
+    projectStale: base.projectPath ? projectStale : undefined,
     skills: states.map((state) => state.summary),
     stale,
     status: installed ? "passed" : "warning",
@@ -2167,12 +2285,24 @@ export async function installDesktopOfficialSkills(
   }
 
   let results: SkillInstallResult[];
+  const installTarget = options.installTarget ?? "global";
+  if (installTarget === "project" && !before.projectPath) {
+    return {
+      ...before,
+      status: "failed",
+      message: "A local deck project is required for project skill installation.",
+      suggestedFix: "Open a local deck project before installing project skills."
+    };
+  }
+  const target: SkillInstallTarget = installTarget === "project"
+    ? { kind: "project", projectRoot: before.projectPath as string, locations: ["project"] }
+    : { kind: "global", htmlslideHomeDir: before.htmlslideHomeDir };
   try {
     results = [];
     for (const skill of OFFICIAL_SKILLS) {
       results.push(await installSkill({
         source: { kind: "official", name: skill.metadata.name },
-        target: { kind: "global", htmlslideHomeDir: before.htmlslideHomeDir },
+        target,
         adoptLegacyOfficial: true
       }));
     }
@@ -2203,9 +2333,13 @@ export async function installDesktopOfficialSkills(
     ...after,
     action,
     message:
-      action === "unchanged"
-        ? `${after.installedCount} official skills already installed.`
-        : `${after.installedCount} official skills ${action}.`
+      installTarget === "global"
+        ? action === "unchanged"
+          ? `${after.installedCount} official skills already installed.`
+          : `${after.installedCount} official skills ${action}.`
+        : action === "unchanged"
+          ? `${after.projectInstalledCount} official skills already installed in the project target.`
+          : `${after.projectInstalledCount} official skills ${action} in the project target.`
   };
 }
 
@@ -2229,25 +2363,37 @@ export async function removeDesktopOfficialSkill(
       message: `Official skill is not in the registry: ${request.name}.`
     };
   }
-  if (!skill.removeEnabled) {
+  const removeTarget = request.target ?? "global";
+  const targetState = skill.targets[removeTarget];
+  if (!targetState) {
     return {
       ...before,
       status: "failed",
-      message: skill.removeDisabledReason ?? `Official skill cannot be removed: ${request.name}.`
+      message: "A local deck project is required for project skill removal.",
+      suggestedFix: "Open a local deck project before removing project skills."
+    };
+  }
+  if (!targetState.removeEnabled) {
+    return {
+      ...before,
+      status: "failed",
+      message: targetState.removeDisabledReason ?? `Official skill cannot be removed: ${request.name}.`
     };
   }
 
   try {
     await removeSkill({
       name: request.name,
-      target: { kind: "global", htmlslideHomeDir: before.htmlslideHomeDir }
+      target: removeTarget === "project"
+        ? { kind: "project", projectRoot: before.projectPath as string, locations: ["project"] }
+        : { kind: "global", htmlslideHomeDir: before.htmlslideHomeDir }
     });
   } catch (error) {
     return {
       ...before,
       status: "failed",
       message: error instanceof Error ? error.message : String(error),
-      suggestedFix: `Check the integrity and permissions for ${before.skillsDir}.`
+      suggestedFix: `Check the integrity and permissions for ${removeTarget === "project" ? before.projectSkillsDir : before.skillsDir}.`
     };
   }
 
@@ -2258,7 +2404,9 @@ export async function removeDesktopOfficialSkill(
   return {
     ...after,
     action: "removed",
-    message: `${request.name} removed.`
+    message: removeTarget === "global"
+      ? `${request.name} removed.`
+      : `${request.name} removed from the project target.`
   };
 }
 

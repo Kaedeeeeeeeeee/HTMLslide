@@ -1154,6 +1154,61 @@ describe("desktop services", () => {
     ).resolves.toContain('"manager": "htmlslide"');
   });
 
+  it("reports complete previews and keeps global and project skill targets independent", async () => {
+    const homeDir = await tempDir();
+    const projectPath = await tempDir();
+    await writeDeck(projectPath);
+    const options = {
+      env: { HTMLSLIDE_HOME: homeDir },
+      now: "2026-07-08T00:00:00.000Z",
+      projectPath
+    };
+
+    const before = await getDesktopOfficialSkills(options);
+    const deckArchitect = before.skills.find((skill) => skill.name === "deck-architect");
+    const officialDeckArchitect = OFFICIAL_SKILLS.find((skill) => skill.metadata.name === "deck-architect");
+    expect(deckArchitect).toMatchObject({
+      markdownPreview: officialDeckArchitect?.markdown.trim(),
+      previewTruncated: false,
+      targets: {
+        global: { status: "missing", installPath: path.join(homeDir, "skills", "deck-architect", "SKILL.md") },
+        project: {
+          status: "missing",
+          installPath: path.join(projectPath, "skills", "project", "deck-architect", "SKILL.md")
+        }
+      }
+    });
+    expect(before.projectPath).toBe(projectPath);
+    expect(before.projectInstalledCount).toBe(0);
+    expect(before.projectMissing).toContain("deck-architect");
+
+    const installed = await installDesktopOfficialSkills({
+      ...options,
+      installTarget: "project"
+    });
+    expect(installed).toMatchObject({
+      installed: false,
+      installedCount: 0,
+      projectInstalledCount: OFFICIAL_SKILLS.length,
+      projectMissing: [],
+      projectStale: []
+    });
+    expect(installed.skills.every((skill) => skill.targets.project?.status === "installed")).toBe(true);
+    await expect(
+      readFile(path.join(projectPath, "skills", "project", "deck-architect", "SKILL.md"), "utf8")
+    ).resolves.toContain("name: deck-architect");
+
+    const removed = await removeDesktopOfficialSkill(
+      { name: "deck-architect", confirmed: true, target: "project" },
+      options
+    );
+    expect(removed.projectMissing).toContain("deck-architect");
+    expect(removed.skills.find((skill) => skill.name === "deck-architect")?.targets.project).toMatchObject({
+      status: "missing",
+      installed: false
+    });
+  });
+
   it("installs and verifies project skills for Codex and exposes the MCP harness status", async () => {
     const projectPath = await tempDir();
     await writeDeck(projectPath);

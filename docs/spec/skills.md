@@ -109,6 +109,8 @@ The desktop official skills panel must expose the registry as an inspectable lib
 
 Each skill row must support inspection before installation. The inspection view exposes the author, entrypoint, supported deck schema, output, viewport, supports list, install targets, resolved install path, declared risk flags, and a read-only preview of the generated `SKILL.md` entrypoint.
 
+The desktop library must return the complete official `SKILL.md` preview and must report installation state independently for the global target and the active local deck project. The active-project target uses the shared skills store's `skills/project` location, returns the canonical project path and resolved `SKILL.md` path, and is disabled when no local deck project is open. Install and remove actions must carry the selected target through the desktop API; the global target remains the default for onboarding and automatic provisioning.
+
 ## Official Skill Body Contract
 
 Official skill bodies are product guidance shown in the desktop Inspect view. High-value official skills must include more than metadata and shared operating boundaries. At minimum, detailed official bodies include when to use the skill, inputs or required context, a workflow or rule set, a concrete output contract, and checklist-style guidance with enough project-specific terms to guide an agent without another prompt.

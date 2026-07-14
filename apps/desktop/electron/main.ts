@@ -1062,13 +1062,42 @@ function registerIpcHandlers(): void {
     installDesktopCliIntegration(cliIntegrationOptions())
   );
 
-  ipcMain.handle("htmlslide:install-official-skills", async () =>
-    installDesktopOfficialSkills(officialSkillsOptions())
-  );
+  ipcMain.handle("htmlslide:get-official-skills", async (_event, request?: { projectPath?: string }) => {
+    const projectPath = request?.projectPath ? await assertDesktopAgentProject(request.projectPath) : undefined;
+    return getDesktopOfficialSkills({
+      ...officialSkillsOptions(),
+      projectPath
+    });
+  });
 
-  ipcMain.handle("htmlslide:remove-official-skill", async (_event, request: { name: string; confirmed?: boolean }) =>
-    removeDesktopOfficialSkill(request, officialSkillsOptions())
-  );
+  ipcMain.handle("htmlslide:install-official-skills", async (_event, request?: {
+    projectPath?: string;
+    target?: "global" | "project";
+  }) => {
+    const projectPath = request?.projectPath
+      ? assertDesktopAgentProject(request.projectPath)
+      : Promise.resolve(undefined);
+    return projectPath.then((resolvedProjectPath) => installDesktopOfficialSkills({
+      ...officialSkillsOptions(),
+      installTarget: request?.target,
+      projectPath: resolvedProjectPath
+    }));
+  });
+
+  ipcMain.handle("htmlslide:remove-official-skill", async (_event, request: {
+    name: string;
+    confirmed?: boolean;
+    projectPath?: string;
+    target?: "global" | "project";
+  }) => {
+    const projectPath = request.projectPath
+      ? assertDesktopAgentProject(request.projectPath)
+      : Promise.resolve(undefined);
+    return projectPath.then((resolvedProjectPath) => removeDesktopOfficialSkill(request, {
+      ...officialSkillsOptions(),
+      projectPath: resolvedProjectPath
+    }));
+  });
 
   ipcMain.handle("htmlslide:uninstall-cli-integration", async () =>
     uninstallDesktopCliIntegration(cliIntegrationOptions())

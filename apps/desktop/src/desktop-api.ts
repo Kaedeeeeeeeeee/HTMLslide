@@ -86,15 +86,34 @@ export type DesktopOfficialSkillsState = {
   action?: "installed" | "updated" | "removed" | "unchanged";
   htmlslideHomeDir: string;
   skillsDir: string;
+  projectPath?: string;
+  projectSkillsDir?: string;
   skillCount: number;
   installedCount: number;
   missing: string[];
   stale: string[];
+  projectInstalledCount?: number;
+  projectMissing?: string[];
+  projectStale?: string[];
   names: string[];
   skills: DesktopOfficialSkillSummary[];
   message: string;
   suggestedFix?: string;
   updatedAt: string;
+};
+
+export type DesktopOfficialSkillInstallTarget = "global" | "project";
+
+export type DesktopOfficialSkillTargetState = {
+  target: DesktopOfficialSkillInstallTarget;
+  available: boolean;
+  installPath: string;
+  installed: boolean;
+  stale: boolean;
+  status: "installed" | "missing" | "stale";
+  integrity: "verified" | "modified" | "unmanaged" | "invalid" | "missing";
+  removeEnabled: boolean;
+  removeDisabledReason?: string;
 };
 
 export type DesktopOfficialSkillSummary = {
@@ -121,6 +140,11 @@ export type DesktopOfficialSkillSummary = {
   license: string;
   installPath: string;
   markdownPreview: string;
+  previewTruncated: false;
+  targets: {
+    global: DesktopOfficialSkillTargetState;
+    project?: DesktopOfficialSkillTargetState;
+  };
   installed: boolean;
   stale: boolean;
   status: "installed" | "missing" | "stale";
@@ -565,8 +589,17 @@ export type HtmlslideDesktopApi = {
   completeOnboarding(): Promise<{ completed: true }>;
   getCliIntegration(): Promise<DesktopCliIntegrationState>;
   installCliIntegration(): Promise<DesktopCliIntegrationState>;
-  installOfficialSkills(): Promise<DesktopOfficialSkillsState>;
-  removeOfficialSkill(request: { name: string; confirmed?: boolean }): Promise<DesktopOfficialSkillsState>;
+  getOfficialSkills(request?: { projectPath?: string }): Promise<DesktopOfficialSkillsState>;
+  installOfficialSkills(request?: {
+    projectPath?: string;
+    target?: DesktopOfficialSkillInstallTarget;
+  }): Promise<DesktopOfficialSkillsState>;
+  removeOfficialSkill(request: {
+    name: string;
+    confirmed?: boolean;
+    projectPath?: string;
+    target?: DesktopOfficialSkillInstallTarget;
+  }): Promise<DesktopOfficialSkillsState>;
   uninstallCliIntegration(): Promise<DesktopCliIntegrationState>;
   copyCliManualInstallCommand(): Promise<{ copied: boolean; command: string }>;
   copyAgentRepairPrompt(prompt: string): Promise<{ copied: boolean }>;

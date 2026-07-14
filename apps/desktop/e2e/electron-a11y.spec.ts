@@ -287,7 +287,16 @@ test.describe("HTMLslide desktop accessibility smoke", () => {
     await page.setViewportSize({ width: 1024, height: 800 });
     const inspector = page.locator(".inspector");
     await expect(inspector).toBeVisible();
-    await expect(inspector.getByRole("tablist", { name: "Inspector tabs" })).toBeVisible();
+    const inspectorTabs = inspector.getByRole("tablist", { name: "Inspector tabs" });
+    await expect(inspectorTabs).toBeVisible();
+    const activeInspectorTab = inspectorTabs.locator('[role="tab"][aria-selected="true"]');
+    const exportTab = inspectorTabs.getByRole("tab", { name: "Export", exact: true });
+    await expect(activeInspectorTab).toHaveAttribute("tabindex", "0");
+    await activeInspectorTab.focus();
+    await activeInspectorTab.press("End");
+    await expect(exportTab).toBeFocused();
+    await expect(exportTab).toHaveAttribute("aria-selected", "true");
+    await expect(inspector.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", /inspector-tab-export/);
 
     await page.locator(".workspace-toolbar").getByRole("button", { name: "Check", exact: true }).click();
     await expect(page.getByRole("region", { name: "QA Panel" })).toBeVisible({ timeout: 30_000 });

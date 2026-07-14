@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from "react";
+import type { ButtonHTMLAttributes, HTMLAttributes, KeyboardEvent, ReactNode } from "react";
 
 export function cn(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(" ");
@@ -98,6 +98,8 @@ export interface SegmentedTabsProps<TTab extends string> {
   onChange: (tab: TTab) => void;
   label: string;
   className?: string;
+  idPrefix?: string;
+  panelId?: string;
 }
 
 export function SegmentedTabs<TTab extends string>({
@@ -105,23 +107,60 @@ export function SegmentedTabs<TTab extends string>({
   className,
   label,
   onChange,
-  tabs
+  tabs,
+  idPrefix = "hs-tabs-tab",
+  panelId
 }: SegmentedTabsProps<TTab>): ReactNode {
+  const tabId = (tabIdValue: TTab): string =>
+    `${idPrefix}-${String(tabIdValue).replace(/[^A-Za-z0-9_-]/gu, "-")}`;
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number): void => {
+    const key = event.key;
+    const nextIndex = key === "ArrowRight" || key === "ArrowDown"
+      ? (index + 1) % tabs.length
+      : key === "ArrowLeft" || key === "ArrowUp"
+        ? (index - 1 + tabs.length) % tabs.length
+        : key === "Home"
+          ? 0
+          : key === "End"
+            ? tabs.length - 1
+            : undefined;
+
+    if (nextIndex === undefined || tabs.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    const nextTab = tabs[nextIndex];
+    if (!nextTab) {
+      return;
+    }
+    onChange(nextTab.id);
+    window.requestAnimationFrame(() => document.getElementById(tabId(nextTab.id))?.focus());
+  };
+
   return (
-    <div aria-label={label} className={cn("hs-segmented-tabs", className)} role="tablist">
-      {tabs.map((tab) => (
-        <button
-          aria-selected={tab.id === activeTab}
-          className={cn("hs-segmented-tabs__tab", tab.id === activeTab && "is-active")}
-          key={tab.id}
-          onClick={() => onChange(tab.id)}
-          role="tab"
-          type="button"
-        >
-          <span>{tab.label}</span>
-          {typeof tab.count === "number" ? <strong>{tab.count}</strong> : null}
-        </button>
-      ))}
+    <div aria-label={label} aria-orientation="horizontal" className={cn("hs-segmented-tabs", className)} role="tablist">
+      {tabs.map((tab) => {
+        const selected = tab.id === activeTab;
+        return (
+          <button
+            aria-controls={panelId}
+            aria-selected={selected}
+            className={cn("hs-segmented-tabs__tab", selected && "is-active")}
+            id={tabId(tab.id)}
+            key={tab.id}
+            onClick={() => onChange(tab.id)}
+            onKeyDown={(event) => handleKeyDown(event, tabs.indexOf(tab))}
+            role="tab"
+            tabIndex={selected ? 0 : -1}
+            type="button"
+          >
+            <span>{tab.label}</span>
+            {typeof tab.count === "number" ? <strong>{tab.count}</strong> : null}
+          </button>
+        );
+      })}
     </div>
   );
 }

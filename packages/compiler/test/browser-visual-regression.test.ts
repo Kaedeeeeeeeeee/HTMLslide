@@ -46,6 +46,22 @@ const browserVisualFixtures = [
   {
     name: "browser-visual-deck",
     slideIds: ["001-composition", "002-chart"]
+  },
+  {
+    name: "data-chart-deck",
+    slideIds: ["001-chart", "002-table"]
+  },
+  {
+    name: "image-heavy-deck",
+    slideIds: ["001-gallery", "002-srcset"]
+  },
+  {
+    name: "multi-theme-deck",
+    slideIds: ["001-light", "002-dark", "003-report"]
+  },
+  {
+    name: "text-heavy-deck",
+    slideIds: ["001-longform", "002-columns"]
   }
 ] satisfies BrowserVisualFixture[];
 
@@ -103,19 +119,30 @@ const assertGoldenExists = async (
 const waitForPageAssets = async (page: Page | Frame): Promise<void> => {
   await page.evaluate(async () => {
     await document.fonts.ready;
-    await Promise.all(
-      Array.from(document.images).map((image) => {
-        if (image.complete) {
-          return undefined;
-        }
-        return new Promise<void>((resolve, reject) => {
-          image.addEventListener("load", () => resolve(), { once: true });
-          image.addEventListener("error", () => reject(new Error(`Image failed to load: ${image.currentSrc}`)), {
-            once: true
+    const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const waitForImage = async (image: HTMLImageElement): Promise<void> => {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        if (!image.complete) {
+          await new Promise<void>((resolve, reject) => {
+            image.addEventListener("load", () => resolve(), { once: true });
+            image.addEventListener("error", () => reject(new Error(`Image failed to load: ${image.currentSrc}`)), {
+              once: true
+            });
           });
-        });
-      })
-    );
+        }
+        if (!image.complete || image.naturalWidth === 0) {
+          throw new Error(`Image failed to load: ${image.currentSrc}`);
+        }
+        const currentSrc = image.currentSrc;
+        await image.decode();
+        await nextFrame();
+        if (image.currentSrc === currentSrc && image.complete && image.naturalWidth > 0) {
+          return;
+        }
+      }
+      throw new Error(`Image source did not settle: ${image.currentSrc}`);
+    };
+    await Promise.all(Array.from(document.images, waitForImage));
   });
 };
 

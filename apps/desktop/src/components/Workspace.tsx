@@ -2130,11 +2130,19 @@ function Inspector({
     <aside className="inspector">
       <SegmentedTabs
         activeTab={activeTab}
+        idPrefix="inspector-tab"
         label="Inspector tabs"
         onChange={onTabChange}
+        panelId="inspector-tabpanel"
         tabs={inspectorTabs}
       />
-      <div className="inspector-body">
+      <div
+        aria-labelledby={`inspector-tab-${activeTab}`}
+        className="inspector-body"
+        id="inspector-tabpanel"
+        role="tabpanel"
+        tabIndex={0}
+      >
         {activeTab === "outline" ? <OutlinePanel slide={currentSlide} /> : null}
         {activeTab === "design" ? <DesignPanel slide={currentSlide} /> : null}
         {activeTab === "notes" ? (
@@ -2364,111 +2372,120 @@ function QaPanel({
       </p>
       <SegmentedTabs
         activeTab={qaFilter}
+        idPrefix="qa-severity-tab"
         label="QA severity filter"
         onChange={onQaFilterChange}
+        panelId="qa-severity-panel"
         tabs={filterTabs.map((tab) => ({
           ...tab,
           count: tab.id === "all" ? totalIssueCount : issueCounts[tab.id]
         }))}
       />
-      {!hasCheckResult ? (
-        <div className="qa-issue-list">
-          <div className="empty-state">
-            <CircleDot />
-            <strong>Not checked yet</strong>
-            <span>Run Check to produce the authoritative QA report.</span>
+      <div
+        aria-labelledby={`qa-severity-tab-${qaFilter}`}
+        id="qa-severity-panel"
+        role="tabpanel"
+        tabIndex={0}
+      >
+        {!hasCheckResult ? (
+          <div className="qa-issue-list">
+            <div className="empty-state">
+              <CircleDot />
+              <strong>Not checked yet</strong>
+              <span>Run Check to produce the authoritative QA report.</span>
+            </div>
           </div>
-        </div>
-      ) : issues.length === 0 ? (
-        <div className="qa-issue-list">
-          <div className="empty-state">
-            <CheckCircle2 />
-            <strong>No issues in this filter</strong>
-            <span>Run Check to refresh the report.</span>
+        ) : issues.length === 0 ? (
+          <div className="qa-issue-list">
+            <div className="empty-state">
+              <CheckCircle2 />
+              <strong>No issues in this filter</strong>
+              <span>Run Check to refresh the report.</span>
+            </div>
           </div>
-        </div>
-      ) : (
-        <div
-          aria-label="QA issues"
-          className="qa-issue-list"
-          role="list"
-        >
-          {issues.map((issue) => {
-            const titleId = qaIssueDomId(issue, "title");
-            const messageId = qaIssueDomId(issue, "message");
-            const selectorId = qaIssueDomId(issue, "selector");
-            const measurementId = qaIssueDomId(issue, "measurement");
-            const fixId = qaIssueDomId(issue, "fix");
-            return (
-              <article
-                aria-describedby={`${messageId} ${selectorId} ${measurementId} ${fixId}`}
-                aria-labelledby={titleId}
-                className="qa-issue"
-                key={issue.id}
-                role="listitem"
-              >
-                <div
-                  aria-hidden="true"
-                  className="qa-issue__thumb"
+        ) : (
+          <div
+            aria-label="QA issues"
+            className="qa-issue-list"
+            role="list"
+          >
+            {issues.map((issue) => {
+              const titleId = qaIssueDomId(issue, "title");
+              const messageId = qaIssueDomId(issue, "message");
+              const selectorId = qaIssueDomId(issue, "selector");
+              const measurementId = qaIssueDomId(issue, "measurement");
+              const fixId = qaIssueDomId(issue, "fix");
+              return (
+                <article
+                  aria-describedby={`${messageId} ${selectorId} ${measurementId} ${fixId}`}
+                  aria-labelledby={titleId}
+                  className="qa-issue"
+                  key={issue.id}
+                  role="listitem"
                 >
-                  {issue.slideId.replace("slide-", "")}
-                </div>
-                <div>
-                  <StatusPill tone={qaSeverityTones[issue.severity]}>{issue.severity}</StatusPill>
-                  <h3 id={titleId}>{issue.type}</h3>
-                  <p id={messageId}>{issue.message}</p>
-                  <dl>
-                    <div>
-                      <dt>Location</dt>
-                      <dd id={selectorId}>{issue.selector}</dd>
-                    </div>
-                    <div>
-                      <dt>Measurement</dt>
-                      <dd id={measurementId}>{issue.measurement}</dd>
-                    </div>
-                  </dl>
-                  <small id={fixId}>{issue.suggestedFix}</small>
-                  <div className="qa-issue__actions">
-                    <Button
-                      aria-label={`Go to slide ${issue.slideId}`}
-                      onClick={() => onSelectSlide(issue.slideId)}
-                      size="sm"
-                      variant="secondary"
-                    >
-                      Go to slide
-                    </Button>
-                    <Button
-                      aria-label={`Fix ${issue.type} with AI`}
-                      disabled={!generationEnabled}
-                      onClick={() => onFixQaIssue(issue)}
-                      size="sm"
-                      variant="primary"
-                    >
-                      Fix with AI
-                    </Button>
-                    <Button
-                      aria-label={`Ignore ${issue.type} once`}
-                      onClick={() => void onIgnoreQaIssue(issue, "once")}
-                      size="sm"
-                      variant="ghost"
-                    >
-                      Ignore once
-                    </Button>
-                    <Button
-                      aria-label={`Ignore ${issue.type} rule`}
-                      onClick={() => void onIgnoreQaIssue(issue, "rule")}
-                      size="sm"
-                      variant="ghost"
-                    >
-                      Ignore rule
-                    </Button>
+                  <div
+                    aria-hidden="true"
+                    className="qa-issue__thumb"
+                  >
+                    {issue.slideId.replace("slide-", "")}
                   </div>
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      )}
+                  <div>
+                    <StatusPill tone={qaSeverityTones[issue.severity]}>{issue.severity}</StatusPill>
+                    <h3 id={titleId}>{issue.type}</h3>
+                    <p id={messageId}>{issue.message}</p>
+                    <dl>
+                      <div>
+                        <dt>Location</dt>
+                        <dd id={selectorId}>{issue.selector}</dd>
+                      </div>
+                      <div>
+                        <dt>Measurement</dt>
+                        <dd id={measurementId}>{issue.measurement}</dd>
+                      </div>
+                    </dl>
+                    <small id={fixId}>{issue.suggestedFix}</small>
+                    <div className="qa-issue__actions">
+                      <Button
+                        aria-label={`Go to slide ${issue.slideId}`}
+                        onClick={() => onSelectSlide(issue.slideId)}
+                        size="sm"
+                        variant="secondary"
+                      >
+                        Go to slide
+                      </Button>
+                      <Button
+                        aria-label={`Fix ${issue.type} with AI`}
+                        disabled={!generationEnabled}
+                        onClick={() => onFixQaIssue(issue)}
+                        size="sm"
+                        variant="primary"
+                      >
+                        Fix with AI
+                      </Button>
+                      <Button
+                        aria-label={`Ignore ${issue.type} once`}
+                        onClick={() => void onIgnoreQaIssue(issue, "once")}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        Ignore once
+                      </Button>
+                      <Button
+                        aria-label={`Ignore ${issue.type} rule`}
+                        onClick={() => void onIgnoreQaIssue(issue, "rule")}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        Ignore rule
+                      </Button>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </section>
   );
 }

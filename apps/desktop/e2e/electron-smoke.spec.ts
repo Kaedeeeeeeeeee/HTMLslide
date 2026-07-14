@@ -6,7 +6,7 @@ import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createRequire } from "node:module";
-import { access, chmod, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, chmod, cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -107,6 +107,59 @@ type FakeOpenAiServer = {
   close: () => Promise<void>;
 };
 
+const byokE2eSlideIds = [
+  "001-title",
+  "002-problem",
+  "003-workflow",
+  "004-provider",
+  "005-source",
+  "006-validation",
+  "007-export",
+  "008-review"
+] as const;
+
+function byokE2eOutlineSlides(title: string): Array<{
+  id: string;
+  title: string;
+  kind: "title" | "content" | "data" | "closing";
+  goal: string;
+}> {
+  return [
+    { id: "001-title", title, kind: "title", goal: "Frame the eight-slide provider-backed generation proof." },
+    { id: "002-problem", title: "Why local BYOK matters", kind: "content", goal: "Explain the local-first reason to bring an OpenAI-compatible provider." },
+    { id: "003-workflow", title: "The generation workflow", kind: "content", goal: "Trace the brief, outline, direction, build, check, export, and review stages." },
+    { id: "004-provider", title: "Provider contract", kind: "data", goal: "Show that the compatible provider returns structured JSON and token usage." },
+    { id: "005-source", title: "Editable source output", kind: "content", goal: "Show that deck.json, eight HTML slides, and eight notes remain editable source." },
+    { id: "006-validation", title: "Check before export", kind: "content", goal: "Confirm the generated eight-slide manifest passes the shared project check." },
+    { id: "007-export", title: "Artifacts with page parity", kind: "content", goal: "Confirm PDF, HTML, deckpkg, notes, and thumbnails describe the same eight slides." },
+    { id: "008-review", title: "Ready for review", kind: "closing", goal: "Summarize the complete provider-backed run without exposing the API key." }
+  ];
+}
+
+function byokE2eSourcePaths(): string[] {
+  return [
+    "deck.json",
+    ...byokE2eSlideIds.map((slideId) => `slides/${slideId}.html`),
+    ...byokE2eSlideIds.map((slideId) => `notes/${slideId}.md`)
+  ];
+}
+
+function byokE2eExportArtifacts(): Array<{
+  type: "pdf" | "html" | "deckpkg" | "thumbnails" | "speaker-notes";
+  path: string;
+}> {
+  return [
+    { type: "pdf", path: "exports/byok-provider-e2e-deck.pdf" },
+    { type: "html", path: "exports/byok-provider-e2e-deck.html" },
+    { type: "deckpkg", path: "exports/byok-provider-e2e-deck.deckpkg" },
+    { type: "speaker-notes", path: "exports/notes.json" },
+    ...byokE2eSlideIds.map((slideId) => ({
+      type: "thumbnails" as const,
+      path: `exports/thumbnails/${slideId}.png`
+    }))
+  ];
+}
+
 async function startFakeOpenAiCompatibleServer(title: string): Promise<FakeOpenAiServer> {
   const calls: FakeOpenAiServer["calls"] = [];
   const server = createServer(async (request, response) => {
@@ -196,7 +249,7 @@ function fakeOpenAiStageOutput(stage: string | undefined, title: string): unknow
     case "brief":
       return {
         title,
-        brief: "Build a provider-backed deck from the desktop wizard.",
+        brief: "Build an eight-slide provider-backed deck from the desktop wizard.",
         language: "en-US",
         audience: "reviewers",
         durationMinutes: 8
@@ -207,7 +260,7 @@ function fakeOpenAiStageOutput(stage: string | undefined, title: string): unknow
         language: "en-US",
         audience: "reviewers",
         durationMinutes: 8,
-        slides: [{ id: "001-title", title, kind: "title", goal: "Prove provider-backed generation." }]
+        slides: byokE2eOutlineSlides(title)
       };
     case "visual-direction":
       return {
@@ -215,8 +268,8 @@ function fakeOpenAiStageOutput(stage: string | undefined, title: string): unknow
           {
             id: "direction-e2e-provider",
             label: "Provider Proof",
-            rationale: "A readable provider-backed smoke deck for release validation.",
-            sampleSlideIds: ["001-title"],
+            rationale: "A readable provider-backed eight-slide deck for release validation.",
+            sampleSlideIds: [...byokE2eSlideIds],
             tokens: {
               accent: "#2357d9",
               background: "#ffffff",
@@ -228,9 +281,9 @@ function fakeOpenAiStageOutput(stage: string | undefined, title: string): unknow
       };
     case "build":
       return {
-        filesChanged: ["deck.json", "slides/001-title.html", "notes/001-title.md"],
-        notesChanged: ["001-title"],
-        slidesChanged: ["001-title"],
+        filesChanged: byokE2eSourcePaths(),
+        notesChanged: byokE2eSlideIds.map((slideId) => `notes/${slideId}.md`),
+        slidesChanged: [...byokE2eSlideIds],
         themeChanged: [],
         sourceWrites: byokE2eSourceWrites(title)
       };
@@ -242,14 +295,14 @@ function fakeOpenAiStageOutput(stage: string | undefined, title: string): unknow
       };
     case "export":
       return {
-        artifacts: [{ type: "pdf", path: "exports/provider-e2e.pdf" }]
+        artifacts: byokE2eExportArtifacts()
       };
     case "review":
       return {
-        summary: "Provider-backed desktop E2E deck is ready for review.",
-        filesChanged: ["deck.json", "slides/001-title.html", "notes/001-title.md"],
+        summary: "Provider-backed eight-slide desktop E2E deck is ready for review.",
+        filesChanged: byokE2eSourcePaths(),
         issuesRemaining: 0,
-        nextActions: ["Review deck"]
+        nextActions: ["Review eight-slide deck", "Open presenter mode"]
       };
     default:
       throw new Error(`Unexpected fake OpenAI stage: ${stage ?? "unknown"}`);
@@ -257,6 +310,7 @@ function fakeOpenAiStageOutput(stage: string | undefined, title: string): unknow
 }
 
 function byokE2eSourceWrites(title: string): Array<{ path: string; content: string }> {
+  const slides = byokE2eOutlineSlides(title);
   return [
     {
       path: "deck.json",
@@ -268,30 +322,30 @@ function byokE2eSourceWrites(title: string): Array<{ path: string; content: stri
           language: "en-US",
           aspectRatio: "16:9",
           viewport: { width: 1920, height: 1080 },
-          slides: [
-            {
-              id: "001-title",
-              title,
-              source: "slides/001-title.html",
-              notes: "notes/001-title.md",
-              durationSec: 75,
-              kind: "title",
-              status: "ready"
-            }
-          ]
+          speakerNotesMode: "full-script",
+          export: { pdf: true, html: true, deckpkg: true, thumbnails: true, speakerNotes: true },
+          slides: slides.map((slide) => ({
+            id: slide.id,
+            title: slide.title,
+            source: `slides/${slide.id}.html`,
+            notes: `notes/${slide.id}.md`,
+            durationSec: 75,
+            kind: slide.kind,
+            status: "ready"
+          }))
         },
         null,
         2
       )}\n`
     },
-    {
-      path: "slides/001-title.html",
-      content: `<section class="slide" data-slide-id="001-title"><h1>${title}</h1><p>Provider-backed generation reached check and export from the desktop wizard.</p></section>\n`
-    },
-    {
-      path: "notes/001-title.md",
-      content: `# ${title}\n\nUse this talk track to confirm provider-backed generation, checkpoint review, check, and export all completed from the desktop wizard.\n`
-    }
+    ...slides.map((slide) => ({
+      path: `slides/${slide.id}.html`,
+      content: `<section class="slide" data-slide-id="${slide.id}"><h1>${slide.title}</h1><p>${slide.goal}</p></section>\n`
+    })),
+    ...slides.map((slide) => ({
+      path: `notes/${slide.id}.md`,
+      content: `# ${slide.title}\n\nDeck title: ${title}\n\nUse this talk track to confirm provider-backed generation for the eight-slide workflow. ${slide.goal}\n`
+    }))
   ];
 }
 
@@ -1191,9 +1245,12 @@ test.describe("HTMLslide desktop smoke", () => {
       const newDeckPanel = page.locator(".new-deck-panel");
       await expect(newDeckPanel).toBeVisible();
       await newDeckPanel.getByLabel("Deck title").fill("Provider Demo");
-      await newDeckPanel.getByLabel("Brief").fill("Create a provider-backed smoke deck with one title slide.");
+      await newDeckPanel.getByLabel("Brief").fill("Create an eight-slide provider-backed smoke deck.");
       await newDeckPanel.getByRole("button", { name: /HTMLslide Agent/ }).click();
       await expect(newDeckPanel.getByText("Key ready")).toBeVisible();
+      await newDeckPanel.getByLabel("Slides").selectOption("8");
+      await expect(newDeckPanel.getByLabel("Slides")).toHaveValue("8");
+      await newDeckPanel.getByLabel("Speaker notes").selectOption("full-script");
       await newDeckPanel.getByRole("button", { name: "Create & Generate", exact: true }).click();
       await chooseVisualDirection(page);
 
@@ -1209,7 +1266,7 @@ test.describe("HTMLslide desktop smoke", () => {
       expect(fakeProvider.calls).toContainEqual({ method: "GET", path: "/v1/models/gpt-5-mini" });
       expect(stages).toEqual(["brief", "outline", "visual-direction", "build", "check", "export", "review"]);
 
-      const projectDir = path.join(workspaceDir, "provider-demo");
+      const projectDir = await realpath(path.join(workspaceDir, "provider-demo"));
       const settingsText = await readFile(path.join(userDataDir, "ai-engine-settings.json"), "utf8");
       expect(settingsText).toContain('"provider": "compatible"');
       expect(settingsText).toContain(fakeProvider.baseUrl);
@@ -1217,17 +1274,80 @@ test.describe("HTMLslide desktop smoke", () => {
 
       const manifestText = await readFile(path.join(projectDir, "deck.json"), "utf8");
       const manifest = JSON.parse(manifestText) as {
-        slides?: unknown[];
+        export?: {
+          deckpkg?: boolean;
+          html?: boolean;
+          pdf?: boolean;
+          speakerNotes?: boolean;
+          thumbnails?: boolean;
+        };
+        speakerNotesMode?: string;
+        slides?: Array<{ id: string; source: string; notes?: string; title: string }>;
         title?: string;
       };
       expect(manifest.title).toBe(fakeProviderTitle);
-      expect(manifest.slides).toHaveLength(1);
-      const slideText = await readFile(path.join(projectDir, "slides", "001-title.html"), "utf8");
-      const notesText = await readFile(path.join(projectDir, "notes", "001-title.md"), "utf8");
-      expect(slideText).toContain(fakeProviderTitle);
-      expect(notesText).toContain("provider-backed generation");
-      await expect(access(path.join(projectDir, "exports", "byok-provider-e2e-deck.pdf"))).resolves.toBeUndefined();
-      await expect(access(path.join(projectDir, "exports", "byok-provider-e2e-deck.deckpkg"))).resolves.toBeUndefined();
+      expect(manifest.speakerNotesMode).toBe("full-script");
+      expect(manifest.export).toEqual({
+        deckpkg: true,
+        html: true,
+        pdf: true,
+        speakerNotes: true,
+        thumbnails: true
+      });
+      const expectedSlideIds = [...byokE2eSlideIds];
+      const expectedSlidePaths = expectedSlideIds.map((slideId) => `slides/${slideId}.html`);
+      const expectedNotePaths = expectedSlideIds.map((slideId) => `notes/${slideId}.md`);
+      const expectedSourcePaths = ["deck.json", ...expectedSlidePaths, ...expectedNotePaths];
+      expect(manifest.slides).toHaveLength(8);
+      expect(manifest.slides?.map((slide) => slide.id)).toEqual(expectedSlideIds);
+      expect(manifest.slides?.map((slide) => slide.source)).toEqual(expectedSlidePaths);
+      expect(manifest.slides?.map((slide) => slide.notes)).toEqual(expectedNotePaths);
+
+      const slideTexts = await Promise.all(
+        expectedSlideIds.map((slideId) => readFile(path.join(projectDir, "slides", `${slideId}.html`), "utf8"))
+      );
+      const notesTexts = await Promise.all(
+        expectedSlideIds.map((slideId) => readFile(path.join(projectDir, "notes", `${slideId}.md`), "utf8"))
+      );
+      expect(slideTexts).toHaveLength(8);
+      expect(notesTexts).toHaveLength(8);
+      expect(slideTexts[0]).toContain(fakeProviderTitle);
+      for (const [index, slideId] of expectedSlideIds.entries()) {
+        expect(slideTexts[index]).toContain(`data-slide-id="${slideId}"`);
+        expect(notesTexts[index]).toContain("provider-backed generation");
+        expect(notesTexts[index]).toContain(`Deck title: ${fakeProviderTitle}`);
+      }
+
+      const pdfPath = path.join(projectDir, "exports", "byok-provider-e2e-deck.pdf");
+      const htmlPath = path.join(projectDir, "exports", "byok-provider-e2e-deck.html");
+      const deckpkgPath = path.join(projectDir, "exports", "byok-provider-e2e-deck.deckpkg");
+      const notesJsonPath = path.join(projectDir, "exports", "notes.json");
+      const thumbnailPaths = expectedSlideIds.map((slideId) =>
+        path.join(projectDir, "exports", "thumbnails", `${slideId}.png`)
+      );
+      await Promise.all([
+        access(pdfPath),
+        access(htmlPath),
+        access(deckpkgPath),
+        access(notesJsonPath),
+        ...thumbnailPaths.map((thumbnailPath) => access(thumbnailPath))
+      ]);
+      expect(await readPdfPageCount(pdfPath)).toBe(8);
+      const exportedPackage = await readDeckPackage(deckpkgPath);
+      expect(exportedPackage.manifest.slideCount).toBe(8);
+      expect(exportedPackage.manifest.pageCount).toBe(8);
+      expect(exportedPackage.manifest.slides.map((slide) => slide.id)).toEqual(expectedSlideIds);
+      expect(exportedPackage.slides).toHaveLength(8);
+      const notesSidecarText = await readFile(notesJsonPath, "utf8");
+      const notesSidecar = JSON.parse(notesSidecarText) as { slideCount?: number; slides?: unknown[] };
+      expect(notesSidecar.slideCount).toBe(8);
+      expect(notesSidecar.slides).toHaveLength(8);
+      const exportManifestText = await readFile(path.join(projectDir, "exports", "export-manifest.json"), "utf8");
+      const exportManifest = JSON.parse(exportManifestText) as {
+        artifacts?: Array<{ kind?: string; path?: string }>;
+      };
+      expect(exportManifest.artifacts).toHaveLength(12);
+      expect(exportManifest.artifacts?.filter((artifact) => artifact.kind === "thumbnail")).toHaveLength(8);
 
       const agentReportText = await readFile(
         path.join(projectDir, ".htmlslide", "reports", "latest-agent-run.json"),
@@ -1236,10 +1356,20 @@ test.describe("HTMLslide desktop smoke", () => {
       const agentReport = JSON.parse(agentReportText) as {
         applied?: { filesChanged?: string[]; source?: string; writeCount?: number };
         outputs?: {
+          brief?: { brief?: string; title?: string };
+          checks?: Array<{ issues?: unknown[]; status?: string; summary?: { errors?: number; info?: number; warnings?: number } }>;
           build?: { sourceWriteCount?: number; sourceWritePaths?: string[] };
-          outline?: { slides?: unknown[] };
-          visualDirection?: { directions?: Array<{ id?: string }> };
+          outline?: { slides?: Array<{ id?: string }> };
+          export?: { artifacts?: Array<{ path?: string; type?: string }> };
+          review?: { filesChanged?: string[]; issuesRemaining?: number };
+          selectedVisualDirectionId?: string;
+          visualDirection?: { directions?: Array<{ id?: string; sampleSlideIds?: string[] }> };
         };
+        cli?: {
+          check?: { ok?: boolean; status?: string };
+          export?: { artifactPaths?: string[]; ok?: boolean; status?: string };
+        };
+        exportManifest?: { artifactCount?: number; sourceDigest?: string };
         providerId?: string;
         runId?: string;
         status?: string;
@@ -1249,21 +1379,62 @@ test.describe("HTMLslide desktop smoke", () => {
         status: "succeeded"
       });
       expect(agentReport.runId).toMatch(/^run-/);
-      expect(agentReport.outputs?.outline?.slides).toHaveLength(1);
+      expect(agentReport.targetSlideCount).toBe(8);
+      expect(agentReport.outputs?.brief).toMatchObject({
+        brief: "Build an eight-slide provider-backed deck from the desktop wizard.",
+        title: fakeProviderTitle
+      });
+      expect(agentReport.outputs?.outline?.slides).toHaveLength(8);
+      expect(agentReport.outputs?.outline?.slides?.map((slide) => slide.id)).toEqual(expectedSlideIds);
       expect(agentReport.outputs?.visualDirection?.directions?.map((direction) => direction.id)).toEqual([
         "direction-e2e-provider"
       ]);
+      expect(agentReport.outputs?.visualDirection?.directions?.[0]?.sampleSlideIds).toEqual(expectedSlideIds);
+      expect(agentReport.outputs?.selectedVisualDirectionId).toBe("direction-e2e-provider");
       expect(agentReport.outputs?.build).toMatchObject({
-        sourceWriteCount: 3,
-        sourceWritePaths: ["deck.json", "slides/001-title.html", "notes/001-title.md"]
+        filesChanged: expectedSourcePaths,
+        notesChanged: expectedNotePaths,
+        slidesChanged: expectedSlideIds,
+        sourceWriteCount: expectedSourcePaths.length,
+        sourceWritePaths: expectedSourcePaths
       });
       expect(agentReport.applied).toMatchObject({
-        filesChanged: ["deck.json", "slides/001-title.html", "notes/001-title.md"],
+        filesChanged: expectedSourcePaths,
         source: "provider-source-writes",
-        writeCount: 3
+        writeCount: expectedSourcePaths.length
       });
+      expect(agentReport.outputs?.checks).toEqual([
+        { status: "passed", summary: { errors: 0, warnings: 0, info: 0 }, issues: [] }
+      ]);
+      expect(agentReport.outputs?.export?.artifacts).toEqual(byokE2eExportArtifacts());
+      expect(agentReport.outputs?.review).toMatchObject({
+        filesChanged: expectedSourcePaths,
+        issuesRemaining: 0
+      });
+      expect(agentReport.cli?.check).toMatchObject({ ok: true, status: "passed" });
+      expect(agentReport.cli?.export).toMatchObject({
+        ok: true,
+        status: "passed",
+        artifactPaths: expect.arrayContaining([
+          pdfPath,
+          htmlPath,
+          deckpkgPath,
+          notesJsonPath,
+          ...thumbnailPaths
+        ])
+      });
+      expect(agentReport.exportManifest?.artifactCount).toBe(12);
+      expect(agentReport.exportManifest?.sourceDigest).toMatch(/^[a-f0-9]{64}$/u);
       expect(agentReportText).not.toContain('"content":');
-      for (const text of [settingsText, manifestText, slideText, notesText, agentReportText]) {
+      for (const text of [
+        settingsText,
+        manifestText,
+        ...slideTexts,
+        ...notesTexts,
+        notesSidecarText,
+        exportManifestText,
+        agentReportText
+      ]) {
         expect(text).not.toContain(fakeApiKey);
       }
       await expectNoFrameworkOverlay(page);

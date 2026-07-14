@@ -78,13 +78,15 @@ pnpm rc:external-agent-evidence -- \
   --evidence /path/to/external-agent-evidence-input.json \
   --package-manifest /path/to/HTMLslide-alpha-manifest.json \
   --commit <candidate-commit> \
-  --artifact-url <candidate-artifact-url> \
+  --artifact-url <candidate-artifact-reference> \
   --output /path/to/external-agent-acceptance-evidence.json
 ```
 
 The verifier rejects raw logs, secrets, absolute paths, unsupported fields, mismatched provider auth commands, incomplete Check/Export/Revert evidence, and package manifests whose signing/channel contract is inconsistent. Its output contains only sanitized metadata and input/package SHA-256 digests; it does not prove the manual run occurred by itself, so the human tester must retain the evidence link and exact artifact notes in the RC checklist.
 
-The CI workflows also run `pnpm rc:byok-fixture-smoke` and the external-agent verifier with `--fixture-only`. Their outputs are marked `fixtureOnly: true` and `providerBoundary: "fixture-only"`; they validate the evidence pipelines with deterministic local data only and must never be used as real provider or compatibility acceptance evidence. The promotion verifier rejects the BYOK markers, even if a fixture file is renamed to the real-provider asset name. Signed tag candidates remain in Draft GitHub Releases until the promotion workflow verifies the exact downloaded bundle and completed checklist.
+For a signed release candidate, use the checklist's stable `htmlslide-signed-notarized-<candidate-run-id>-<DMG-file-name>` reference as the artifact value so Promotion can bind the evidence to the downloaded candidate.
+
+The CI workflows also run `pnpm rc:byok-fixture-smoke` and the external-agent verifier with `--fixture-only`. Their outputs are marked `fixtureOnly: true` and `providerBoundary: "fixture-only"`; they validate the evidence pipelines with deterministic local data only and must never be used as real provider or compatibility acceptance evidence. The promotion verifier rejects both fixture markers, even if a fixture file is renamed to the real-provider asset name. Signed tag candidates remain in Draft GitHub Releases until the promotion workflow verifies the exact downloaded bundle, completed checklist, BYOK evidence, and external-agent evidence.
 
 The Alpha Package and Release macOS workflows also generate a prefilled RC checklist in their uploaded artifact bundle. Treat that file as a run-bound evidence template, not completed acceptance, until a tester fills in the manual results.
 
@@ -152,7 +154,7 @@ The first workflow gate runs `scripts/release/validate-release-contract.mjs` bef
 
 Signing and notarization secrets must be company-owned repository or organization secrets, never committed files or personal local credentials.
 
-The workflow-generated `HTMLslide-release-rc-acceptance.md` remains a run-bound checklist template. The candidate workflow uploads it before manual testing so the tester can inspect the exact package. Its `DMG / artifact URL` metadata is a stable reference in the form `htmlslide-signed-notarized-<candidate-run-id>-<DMG-file-name>`, which promotion binds to the verified downloaded DMG. Before promotion, upload the real-provider output as `HTMLslide-byok-acceptance-evidence.json` to the matching Draft Release. The separate `Promote macOS Release` workflow downloads both assets and runs `pnpm release:promote:verify`, which delegates the checklist contract to `pnpm rc:checklist:verify` after validating the downloaded candidate bundle and BYOK evidence. Without a valid completed checklist, BYOK evidence asset, or exact candidate provenance match, promotion fails closed and the Draft Release remains unpublished.
+The workflow-generated `HTMLslide-release-rc-acceptance.md` remains a run-bound checklist template. The candidate workflow uploads it before manual testing so the tester can inspect the exact package. Its `DMG / artifact URL` metadata is a stable reference in the form `htmlslide-signed-notarized-<candidate-run-id>-<DMG-file-name>`, which promotion binds to the verified downloaded DMG. Before promotion, upload the real-provider output as `HTMLslide-byok-acceptance-evidence.json` and the real Claude/Codex output as `HTMLslide-external-agent-acceptance-evidence.json` to the matching Draft Release. The separate `Promote macOS Release` workflow downloads all three assets and runs `pnpm release:promote:verify`, which delegates the checklist contract to `pnpm rc:checklist:verify` after validating the downloaded candidate bundle, BYOK evidence, and external-agent evidence against the same manifest SHA, commit, and artifact reference. Without a valid completed checklist, either acceptance evidence asset, or exact candidate provenance match, promotion fails closed and the Draft Release remains unpublished.
 
 ## Release Notes
 

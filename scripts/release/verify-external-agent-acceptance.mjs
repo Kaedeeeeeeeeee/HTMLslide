@@ -158,6 +158,100 @@ export async function verifyExternalAgentAcceptance(options) {
   return evidence;
 }
 
+export function validateExternalAgentAcceptanceEvidence(value, options = {}) {
+  assertNoSecrets(value, "external agent acceptance evidence");
+  if (!isRecord(value)) {
+    throw new Error("External agent acceptance evidence must be a JSON object.");
+  }
+  if (value.fixtureOnly === true || value.providerBoundary === "fixture-only") {
+    throw new Error("Fixture-only external-agent evidence cannot be used for release promotion.");
+  }
+  assertExactKeys(
+    value,
+    ["schemaVersion", "kind", "status", "generatedAt", "provider", "candidate", "authentication", "permissionSummary", "runs", "checks", "inputs"],
+    "external agent acceptance evidence"
+  );
+  if (value.schemaVersion !== 1 || value.kind !== "htmlslide-external-agent-acceptance-evidence" || value.status !== "passed") {
+    throw new Error("External-agent acceptance evidence does not match the generated evidence contract.");
+  }
+  requireSafeMetadataString(value.generatedAt, "generatedAt", 128);
+
+  if (!isRecord(value.provider)) {
+    throw new Error("External-agent acceptance evidence is missing provider metadata.");
+  }
+  assertExactKeys(value.provider, ["id", "version"], "external-agent provider metadata");
+  const providerId = requireSafeMetadataString(value.provider.id, "provider id", 64);
+  if (!allowedProviders.has(providerId)) {
+    throw new Error(`Unsupported real external agent provider: ${providerId}.`);
+  }
+  requireSafeMetadataString(value.provider.version, "provider version", 128);
+
+  if (!isRecord(value.candidate)) {
+    throw new Error("External-agent acceptance evidence is missing candidate metadata.");
+  }
+  assertExactKeys(
+    value.candidate,
+    ["binding", "commit", "artifactUrl", "packageManifestSha256", "channel", "version", "arch", "signing", "notarized", "stapled"],
+    "external-agent candidate metadata"
+  );
+  if (value.candidate.binding !== "caller-declared") {
+    throw new Error("External-agent evidence must use caller-declared candidate binding metadata.");
+  }
+  const candidateCommit = validateCandidateCommit(value.candidate.commit);
+  const candidateArtifactUrl = validateArtifactUrl(value.candidate.artifactUrl);
+  if (options.expectedCommit !== undefined && candidateCommit !== options.expectedCommit) {
+    throw new Error("External-agent evidence claimed commit does not match the candidate commit.");
+  }
+  if (options.expectedArtifactUrl !== undefined && candidateArtifactUrl !== options.expectedArtifactUrl) {
+    throw new Error("External-agent evidence claimed artifact does not match the candidate artifact reference.");
+  }
+  if (!sha256Pattern.test(String(value.candidate.packageManifestSha256))) {
+    throw new Error("External-agent evidence package manifest SHA-256 is invalid.");
+  }
+  if (options.expectedPackageManifestSha256 !== undefined && value.candidate.packageManifestSha256 !== options.expectedPackageManifestSha256) {
+    throw new Error("External-agent evidence package manifest SHA-256 does not match the candidate manifest.");
+  }
+  validateGeneratedPackageMetadata(value.candidate);
+  const expectedPackageMetadata = options.expectedPackageMetadata;
+  if (expectedPackageMetadata !== undefined) {
+    for (const field of ["version", "arch", "channel", "signing", "notarized", "stapled"]) {
+      if (expectedPackageMetadata[field] !== undefined && value.candidate[field] !== expectedPackageMetadata[field]) {
+        throw new Error(`External-agent evidence candidate ${field} does not match the verified package manifest.`);
+      }
+    }
+  }
+
+  if (!isRecord(value.authentication)) {
+    throw new Error("External-agent acceptance evidence is missing authentication metadata.");
+  }
+  assertExactKeys(value.authentication, ["status", "command"], "external-agent authentication metadata");
+  if (value.authentication.status !== "passed" || value.authentication.command !== allowedProviders.get(providerId)) {
+    throw new Error("External-agent authentication evidence does not match the selected provider.");
+  }
+
+  validateGeneratedPermissionSummary(value.permissionSummary);
+  validateGeneratedRuns(value.runs);
+  validateGeneratedChecks(value.checks);
+
+  if (!isRecord(value.inputs)) {
+    throw new Error("External-agent acceptance evidence is missing input digests.");
+  }
+  assertExactKeys(value.inputs, ["evidenceSha256", "packageManifestSha256"], "external-agent evidence inputs");
+  if (!sha256Pattern.test(String(value.inputs.evidenceSha256)) || !sha256Pattern.test(String(value.inputs.packageManifestSha256))) {
+    throw new Error("External-agent evidence input SHA-256 values are invalid.");
+  }
+  if (value.inputs.packageManifestSha256 !== value.candidate.packageManifestSha256) {
+    throw new Error("External-agent evidence input and candidate manifest SHA-256 values do not match.");
+  }
+
+  return {
+    provider: value.provider,
+    candidate: value.candidate,
+    runs: value.runs,
+    checks: value.checks
+  };
+}
+
 function validateInputEvidence(value) {
   if (!isRecord(value)) {
     throw new Error("External agent evidence must be a JSON object.");
@@ -325,10 +419,94 @@ function validateSourcePath(value, label) {
 }
 
 function validateArtifactUrl(value) {
-  if (typeof value !== "string" || value.length > 2048 || !/^https?:\/\//u.test(value)) {
-    throw new Error("Candidate artifact URL must be an http(s) URL.");
+  if (typeof value !== "string" || value.length === 0 || value.length > 2048) {
+    throw new Error("Candidate artifact reference must be a short http(s) URL or safe asset name.");
+  }
+  if (/^https?:\/\//u.test(value)) {
+    return value;
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/u.test(value)) {
+    throw new Error("Candidate artifact reference must be an http(s) URL or safe asset name.");
   }
   return value;
+}
+
+function validateCandidateCommit(value) {
+  if (typeof value !== "string" || !commitPattern.test(value)) {
+    throw new Error("External-agent evidence candidate commit must be a 7-64 character lowercase hexadecimal SHA.");
+  }
+  return value;
+}
+
+function validateGeneratedPackageMetadata(candidate) {
+  if (candidate.channel !== "alpha" && candidate.channel !== "release") {
+    throw new Error("External-agent evidence candidate channel is unsupported.");
+  }
+  requireSafeMetadataString(candidate.version, "candidate package version", 64);
+  requireSafeMetadataString(candidate.arch, "candidate package architecture", 32);
+  requireSafeMetadataString(candidate.signing, "candidate package signing", 32);
+  if (typeof candidate.notarized !== "boolean" || typeof candidate.stapled !== "boolean") {
+    throw new Error("External-agent evidence candidate notarization metadata is invalid.");
+  }
+  if (candidate.channel === "alpha" && (candidate.signing !== "ad-hoc" || candidate.notarized || candidate.stapled)) {
+    throw new Error("Alpha external-agent evidence must describe an ad-hoc, non-notarized package.");
+  }
+  if (candidate.channel === "release" && (candidate.signing !== "developer-id" || !candidate.notarized || !candidate.stapled)) {
+    throw new Error("Release external-agent evidence must describe a signed, notarized, stapled package.");
+  }
+}
+
+function validateGeneratedPermissionSummary(value) {
+  if (!isRecord(value)) {
+    throw new Error("External-agent acceptance evidence is missing permission summary.");
+  }
+  assertExactKeys(value, ["sandbox", "permissionFlags"], "external-agent permission summary");
+  requireSafeMetadataString(value.sandbox, "sandbox mode", 128);
+  if (!Array.isArray(value.permissionFlags) || value.permissionFlags.length === 0) {
+    throw new Error("External-agent permission summary must include at least one permission flag.");
+  }
+  value.permissionFlags.forEach((flag, index) => requireSafeMetadataString(flag, `permission flag ${index + 1}`, 256));
+}
+
+function validateGeneratedRuns(value) {
+  if (!isRecord(value)) {
+    throw new Error("External-agent acceptance evidence is missing run metadata.");
+  }
+  assertExactKeys(value, ["successful", "cancellation"], "external-agent runs");
+  if (!isRecord(value.successful) || !isRecord(value.cancellation)) {
+    throw new Error("External-agent run metadata is malformed.");
+  }
+  assertExactKeys(value.successful, ["runId", "status", "changedFiles", "check", "export", "diffReview", "revert"], "successful external-agent run");
+  assertExactKeys(value.cancellation, ["runId", "status", "postCancelCheckExport"], "cancelled external-agent run");
+  requireSafeRunId(value.successful.runId, "successful runId");
+  requireSafeRunId(value.cancellation.runId, "cancellation runId");
+  if (value.successful.status !== "succeeded" || value.successful.check !== "passed" || value.successful.export !== "passed" ||
+      value.successful.diffReview !== "passed" || value.successful.revert !== "passed") {
+    throw new Error("Successful external-agent evidence must prove Check, Export, diff review, and revert.");
+  }
+  if (!Array.isArray(value.successful.changedFiles) || value.successful.changedFiles.length === 0) {
+    throw new Error("Successful external-agent evidence must include changed source files.");
+  }
+  value.successful.changedFiles.forEach((file, index) => validateSourcePath(file, `changed file ${index + 1}`));
+  if (value.cancellation.runId === value.successful.runId || value.cancellation.status !== "cancelled" || value.cancellation.postCancelCheckExport !== "not-started") {
+    throw new Error("External-agent cancellation evidence must use a distinct cancelled run with no post-cancel Check or Export.");
+  }
+}
+
+function validateGeneratedChecks(value) {
+  if (!isRecord(value)) {
+    throw new Error("External-agent acceptance evidence is missing check metadata.");
+  }
+  const expectedChecks = [
+    "evidenceSchema", "candidateBinding", "packageManifest", "authenticatedProvider", "permissionSummary", "completedEdit",
+    "cancellation", "diffReview", "cliCheck", "cliExport", "reversibleRevert", "secretSafety"
+  ];
+  assertExactKeys(value, expectedChecks, "external-agent checks");
+  for (const check of expectedChecks) {
+    if (value[check] !== "passed") {
+      throw new Error(`External-agent acceptance check did not pass: ${check}.`);
+    }
+  }
 }
 
 function requireSafeRunId(value, label) {

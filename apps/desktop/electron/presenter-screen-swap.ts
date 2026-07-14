@@ -9,10 +9,12 @@ export type PresenterScreenSwapMutation = {
   originalMainBounds: PresenterWindowRectangle;
   originalMainWindowedBounds: PresenterWindowRectangle;
   originalAudienceBounds: PresenterWindowRectangle;
+  originalAudienceWindowedBounds?: PresenterWindowRectangle;
   mainTargetBounds: PresenterWindowRectangle;
   audienceTargetBounds: PresenterWindowRectangle;
   mainWasFullScreen: boolean;
   mainWasMaximized: boolean;
+  audienceWasFullScreen?: boolean;
   restoreMainWindowPresentation: (
     bounds: PresenterWindowRectangle,
     wasFullScreen: boolean,
@@ -20,6 +22,7 @@ export type PresenterScreenSwapMutation = {
   ) => void;
   setMainBounds: (bounds: PresenterWindowRectangle) => void;
   setAudienceBounds: (bounds: PresenterWindowRectangle) => void;
+  restoreAudienceWindowPresentation?: (bounds: PresenterWindowRectangle, wasFullScreen: boolean) => void;
 };
 
 export type PresenterScreenSwapMutationResult =
@@ -64,6 +67,9 @@ export function applyPresenterScreenSwapMutation(
     if (mutation.mainWasFullScreen || mutation.mainWasMaximized) {
       mutation.restoreMainWindowPresentation(mutation.originalMainWindowedBounds, false, false);
     }
+    if (mutation.audienceWasFullScreen && mutation.restoreAudienceWindowPresentation && mutation.originalAudienceWindowedBounds) {
+      mutation.restoreAudienceWindowPresentation(mutation.originalAudienceWindowedBounds, false);
+    }
     mutation.setMainBounds(mutation.mainTargetBounds);
     mutation.setAudienceBounds(mutation.audienceTargetBounds);
     if (mutation.mainWasFullScreen || mutation.mainWasMaximized) {
@@ -72,6 +78,9 @@ export function applyPresenterScreenSwapMutation(
         mutation.mainWasFullScreen,
         mutation.mainWasMaximized
       );
+    }
+    if (mutation.audienceWasFullScreen && mutation.restoreAudienceWindowPresentation) {
+      mutation.restoreAudienceWindowPresentation(mutation.audienceTargetBounds, true);
     }
     return { ok: true };
   } catch (error: unknown) {
@@ -89,7 +98,14 @@ export function applyPresenterScreenSwapMutation(
       }
     }
     try {
-      mutation.setAudienceBounds(mutation.originalAudienceBounds);
+      if (mutation.restoreAudienceWindowPresentation && mutation.originalAudienceWindowedBounds) {
+        mutation.restoreAudienceWindowPresentation(
+          mutation.originalAudienceWindowedBounds,
+          mutation.audienceWasFullScreen === true
+        );
+      } else {
+        mutation.setAudienceBounds(mutation.originalAudienceBounds);
+      }
     } catch {
       // Best-effort rollback; the caller still reports the failed swap.
     }

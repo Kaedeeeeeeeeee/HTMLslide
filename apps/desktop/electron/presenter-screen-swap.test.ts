@@ -94,4 +94,61 @@ describe("presenter screen swap geometry", () => {
       "audience:0"
     ]);
   });
+
+  it("restores native Audience fullscreen after moving both windows", () => {
+    const calls: string[] = [];
+    const result = applyPresenterScreenSwapMutation({
+      audienceTargetBounds: { x: 1920, y: 0, width: 1920, height: 1080 },
+      audienceWasFullScreen: true,
+      mainTargetBounds: { x: 0, y: 0, width: 1920, height: 1080 },
+      mainWasFullScreen: false,
+      mainWasMaximized: false,
+      originalAudienceBounds: { x: 0, y: 0, width: 1920, height: 1080 },
+      originalAudienceWindowedBounds: { x: 20, y: 30, width: 1200, height: 800 },
+      originalMainBounds: { x: 1920, y: 0, width: 1920, height: 1080 },
+      originalMainWindowedBounds: { x: 1920, y: 40, width: 1200, height: 800 },
+      restoreAudienceWindowPresentation: (bounds, wasFullScreen) =>
+        calls.push(`audience-restore:${bounds.x}:${wasFullScreen}`),
+      restoreMainWindowPresentation: () => undefined,
+      setAudienceBounds: (bounds) => calls.push(`audience:${bounds.x}`),
+      setMainBounds: (bounds) => calls.push(`main:${bounds.x}`)
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(calls).toEqual([
+      "audience-restore:20:false",
+      "main:0",
+      "audience:1920",
+      "audience-restore:1920:true"
+    ]);
+  });
+
+  it("restores Audience fullscreen state when a swap fails", () => {
+    const calls: string[] = [];
+    const result = applyPresenterScreenSwapMutation({
+      audienceTargetBounds: { x: 1920, y: 0, width: 1920, height: 1080 },
+      audienceWasFullScreen: true,
+      mainTargetBounds: { x: 0, y: 0, width: 1920, height: 1080 },
+      mainWasFullScreen: false,
+      mainWasMaximized: false,
+      originalAudienceBounds: { x: 0, y: 0, width: 1920, height: 1080 },
+      originalAudienceWindowedBounds: { x: 20, y: 30, width: 1200, height: 800 },
+      originalMainBounds: { x: 1920, y: 0, width: 1920, height: 1080 },
+      originalMainWindowedBounds: { x: 1920, y: 40, width: 1200, height: 800 },
+      restoreAudienceWindowPresentation: (bounds, wasFullScreen) =>
+        calls.push(`audience-restore:${bounds.x}:${wasFullScreen}`),
+      restoreMainWindowPresentation: () => undefined,
+      setAudienceBounds: () => {
+        throw new Error("display move failed");
+      },
+      setMainBounds: (bounds) => calls.push(`main:${bounds.x}`)
+    });
+
+    expect(result).toMatchObject({ ok: false, error: new Error("display move failed") });
+    expect(calls).toEqual([
+      "audience-restore:20:false",
+      "main:0",
+      "audience-restore:20:true"
+    ]);
+  });
 });

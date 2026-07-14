@@ -217,12 +217,14 @@ describe("release evidence scripts", () => {
     expect(workflow).not.toContain("Verify RC checklist promotion gate");
     expect(promotionWorkflow).toContain("candidate_run_id:");
     expect(promotionWorkflow).toContain("rc_checklist_asset:");
+    expect(promotionWorkflow).toContain("external_agent_evidence_asset:");
     expect(promotionWorkflow).toContain("pnpm release:promote:verify");
     expect(promotionWorkflow).toContain("actions: read");
     expect(promotionWorkflow).toContain("Verify candidate workflow provenance");
     expect(promotionWorkflow).toContain("head_sha");
     expect(promotionWorkflow).toContain("--candidate-run-id");
     expect(promotionWorkflow).toContain("--commit \"$expected_commit\"");
+    expect(promotionWorkflow).toContain("--external-agent-evidence");
     expect(promotionWorkflow).toContain("gh release edit \"$RELEASE_TAG\"");
     const bundleVerifyIndex = workflow.indexOf("pnpm release:bundle:verify");
     const bundleEvidenceOutputIndex = workflow.indexOf("--output release-artifacts/HTMLslide-release-bundle-evidence.json");
@@ -244,6 +246,7 @@ describe("release evidence scripts", () => {
     expect(script).toContain("verifyReleaseBundle");
     expect(script).toContain("readPackageManifestProvenance");
     expect(script).toContain("verifyChecklist");
+    expect(script).toContain("externalAgentEvidencePath");
     expect(script).toContain("Package workflow run does not identify candidate run");
     expect(script).toContain("Candidate package sourceCommit does not match");
   });
@@ -830,10 +833,19 @@ describe("release evidence scripts", () => {
   it("verifies release promotion against the downloaded candidate and Draft Release checklist", async () => {
     const fixture = await createReleaseBundleFixture();
     const byokFixture = await createByokEvidenceFixture();
+    const externalFixture = await createExternalAgentEvidenceFixture();
     const checklistPath = path.join(fixture.root, "completed-release.md");
     const outputPath = path.join(fixture.root, "promotion-evidence.json");
     try {
       const provenance = await readPackageManifestProvenance(fixture.manifestPath, { requireSourceCommit: true });
+      const externalAgentEvidencePath = path.join(fixture.root, "external-agent-evidence.json");
+      await verifyExternalAgentEvidence([
+        "--evidence", externalFixture.evidencePath,
+        "--package-manifest", fixture.manifestPath,
+        "--commit", provenance.sourceCommit,
+        "--artifact-url", "htmlslide-signed-notarized-12345-HTMLslide-0.1.0-signed-notarized-arm64.dmg",
+        "--output", externalAgentEvidencePath
+      ]);
       const byokEvidencePath = path.join(byokFixture.projectPath, ".htmlslide", "reports", "release-evidence.json");
       await verifyByokEvidence([
         "--project", byokFixture.projectPath,
@@ -909,6 +921,7 @@ describe("release evidence scripts", () => {
         "--candidate-run-id", "12345",
         "--commit", provenance.sourceCommit,
         "--byok-evidence", byokEvidencePath,
+        "--external-agent-evidence", externalAgentEvidencePath,
         "--output", outputPath
       ]);
 
@@ -921,8 +934,52 @@ describe("release evidence scripts", () => {
       });
       expect(JSON.parse(await readFile(outputPath, "utf8"))).toMatchObject({
         command: "release:promote:verify",
-        bundle: { dmg: { sha256: fixture.dmgSha256 } }
+        bundle: { dmg: { sha256: fixture.dmgSha256 } },
+        externalAgentEvidence: { candidate: { packageManifestSha256: provenance.manifestSha256 } }
       });
+
+      const externalEvidence = JSON.parse(await readFile(externalAgentEvidencePath, "utf8")) as {
+        candidate: { commit: string };
+      };
+      externalEvidence.candidate.commit = "0000000";
+      await writeFile(externalAgentEvidencePath, `${JSON.stringify(externalEvidence, null, 2)}\n`, "utf8");
+      await expect(verifyReleasePromotion([
+        "--bundle-dir", fixture.bundleDir,
+        "--checklist", checklistPath,
+        "--release-tag", "v0.1.0",
+        "--candidate-run-id", "12345",
+        "--commit", provenance.sourceCommit,
+        "--byok-evidence", byokEvidencePath,
+        "--external-agent-evidence", externalAgentEvidencePath
+      ])).rejects.toThrow(/claimed commit does not match/iu);
+      await verifyExternalAgentEvidence([
+        "--evidence", externalFixture.evidencePath,
+        "--package-manifest", fixture.manifestPath,
+        "--commit", provenance.sourceCommit,
+        "--artifact-url", "htmlslide-signed-notarized-12345-HTMLslide-0.1.0-signed-notarized-arm64.dmg",
+        "--output", externalAgentEvidencePath
+      ]);
+      const mismatchedExternalMetadata = JSON.parse(await readFile(externalAgentEvidencePath, "utf8")) as {
+        candidate: { arch: string };
+      };
+      mismatchedExternalMetadata.candidate.arch = "x64";
+      await writeFile(externalAgentEvidencePath, `${JSON.stringify(mismatchedExternalMetadata, null, 2)}\n`, "utf8");
+      await expect(verifyReleasePromotion([
+        "--bundle-dir", fixture.bundleDir,
+        "--checklist", checklistPath,
+        "--release-tag", "v0.1.0",
+        "--candidate-run-id", "12345",
+        "--commit", provenance.sourceCommit,
+        "--byok-evidence", byokEvidencePath,
+        "--external-agent-evidence", externalAgentEvidencePath
+      ])).rejects.toThrow(/candidate arch does not match/iu);
+      await verifyExternalAgentEvidence([
+        "--evidence", externalFixture.evidencePath,
+        "--package-manifest", fixture.manifestPath,
+        "--commit", provenance.sourceCommit,
+        "--artifact-url", "htmlslide-signed-notarized-12345-HTMLslide-0.1.0-signed-notarized-arm64.dmg",
+        "--output", externalAgentEvidencePath
+      ]);
 
       await expect(verifyReleasePromotion([
         "--bundle-dir", fixture.bundleDir,
@@ -930,7 +987,8 @@ describe("release evidence scripts", () => {
         "--release-tag", "v0.1.1",
         "--candidate-run-id", "12345",
         "--commit", provenance.sourceCommit,
-        "--byok-evidence", byokEvidencePath
+        "--byok-evidence", byokEvidencePath,
+        "--external-agent-evidence", externalAgentEvidencePath
       ])).rejects.toThrow(/does not match package manifest version/iu);
       await expect(verifyReleasePromotion([
         "--bundle-dir", fixture.bundleDir,
@@ -938,7 +996,8 @@ describe("release evidence scripts", () => {
         "--release-tag", "v0.1.0",
         "--candidate-run-id", "99999",
         "--commit", provenance.sourceCommit,
-        "--byok-evidence", byokEvidencePath
+        "--byok-evidence", byokEvidencePath,
+        "--external-agent-evidence", externalAgentEvidencePath
       ])).rejects.toThrow(/Candidate run ID .* does not match 99999/iu);
 
       const wrongArtifactChecklistPath = path.join(fixture.root, "wrong-artifact.md");
@@ -963,7 +1022,8 @@ describe("release evidence scripts", () => {
         "--release-tag", "v0.1.0",
         "--candidate-run-id", "12345",
         "--commit", provenance.sourceCommit,
-        "--byok-evidence", byokEvidencePath
+        "--byok-evidence", byokEvidencePath,
+        "--external-agent-evidence", externalAgentEvidencePath
       ])).rejects.toThrow(/does not identify the verified candidate/iu);
 
       const missingHashEvidence = JSON.parse(await readFile(byokEvidencePath, "utf8")) as { candidate: { artifactSha256?: string } };
@@ -975,7 +1035,8 @@ describe("release evidence scripts", () => {
         "--release-tag", "v0.1.0",
         "--candidate-run-id", "12345",
         "--commit", provenance.sourceCommit,
-        "--byok-evidence", byokEvidencePath
+        "--byok-evidence", byokEvidencePath,
+        "--external-agent-evidence", externalAgentEvidencePath
       ])).rejects.toThrow(/artifact SHA-256 does not match the verified candidate/iu);
 
       const mismatchedEvidence = JSON.parse(await readFile(byokEvidencePath, "utf8")) as { candidate: { artifactSha256?: string } };
@@ -987,12 +1048,14 @@ describe("release evidence scripts", () => {
         "--release-tag", "v0.1.0",
         "--candidate-run-id", "12345",
         "--commit", provenance.sourceCommit,
-        "--byok-evidence", byokEvidencePath
+        "--byok-evidence", byokEvidencePath,
+        "--external-agent-evidence", externalAgentEvidencePath
       ])).rejects.toThrow(/artifact SHA-256 does not match the verified candidate/iu);
     } finally {
       await Promise.all([
         rm(fixture.root, { recursive: true, force: true }),
-        rm(byokFixture.root, { recursive: true, force: true })
+        rm(byokFixture.root, { recursive: true, force: true }),
+        rm(externalFixture.root, { recursive: true, force: true })
       ]);
     }
   });

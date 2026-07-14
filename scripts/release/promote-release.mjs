@@ -67,6 +67,7 @@ export async function main(args) {
     expectedCommit,
     packageManifestPath: manifestPath,
     byokEvidencePath: options.byokEvidence,
+    externalAgentEvidencePath: options.externalAgentEvidence,
     expectedArtifactSha256: bundleResult.dmg.sha256
   });
   const checklistSha256 = createHash("sha256").update(checklistMarkdown).digest("hex");
@@ -88,6 +89,7 @@ export async function main(args) {
       artifactReference: checklistArtifactReference,
       result: checklistResult.result
     },
+    externalAgentEvidence: checklistResult.externalAgentEvidence,
     byokEvidence: checklistResult.byokEvidence,
     provenance: checklistResult.provenance
   };
@@ -110,6 +112,7 @@ export function parseArgs(args) {
     "candidateRunId",
     "commit",
     "byokEvidence",
+    "externalAgentEvidence",
     "expectedArch",
     "teamId",
     "output"
@@ -134,7 +137,7 @@ export function parseArgs(args) {
     if (inlineValue === undefined) index += 1;
   }
 
-  for (const key of ["bundleDir", "checklist", "releaseTag", "candidateRunId", "commit", "byokEvidence"]) {
+  for (const key of ["bundleDir", "checklist", "releaseTag", "candidateRunId", "commit", "byokEvidence", "externalAgentEvidence"]) {
     if (typeof parsed[key] !== "string" || parsed[key].trim().length === 0) {
       throw new Error(`Missing required --${key.replace(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`)} value.`);
     }

@@ -10,7 +10,7 @@ Before a first presentation, test keyboard next/previous navigation plus black s
 
 ## Audience window
 
-The desktop app can open a no-chrome Audience window and sync navigation, black screen, and white screen state from the presenter session.
+The desktop app can open a no-chrome native-fullscreen Audience window and sync navigation, black screen, and white screen state from the presenter session.
 
 Presenter Console includes slide search by title, slide ID, or number. Filter the list, then select a result to jump without leaving the rehearsal view.
 

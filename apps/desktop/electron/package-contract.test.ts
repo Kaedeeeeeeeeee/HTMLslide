@@ -245,6 +245,8 @@ describe("macOS alpha packaging contract", () => {
     expect(mainSource).toContain('screen.on("display-metrics-changed", notifyPresenterDisplaysChanged)');
     expect(mainSource).toContain("reconcileAudienceWindowDisplay");
     expect(mainSource).toContain("AudienceWindowOperationGate");
+    expect(mainSource).toContain("presentAudienceWindow");
+    expect(mainSource).toContain("browserWindow.setFullScreen(true)");
     expect(mainSource).toContain('reason: "load-failed"');
     expect(mainSource).toContain("closeAudienceWindow();");
     expect(mainSource).toContain('htmlslide:audience-window-state-changed');
@@ -271,6 +273,7 @@ describe("macOS alpha packaging contract", () => {
     expect(mainSource).toContain('"target-disconnected"');
     expect(mainSource).toContain("mainWindow.getNormalBounds()");
     expect(mainSource).toContain("restoreMainWindowPresentation");
+    expect(mainSource).toContain("restoreAudienceWindowPresentation");
     expect(mainSource).toContain("applyPresenterScreenSwapMutation");
     expect(mainSource).toContain("setAudienceBounds: (bounds) => activeAudienceWindow.setBounds(bounds)");
     expect(mainSource).toContain("setMainBounds: (bounds) => activeMainWindow.setBounds(bounds)");

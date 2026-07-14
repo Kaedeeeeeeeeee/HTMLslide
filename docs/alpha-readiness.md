@@ -105,6 +105,8 @@ Run controls include `--base-url <url>` and `--speaker-notes <mode>`. For candid
 
 The command writes sanitized run-bound evidence under `.htmlslide/reports/rc-evidence-<run-id>/`. For a signed release promotion, attach the resulting evidence JSON as `HTMLslide-byok-acceptance-evidence.json` to the matching Draft Release; promotion verifies its run, 8-12 slide contract, passed checks, candidate commit, artifact reference, and exact candidate DMG SHA-256. The named environment variable and any desktop Keychain-backed credential remain outside the project; API key values are never written to the evidence.
 
+For a real Claude Code or Codex CLI compatibility claim, run `pnpm rc:external-agent-evidence` against the exact release package manifest and use the stable `htmlslide-signed-notarized-<candidate-run-id>-<dmg-file-name>` artifact reference from the checklist. Upload the resulting sanitized file as `HTMLslide-external-agent-acceptance-evidence.json`; promotion rejects fixture-only output and verifies its provider, commit, artifact reference, and package manifest SHA-256 against the candidate.
+
 For implementation-level verification of an already captured run, the lower-level verifier remains available:
 
 ```bash

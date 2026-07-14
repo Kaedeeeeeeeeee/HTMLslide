@@ -533,6 +533,36 @@ function audienceWindowBounds(displayId: number | undefined): Rectangle | undefi
   };
 }
 
+function positionAudienceWindow(browserWindow: BrowserWindow, displayId: number | undefined, bounds: Rectangle): void {
+  const currentDisplay = screen.getDisplayMatching(browserWindow.getBounds());
+  if (!browserWindow.isFullScreen() || currentDisplay.id !== displayId) {
+    if (browserWindow.isFullScreen()) {
+      browserWindow.setFullScreen(false);
+    }
+    browserWindow.setBounds(bounds);
+  }
+}
+
+function presentAudienceWindow(browserWindow: BrowserWindow): void {
+  if (!browserWindow.isFullScreen()) {
+    browserWindow.setFullScreen(true);
+  }
+}
+
+function restoreAudienceWindowPresentation(
+  browserWindow: BrowserWindow,
+  bounds: Rectangle,
+  wasFullScreen: boolean
+): void {
+  if (browserWindow.isFullScreen()) {
+    browserWindow.setFullScreen(false);
+  }
+  browserWindow.setBounds(bounds);
+  if (wasFullScreen) {
+    browserWindow.setFullScreen(true);
+  }
+}
+
 function createAudienceWindow(displayId: number | undefined): BrowserWindow {
   const bounds = audienceWindowBounds(displayId);
   if (!bounds) {
@@ -545,6 +575,7 @@ function createAudienceWindow(displayId: number | undefined): BrowserWindow {
     backgroundColor: "#050505",
     focusable: false,
     frame: false,
+    fullscreenable: true,
     show: false,
     title: "HTMLslide Audience Window",
     webPreferences: {
@@ -587,9 +618,28 @@ async function openAudienceWindow(requestValue: unknown) {
     audienceWindow = createAudienceWindow(request.displayId);
   }
   const browserWindow = audienceWindow;
-  browserWindow.setBounds(bounds);
+  positionAudienceWindow(browserWindow, request.displayId, bounds);
 
-  await browserWindow.loadURL(audienceSlideDataUrl(request.payload));
+  try {
+    await browserWindow.loadURL(audienceSlideDataUrl(request.payload));
+  } catch (error: unknown) {
+    if (
+      audienceWindowOperationGate.isCurrent(operationId) &&
+      audienceWindow === browserWindow &&
+      !browserWindow.isDestroyed()
+    ) {
+      browserWindow.hide();
+      const state = {
+        displayId: request.displayId,
+        error: error instanceof Error ? error.message : String(error),
+        open: false as const,
+        reason: "load-failed" as const
+      };
+      sendAudienceWindowState(state);
+      return state;
+    }
+    return currentAudienceWindowState();
+  }
   if (
     !audienceWindowOperationGate.isCurrent(operationId) ||
     audienceWindow !== browserWindow ||
@@ -597,6 +647,7 @@ async function openAudienceWindow(requestValue: unknown) {
   ) {
     return currentAudienceWindowState();
   }
+  presentAudienceWindow(browserWindow);
   browserWindow.showInactive();
   return {
     open: true,
@@ -629,8 +680,27 @@ async function updateAudienceWindow(requestValue: unknown) {
     };
   }
 
-  browserWindow.setBounds(bounds);
-  await browserWindow.loadURL(audienceSlideDataUrl(request.payload));
+  positionAudienceWindow(browserWindow, request.displayId, bounds);
+  try {
+    await browserWindow.loadURL(audienceSlideDataUrl(request.payload));
+  } catch (error: unknown) {
+    if (
+      audienceWindowOperationGate.isCurrent(operationId) &&
+      audienceWindow === browserWindow &&
+      !browserWindow.isDestroyed()
+    ) {
+      browserWindow.hide();
+      const state = {
+        displayId: request.displayId,
+        error: error instanceof Error ? error.message : String(error),
+        open: false as const,
+        reason: "load-failed" as const
+      };
+      sendAudienceWindowState(state);
+      return state;
+    }
+    return currentAudienceWindowState();
+  }
   if (
     !audienceWindowOperationGate.isCurrent(operationId) ||
     audienceWindow !== browserWindow ||
@@ -638,6 +708,7 @@ async function updateAudienceWindow(requestValue: unknown) {
   ) {
     return currentAudienceWindowState();
   }
+  presentAudienceWindow(browserWindow);
   browserWindow.showInactive();
   return {
     open: true,
@@ -702,14 +773,18 @@ async function swapPresenterScreens(requestValue: unknown): Promise<DesktopPrese
   let originalMainBounds: Rectangle;
   let originalMainWindowedBounds: Rectangle;
   let originalAudienceBounds: Rectangle;
+  let originalAudienceWindowedBounds: Rectangle;
   let mainWasFullScreen: boolean;
   let mainWasMaximized: boolean;
+  let audienceWasFullScreen: boolean;
   try {
     originalMainBounds = mainWindow.getBounds();
     originalMainWindowedBounds = mainWindow.getNormalBounds();
     originalAudienceBounds = audienceWindow.getBounds();
+    originalAudienceWindowedBounds = audienceWindow.getNormalBounds();
     mainWasFullScreen = mainWindow.isFullScreen();
     mainWasMaximized = mainWindow.isMaximized();
+    audienceWasFullScreen = audienceWindow.isFullScreen();
     mainDisplay = screen.getDisplayMatching(originalMainBounds);
   } catch {
     return presenterScreenSwapFailure(
@@ -765,11 +840,15 @@ async function swapPresenterScreens(requestValue: unknown): Promise<DesktopPrese
     mainTargetBounds,
     mainWasFullScreen,
     mainWasMaximized,
+    audienceWasFullScreen,
     originalAudienceBounds,
+    originalAudienceWindowedBounds,
     originalMainBounds,
     originalMainWindowedBounds,
     restoreMainWindowPresentation: (bounds, wasFullScreen, wasMaximized) =>
       restoreMainWindowPresentation(activeMainWindow, bounds, wasFullScreen, wasMaximized),
+    restoreAudienceWindowPresentation: (bounds, wasFullScreen) =>
+      restoreAudienceWindowPresentation(activeAudienceWindow, bounds, wasFullScreen),
     setAudienceBounds: (bounds) => activeAudienceWindow.setBounds(bounds),
     setMainBounds: (bounds) => activeMainWindow.setBounds(bounds)
   });
@@ -830,7 +909,7 @@ async function reconcileAudienceWindowDisplay(): Promise<void> {
   if (displayStillConnected) {
     const bounds = audienceWindowBounds(displayId);
     if (bounds) {
-      browserWindow.setBounds(bounds);
+      positionAudienceWindow(browserWindow, displayId, bounds);
     }
     if (payload && browserWindow.isVisible() === false) {
       try {
@@ -858,12 +937,20 @@ async function reconcileAudienceWindowDisplay(): Promise<void> {
       ) {
         return;
       }
+      presentAudienceWindow(browserWindow);
       browserWindow.showInactive();
       sendAudienceWindowState({
         open: true,
         displayId,
         reason: "target-reconnected"
       });
+    }
+    if (
+      audienceWindowOperationGate.isCurrent(operationId) &&
+      audienceWindow === browserWindow &&
+      !browserWindow.isDestroyed()
+    ) {
+      presentAudienceWindow(browserWindow);
     }
     return;
   }

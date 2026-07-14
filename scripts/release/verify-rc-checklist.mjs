@@ -5,6 +5,7 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { readPackageManifestProvenance, validateCommit } from "./rc-provenance.mjs";
 import { validateByokAcceptanceEvidence } from "./verify-byok-acceptance.mjs";
+import { validateExternalAgentAcceptanceEvidence } from "./verify-external-agent-acceptance.mjs";
 
 const maxChecklistBytes = 2 * 1024 * 1024;
 const expectedManualItems = 13;
@@ -49,7 +50,8 @@ export async function main(args) {
     checklistPath,
     expectedCommit: options.commit,
     packageManifestPath: options.packageManifest,
-    byokEvidencePath: options.byokEvidence
+    byokEvidencePath: options.byokEvidence,
+    externalAgentEvidencePath: options.externalAgentEvidence
   });
   process.stdout.write(options.json ? `${JSON.stringify(result)}\n` : `${formatHumanResult(result)}\n`);
   return result;
@@ -57,7 +59,7 @@ export async function main(args) {
 
 export function parseArgs(args) {
   const parsed = { json: false };
-  const allowed = new Set(["checklist", "input", "json", "packageManifest", "commit", "byokEvidence"]);
+  const allowed = new Set(["checklist", "input", "json", "packageManifest", "commit", "byokEvidence", "externalAgentEvidence"]);
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -215,6 +217,9 @@ export async function verifyChecklist(markdown, metadata = {}) {
   const byokEvidence = metadata.byokEvidencePath
     ? await verifyByokEvidencePath(metadata.byokEvidencePath, markdown, metadata)
     : undefined;
+  const externalAgentEvidence = metadata.externalAgentEvidencePath
+    ? await verifyExternalAgentEvidencePath(metadata.externalAgentEvidencePath, markdown, metadata, provenance)
+    : undefined;
 
   const statusCounts = Object.fromEntries(["Pass", "Fail", "N/A"].map((status) => [
     status,
@@ -232,7 +237,51 @@ export async function verifyChecklist(markdown, metadata = {}) {
     statusCounts,
     result: resultStatus,
     ...(byokEvidence ? { byokEvidence } : {}),
+    ...(externalAgentEvidence ? { externalAgentEvidence } : {}),
     ...(provenance ? { provenance } : {})
+  };
+}
+
+async function verifyExternalAgentEvidencePath(evidencePathInput, markdown, metadata, provenance) {
+  const evidencePath = path.resolve(evidencePathInput);
+  const info = await lstat(evidencePath);
+  if (!info.isFile() || info.isSymbolicLink() || info.size > maxChecklistBytes) {
+    throw new Error(`External-agent evidence must be a regular JSON file no larger than ${maxChecklistBytes} bytes.`);
+  }
+
+  let evidence;
+  try {
+    evidence = JSON.parse(await readFile(evidencePath, "utf8"));
+  } catch (error) {
+    throw new Error(`External-agent evidence is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  const metadataSection = sectionBetween(markdown, "## Metadata", "## Automated Gates");
+  const checklistCommit = metadataFieldValue(metadataSection, "Commit");
+  const checklistArtifact = metadataFieldValue(metadataSection, "DMG / artifact URL");
+  const expectedCommit = metadata.expectedCommit ?? (isEmptyEvidence(checklistCommit) ? undefined : checklistCommit);
+  const expectedArtifactUrl = isEmptyEvidence(checklistArtifact) ? undefined : checklistArtifact;
+  const summary = validateExternalAgentAcceptanceEvidence(evidence, {
+    ...(expectedCommit ? { expectedCommit } : {}),
+    ...(expectedArtifactUrl ? { expectedArtifactUrl } : {}),
+    ...(provenance ? {
+      expectedPackageManifestSha256: provenance.manifestSha256,
+      expectedPackageMetadata: {
+        version: provenance.version,
+        channel: provenance.channel,
+        arch: provenance.arch,
+        signing: provenance.signing,
+        notarized: provenance.notarized,
+        stapled: provenance.stapled
+      }
+    } : {})
+  });
+
+  return {
+    path: evidencePath,
+    sizeBytes: info.size,
+    sha256: createHash("sha256").update(await readFile(evidencePath)).digest("hex"),
+    ...summary
   };
 }
 
@@ -302,7 +351,13 @@ async function verifyProvenance(markdown, metadata) {
   return {
     commit: expectedCommit,
     packageManifestSha256: provenance.manifestSha256,
-    primaryArtifactSha256: provenance.primaryArtifactSha256
+    primaryArtifactSha256: provenance.primaryArtifactSha256,
+    version: provenance.version,
+    channel: provenance.channel,
+    arch: provenance.manifest.arch,
+    signing: provenance.manifest.signing,
+    notarized: provenance.manifest.notarized,
+    stapled: provenance.manifest.stapled
   };
 }
 

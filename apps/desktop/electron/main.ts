@@ -37,6 +37,7 @@ import {
   resolveCreateProjectRequest,
   revertDesktopCheckpoint,
   runDesktopByokAgent,
+  validateDesktopAiEngineProvider,
   saveAiEngineSettings,
   stageDesktopNewDeckSources,
   testDesktopExternalAgent,
@@ -1310,6 +1311,13 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle("htmlslide:save-ai-engine-settings", async (_event, request: DesktopAiEngineSettingsSaveRequest) =>
     saveAiEngineSettings(aiEngineSettingsPath(), request, e2eCredentialStore)
+  );
+
+  ipcMain.handle("htmlslide:validate-ai-engine-provider", async () =>
+    validateDesktopAiEngineProvider({
+      settingsPath: aiEngineSettingsPath(),
+      ...(e2eCredentialStore ? { credentialStore: e2eCredentialStore } : {})
+    })
   );
 
   ipcMain.handle("htmlslide:detect-external-agents", async () => detectExternalAgentStatuses());

@@ -320,7 +320,7 @@ test.describe("HTMLslide desktop accessibility smoke", () => {
     });
 
     await page.locator(".workspace-toolbar").getByRole("button", { name: "Present", exact: true }).click();
-    const presenter = page.getByLabel("Presenter rehearsal mode");
+    const presenter = page.getByRole("dialog", { name: "Valid Full Deck", exact: true });
     await expect(presenter).toBeVisible({ timeout: 30_000 });
     await expect(presenter.getByLabel("Presenter progress")).toBeVisible();
     await expect(presenter.getByRole("button", { name: "Swap screens", exact: true })).toBeVisible();
@@ -337,14 +337,14 @@ test.describe("HTMLslide desktop accessibility smoke", () => {
     await page.keyboard.press("Tab");
     await expect.poll(() => page.evaluate(() => {
       const active = document.activeElement;
-      return Boolean(active?.closest('[aria-label="Presenter rehearsal mode"]'));
+      return Boolean(active?.closest(".presenter-mode"));
     })).toBe(true);
     for (let index = 0; index < 12; index += 1) {
       await page.keyboard.press("Tab");
     }
     await expect.poll(() => page.evaluate(() => {
       const active = document.activeElement;
-      return Boolean(active?.closest('[aria-label="Presenter rehearsal mode"]'));
+      return Boolean(active?.closest(".presenter-mode"));
     })).toBe(true);
     await page.keyboard.press("Escape");
     await expect(presenter).toBeHidden();

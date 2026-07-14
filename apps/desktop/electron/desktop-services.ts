@@ -39,6 +39,7 @@ import {
   type AgentRunStage,
   type AgentRunStatus,
   type ApplyMockAgentProjectResult,
+  type CredentialStatus,
   type FileCopyCheckpointDiff,
   type FileCopyCheckpointRevertResult,
   type FetchLike,
@@ -677,6 +678,26 @@ export type DesktopByokAgentRunnerOptions = DesktopMockAgentRunnerOptions & {
   providerFactory?: DesktopByokAgentProviderFactory;
   settings?: DesktopAiEngineSettings;
   settingsPath?: string;
+};
+
+export type DesktopAiEngineProviderValidationOptions = {
+  credentialAccessTimeoutMs?: number;
+  credentialStore?: DesktopCredentialStore;
+  credentialValidationTimeoutMs?: number;
+  providerFetch?: FetchLike;
+  providerFactory?: DesktopByokAgentProviderFactory;
+  settings?: DesktopAiEngineSettings;
+  settingsPath?: string;
+  signal?: AbortSignal;
+};
+
+export type DesktopAiEngineProviderValidationResult = {
+  ok: boolean;
+  provider: DesktopApiKeyProvider;
+  model: string;
+  baseUrl?: string;
+  message: string;
+  cancelled?: boolean;
 };
 
 export type DesktopExternalAgentRunnerOptions = {
@@ -2684,6 +2705,111 @@ export async function runDesktopMockAgent(
   };
 }
 
+type DesktopByokProviderValidationInternalResult = DesktopAiEngineProviderValidationResult & {
+  modelProvider?: ModelProvider;
+};
+
+export async function validateDesktopAiEngineProvider(
+  options: DesktopAiEngineProviderValidationOptions = {}
+): Promise<DesktopAiEngineProviderValidationResult> {
+  const result = await validateDesktopByokProvider(options);
+  return {
+    baseUrl: result.baseUrl,
+    cancelled: result.cancelled,
+    message: result.message,
+    model: result.model,
+    ok: result.ok,
+    provider: result.provider
+  };
+}
+
+async function validateDesktopByokProvider(
+  options: DesktopAiEngineProviderValidationOptions
+): Promise<DesktopByokProviderValidationInternalResult> {
+  const settings = sanitizeAiEngineSettings(options.settings ?? (options.settingsPath
+    ? await readAiEngineSettings(options.settingsPath)
+    : DEFAULT_AI_ENGINE_SETTINGS));
+  const { provider, model, baseUrl } = settings.apiKey;
+  const providerSettings = { baseUrl, model, provider };
+  const fail = (message: string, extra: Pick<DesktopAiEngineProviderValidationResult, "cancelled"> = {}): DesktopByokProviderValidationInternalResult => ({
+    ...providerSettings,
+    ...extra,
+    message,
+    ok: false
+  });
+
+  if (options.signal?.aborted) {
+    return fail("Provider validation cancelled.", { cancelled: true });
+  }
+
+  if (!settings.apiKey.hasKey) {
+    return fail("Save a provider API key in AI Engines before validating the provider.");
+  }
+
+  const credentialStore = options.credentialStore ?? createDesktopCredentialStore();
+  if (!credentialStore.available) {
+    return fail(`${credentialStore.label} is not available for HTMLslide Agent credentials.`);
+  }
+
+  const credentialAccount = aiEngineCredentialAccount(provider);
+  let apiKey: string | undefined;
+  try {
+    const credentialAccessTimeoutMs = options.credentialAccessTimeoutMs ?? DESKTOP_AGENT_CREDENTIAL_ACCESS_TIMEOUT_MS;
+    const credentialAccess = await waitForDesktopAgentOperation(
+      credentialStore.getPassword(AI_ENGINE_CREDENTIAL_SERVICE, credentialAccount, {
+        signal: options.signal,
+        timeoutMs: credentialAccessTimeoutMs
+      }),
+      options.signal,
+      credentialAccessTimeoutMs,
+      `${credentialStore.label} credential retrieval`
+    );
+    if (credentialAccess.status === "cancelled") {
+      return fail("Provider validation cancelled.", { cancelled: true });
+    }
+    apiKey = credentialAccess.value;
+  } catch (error) {
+    return fail(sanitizeProviderText(error instanceof Error ? error.message : String(error)));
+  }
+
+  if (typeof apiKey !== "string" || apiKey.length === 0) {
+    return fail(`Stored ${provider} API key was not found. Save the key again in AI Engines settings.`);
+  }
+
+  let modelProvider: ModelProvider;
+  try {
+    modelProvider = options.providerFactory
+      ? options.providerFactory({ apiKey, baseUrl, model, provider })
+      : createDesktopByokModelProvider({
+          apiKey,
+          baseUrl,
+          fetch: options.providerFetch,
+          model,
+          provider
+        });
+    const credentialValidation = await waitForDesktopAgentOperation(
+      modelProvider.validateCredentials(),
+      options.signal,
+      options.credentialValidationTimeoutMs
+    );
+    if (credentialValidation.status === "cancelled") {
+      return fail("Provider validation cancelled.", { cancelled: true });
+    }
+    const credentialStatus: CredentialStatus = credentialValidation.value;
+    if (!credentialStatus.ok) {
+      return fail(sanitizeProviderText(credentialStatus.reason, [apiKey]));
+    }
+    return {
+      ...providerSettings,
+      message: credentialStatus.message ?? `${providerLabel(provider)} credentials validated for ${model}.`,
+      modelProvider,
+      ok: true
+    };
+  } catch (error) {
+    return fail(sanitizeProviderText(error instanceof Error ? error.message : String(error), [apiKey]));
+  }
+}
+
 export async function runDesktopByokAgent(
   request: DesktopByokAgentRunRequest,
   options: DesktopByokAgentRunnerOptions = {}
@@ -2703,6 +2829,8 @@ export async function runDesktopByokAgent(
   const provider = settings.apiKey.provider;
   const model = settings.apiKey.model;
   const baseUrl = settings.apiKey.baseUrl;
+  const credentialAccount = aiEngineCredentialAccount(provider);
+  const credentialStore = options.credentialStore ?? createDesktopCredentialStore();
   const settingsSummary = { provider, model, baseUrl };
   const settingsMetadata = byokSettingsMetadata(settingsSummary);
 
@@ -2757,64 +2885,9 @@ export async function runDesktopByokAgent(
     }
   }
 
-  if (!settings.apiKey.hasKey) {
-    return byokAgentFailureResult({
-      addEvent,
-      addLog,
-      error: "Save a provider API key in AI Engines before running HTMLslide Agent.",
-      events,
-      logs,
-      projectPath,
-      runId,
-      settings: settingsSummary,
-      stage: "brief"
-    });
-  }
-
-  const credentialStore = options.credentialStore ?? createDesktopCredentialStore();
-  if (!credentialStore.available) {
-    return byokAgentFailureResult({
-      addEvent,
-      addLog,
-      error: `${credentialStore.label} is not available for HTMLslide Agent credentials.`,
-      events,
-      logs,
-      projectPath,
-      runId,
-      settings: settingsSummary,
-      stage: "brief"
-    });
-  }
-
-  const credentialAccount = aiEngineCredentialAccount(provider);
-  let apiKey: string | undefined;
-  try {
-    const credentialAccessTimeoutMs = options.credentialAccessTimeoutMs ?? DESKTOP_AGENT_CREDENTIAL_ACCESS_TIMEOUT_MS;
-    const credentialAccess = await waitForDesktopAgentOperation(
-      credentialStore.getPassword(AI_ENGINE_CREDENTIAL_SERVICE, credentialAccount, {
-        signal: options.signal,
-        timeoutMs: credentialAccessTimeoutMs
-      }),
-      options.signal,
-      credentialAccessTimeoutMs,
-      `${credentialStore.label} credential retrieval`
-    );
-    if (credentialAccess.status === "cancelled") {
-      return byokAgentCancellationResult({
-        addEvent,
-        addLog,
-        events,
-        logs,
-        projectPath,
-        runId,
-        settings: settingsSummary,
-        signal: options.signal,
-        stage: "brief"
-      });
-    }
-    apiKey = credentialAccess.value;
-  } catch (error) {
-    if (options.signal?.aborted) {
+  const providerValidation = await validateDesktopByokProvider({ ...options, credentialStore, settings });
+  if (!providerValidation.ok) {
+    if (providerValidation.cancelled || options.signal?.aborted) {
       return byokAgentCancellationResult({
         addEvent,
         addLog,
@@ -2830,20 +2903,7 @@ export async function runDesktopByokAgent(
     return byokAgentFailureResult({
       addEvent,
       addLog,
-      error: error instanceof Error ? error.message : String(error),
-      events,
-      logs,
-      projectPath,
-      runId,
-      settings: settingsSummary,
-      stage: "brief"
-    });
-  }
-  if (typeof apiKey !== "string" || apiKey.length === 0) {
-    return byokAgentFailureResult({
-      addEvent,
-      addLog,
-      error: `Stored ${provider} API key was not found. Save the key again in AI Engines settings.`,
+      error: providerValidation.message,
       events,
       logs,
       projectPath,
@@ -2853,72 +2913,12 @@ export async function runDesktopByokAgent(
     });
   }
 
-  let modelProvider: ModelProvider;
-  try {
-    modelProvider = options.providerFactory
-      ? options.providerFactory({
-          apiKey,
-          baseUrl,
-          model,
-          provider
-        })
-      : createDesktopByokModelProvider({
-          apiKey,
-          baseUrl,
-          fetch: options.providerFetch,
-          model,
-          provider
-        });
-    const credentialValidation = await waitForDesktopAgentOperation(
-      modelProvider.validateCredentials(),
-      options.signal,
-      options.credentialValidationTimeoutMs
-    );
-    if (credentialValidation.status === "cancelled") {
-      return byokAgentCancellationResult({
-        addEvent,
-        addLog,
-        events,
-        logs,
-        projectPath,
-        runId,
-        settings: settingsSummary,
-        signal: options.signal,
-        stage: "brief"
-      });
-    }
-    const credentialStatus = credentialValidation.value;
-    if (!credentialStatus.ok) {
-      return byokAgentFailureResult({
-        addEvent,
-        addLog,
-        error: credentialStatus.reason,
-        events,
-        logs,
-        projectPath,
-        runId,
-        settings: settingsSummary,
-        stage: "brief"
-      });
-    }
-  } catch (error) {
-    if (options.signal?.aborted) {
-      return byokAgentCancellationResult({
-        addEvent,
-        addLog,
-        events,
-        logs,
-        projectPath,
-        runId,
-        settings: settingsSummary,
-        signal: options.signal,
-        stage: "brief"
-      });
-    }
+  const modelProvider = providerValidation.modelProvider;
+  if (!modelProvider) {
     return byokAgentFailureResult({
       addEvent,
       addLog,
-      error: error instanceof Error ? error.message : String(error),
+      error: "Provider validation completed without a usable model provider.",
       events,
       logs,
       projectPath,
@@ -2928,12 +2928,12 @@ export async function runDesktopByokAgent(
     });
   }
 
-  addEvent("brief", "succeeded", `${credentialStore.label} credential validated for ${provider}.`, "stage-completed", {
+  const credentialValidationMessage = `${credentialStore.label} credential validated for ${provider}.`;
+  addEvent("brief", "succeeded", credentialValidationMessage, "stage-completed", {
     metadata: settingsMetadata,
     nextAction: "Start HTMLslide Agent"
   });
-  addLog("info", `${credentialStore.label} credential validated for ${provider}.`, "brief", {
-    credentialAccount,
+  addLog("info", credentialValidationMessage, "brief", {
     ...(baseUrl ? { baseUrl } : {}),
     model,
     provider

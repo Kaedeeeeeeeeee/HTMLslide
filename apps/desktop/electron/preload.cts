@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld("htmlslideDesktop", {
   getAiEngineSettings: () => ipcRenderer.invoke("htmlslide:get-ai-engine-settings"),
   saveAiEngineSettings: (request: { settings: unknown; apiKeyInput?: string; clearKey?: boolean }) =>
     ipcRenderer.invoke("htmlslide:save-ai-engine-settings", request),
+  validateAiEngineProvider: () => ipcRenderer.invoke("htmlslide:validate-ai-engine-provider"),
   detectExternalAgents: () => ipcRenderer.invoke("htmlslide:detect-external-agents"),
   testExternalAgent: (request: unknown) => ipcRenderer.invoke("htmlslide:test-external-agent", request),
   installProjectAgentSkills: (request: unknown) => ipcRenderer.invoke("htmlslide:install-project-agent-skills", request),

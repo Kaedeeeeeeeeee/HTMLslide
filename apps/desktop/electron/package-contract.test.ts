@@ -258,6 +258,20 @@ describe("macOS alpha packaging contract", () => {
     expect(desktopApiSource).toContain('"load-failed"');
   });
 
+  it("keeps BYOK provider validation wired through the isolated preload", async () => {
+    const mainSource = await readText("apps/desktop/electron/main.ts");
+    const preloadSource = await readText("apps/desktop/electron/preload.cts");
+    const desktopApiSource = await readText("apps/desktop/src/desktop-api.ts");
+    const settingsSource = await readText("apps/desktop/src/components/AiEngineSettings.tsx");
+
+    expect(mainSource).toContain('ipcMain.handle("htmlslide:validate-ai-engine-provider"');
+    expect(mainSource).toContain("validateDesktopAiEngineProvider");
+    expect(preloadSource).toContain('ipcRenderer.invoke("htmlslide:validate-ai-engine-provider")');
+    expect(desktopApiSource).toContain("validateAiEngineProvider(): Promise<DesktopAiEngineProviderValidationResult>;");
+    expect(settingsSource).toContain("Validate provider");
+    expect(settingsSource).toContain("onValidateProvider");
+  });
+
   it("keeps presenter screen swapping validated, stateful, and window-safe", async () => {
     const mainSource = await readText("apps/desktop/electron/main.ts");
     const preloadSource = await readText("apps/desktop/electron/preload.cts");

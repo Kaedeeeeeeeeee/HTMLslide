@@ -94,7 +94,8 @@ button {
 .hs-button:focus-visible,
 .hs-icon-button:focus-visible,
 .hs-segmented-tabs__tab:focus-visible {
-  outline: 3px solid rgba(49, 95, 203, 0.22);
+  box-shadow: 0 0 0 1px #ffffff;
+  outline: 3px solid #123b8f;
   outline-offset: 2px;
 }
 

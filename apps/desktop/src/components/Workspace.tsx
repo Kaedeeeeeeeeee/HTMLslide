@@ -30,7 +30,6 @@ import {
   ArrowLeftRight,
   Ban,
   CheckCircle2,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CircleDot,
@@ -1202,7 +1201,7 @@ function PresenterMode({
 
   return (
     <section
-      aria-label="Presenter rehearsal mode"
+      aria-labelledby="presenter-mode-title"
       aria-modal="true"
       className={`presenter-mode presenter-mode--${view.screen}`}
       onKeyDown={handlePresenterFocusTrap}
@@ -1531,13 +1530,17 @@ function PresenterDisplayPanel({
             </div>
           ) : null}
           <div className="presenter-audience-actions">
-            <Button
-              icon={<MonitorPlay />}
-              onClick={onOpenAudienceWindow}
-              variant={audienceOpen ? "secondary" : "primary"}
-            >
-              {audienceOpen ? "Audience live" : "Open audience"}
-            </Button>
+            {audienceOpen ? (
+              <StatusPill tone="success">Audience live</StatusPill>
+            ) : (
+              <Button
+                icon={<MonitorPlay />}
+                onClick={onOpenAudienceWindow}
+                variant="primary"
+              >
+                Open audience
+              </Button>
+            )}
             {audienceOpen ? (
               <Button
                 icon={<X />}
@@ -1794,6 +1797,11 @@ function Toolbar({
         >
           Retry
         </Button>
+        <IconButton
+          icon={<Settings2 />}
+          label="Workspace settings"
+          onClick={onSettingsOpen}
+        />
       </div>
 
       <div
@@ -1820,11 +1828,6 @@ function Toolbar({
         <StatusPill tone={operationStatus.kind === "failed" ? "danger" : operationStatus.kind === "success" ? "success" : "info"}>
           {operationStatus.message}
         </StatusPill>
-        <IconButton
-          icon={<Settings2 />}
-          label="Workspace settings"
-          onClick={onSettingsOpen}
-        />
       </div>
     </header>
   );
@@ -1862,7 +1865,6 @@ function Filmstrip({
   return (
     <aside className="filmstrip">
       <PanelHeader
-        actions={<IconButton disabled icon={<ChevronDown />} label="Sort slides" />}
         title="Slides"
       />
       <div className="filmstrip-list">
@@ -1923,11 +1925,6 @@ function PreviewCanvas({ issueCount, onRetry, previewState, sample, slide }: Pre
         </div>
         <div className="preview-actions">
           <StatusPill tone={slideStatusTone(slide.status)}>{slide.status.replace("-", " ")}</StatusPill>
-          <IconButton
-            disabled
-            icon={<Maximize2 />}
-            label="Fit preview"
-          />
         </div>
       </div>
 

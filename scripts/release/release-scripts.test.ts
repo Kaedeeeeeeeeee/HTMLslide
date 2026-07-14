@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import { buildArtifactMetadata } from "./artifact-metadata.mjs";
 import { renderChecklist } from "./create-rc-acceptance.mjs";
 import { renderReleaseNotes } from "./create-release-notes.mjs";
+import { automatedGateEntries } from "./rc-automated-gates.mjs";
 import { readPackageManifestProvenance } from "./rc-provenance.mjs";
 import {
   REQUIRED_RELEASE_SCRIPTS,
@@ -755,6 +756,43 @@ describe("release evidence scripts", () => {
       }
     }
   );
+
+  it.each(automatedGateEntries("alpha"))(
+    "rejects a completed RC checklist missing the declared automated gate %s",
+    async (missingGate) => {
+      const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-rc-checklist-strict-gate-"));
+      const inputPath = path.join(fixtureRoot, "missing-gate.md");
+      try {
+        await writeFile(inputPath, completeChecklist().replace(`- [x] ${missingGate}\n`, ""), "utf8");
+
+        await expect(verifyChecklist(["--checklist", inputPath])).rejects.toThrow(
+          `RC checklist is missing required automated gates: ${missingGate}.`
+        );
+      } finally {
+        await rm(fixtureRoot, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it("rejects duplicate and unexpected automated gates", async () => {
+    const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "htmlslide-rc-checklist-strict-shape-"));
+    const inputPath = path.join(fixtureRoot, "invalid-gates.md");
+    try {
+      const duplicate = completeChecklist().replace("- [x] pnpm lint\n", "- [x] pnpm lint\n- [x] pnpm lint\n");
+      await writeFile(inputPath, duplicate, "utf8");
+      await expect(verifyChecklist(["--checklist", inputPath])).rejects.toThrow(
+        "RC checklist has duplicate automated gates: pnpm lint."
+      );
+
+      const unexpected = completeChecklist().replace("## Manual Acceptance Script", "- [x] pnpm unknown\n\n## Manual Acceptance Script");
+      await writeFile(inputPath, unexpected, "utf8");
+      await expect(verifyChecklist(["--checklist", inputPath])).rejects.toThrow(
+        "RC checklist has unexpected automated gates: pnpm unknown."
+      );
+    } finally {
+      await rm(fixtureRoot, { recursive: true, force: true });
+    }
+  });
 
   it("binds a completed RC checklist to the exact package manifest provenance", async () => {
     const fixture = await createExternalAgentEvidenceFixture();

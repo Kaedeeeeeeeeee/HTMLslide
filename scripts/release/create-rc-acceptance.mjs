@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { automatedGateEntries } from "./rc-automated-gates.mjs";
 import { readPackageManifestProvenance, validateCommit } from "./rc-provenance.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
@@ -103,9 +104,9 @@ function toCamelCase(value) {
 }
 
 export function renderChecklist(metadata) {
-  const automatedReleaseGate = metadata.channel === "release"
-    ? "\n- [ ] Release macOS completed with signed, notarized, stapled manifest."
-    : "";
+  const automatedGates = automatedGateEntries(metadata.channel)
+    .map((gate) => `- [ ] ${gate}`)
+    .join("\n");
 
   return `# HTMLslide Release Candidate Acceptance
 
@@ -129,21 +130,7 @@ export function renderChecklist(metadata) {
 
 ## Automated Gates
 
-- [ ] pnpm docs:check
-- [ ] pnpm docs:build
-- [ ] pnpm version:check
-- [ ] pnpm lint
-- [ ] pnpm typecheck
-- [ ] pnpm test
-- [ ] pnpm test:coverage
-- [ ] pnpm test:visual:browser
-- [ ] pnpm perf:smoke
-- [ ] pnpm security:check
-- [ ] pnpm build
-- [ ] pnpm e2e:desktop
-- [ ] pnpm e2e:desktop:a11y
-- [ ] Package workflow completed for this commit/tag.
-- [ ] Package smoke completed against the exact artifact under test.${automatedReleaseGate}
+${automatedGates}
 
 ## Manual Acceptance Script
 

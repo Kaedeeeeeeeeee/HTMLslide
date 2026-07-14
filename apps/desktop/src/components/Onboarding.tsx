@@ -11,7 +11,7 @@ import {
   Sparkles,
   TerminalSquare
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { DesktopCliIntegrationState, DesktopOfficialSkillsState } from "../desktop-api";
 import type { OnboardingStep, OperationStatus } from "../model";
@@ -56,8 +56,16 @@ export function Onboarding({
 }: OnboardingProps): ReactNode {
   const [choosingWorkspace, setChoosingWorkspace] = useState(false);
   const [selectingAiEngine, setSelectingAiEngine] = useState(false);
+  const actionsRef = useRef<HTMLDivElement>(null);
   const activeStep = steps[activeStepIndex] ?? steps[0];
   const finalStep = activeStepIndex >= steps.length - 1;
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      actionsRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeStepIndex]);
 
   if (!activeStep) {
     return null;
@@ -156,7 +164,7 @@ export function Onboarding({
               workspacePath={workspacePath}
             />
           </div>
-          <div className="onboarding-actions">
+          <div className="onboarding-actions" ref={actionsRef}>
             <Button
               aria-busy={primaryAction.busy}
               disabled={primaryAction.disabled}

@@ -3,6 +3,7 @@ import { lstat, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
+import { automatedGateEntries } from "./rc-automated-gates.mjs";
 import { readPackageManifestProvenance, validateCommit } from "./rc-provenance.mjs";
 import { validateByokAcceptanceEvidence } from "./verify-byok-acceptance.mjs";
 import { validateExternalAgentAcceptanceEvidence } from "./verify-external-agent-acceptance.mjs";
@@ -25,8 +26,6 @@ const expectedManualTitles = [
   "Delete App And Check System Files"
 ];
 const allowedManualStatuses = new Set(["pass", "fail", "n/a"]);
-const requiredAutomatedGates = ["pnpm test:coverage", "pnpm test:visual:browser"];
-
 if (isDirectRun()) {
   main(process.argv.slice(2)).catch((error) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
@@ -117,11 +116,19 @@ export async function verifyChecklist(markdown, metadata = {}) {
   if (automatedItems.length === 0) {
     throw new Error("RC checklist has no automated gate entries.");
   }
-  const missingRequiredAutomatedGates = requiredAutomatedGates.filter(
-    (command) => !automatedItems.some((line) => line.includes(command))
-  );
-  if (missingRequiredAutomatedGates.length > 0) {
-    throw new Error(`RC checklist is missing required automated gates: ${missingRequiredAutomatedGates.join(", ")}.`);
+  const expectedAutomatedGates = automatedGateEntries(channel);
+  const actualAutomatedGates = automatedItems.map((line) => line.replace(/^- \[[ xX]\] /u, ""));
+  const missingAutomatedGates = expectedAutomatedGates.filter((gate) => !actualAutomatedGates.includes(gate));
+  if (missingAutomatedGates.length > 0) {
+    throw new Error(`RC checklist is missing required automated gates: ${missingAutomatedGates.join(", ")}.`);
+  }
+  const duplicateAutomatedGates = [...new Set(actualAutomatedGates.filter((gate, index) => actualAutomatedGates.indexOf(gate) !== index))];
+  if (duplicateAutomatedGates.length > 0) {
+    throw new Error(`RC checklist has duplicate automated gates: ${duplicateAutomatedGates.join(", ")}.`);
+  }
+  const unexpectedAutomatedGates = actualAutomatedGates.filter((gate) => !expectedAutomatedGates.includes(gate));
+  if (unexpectedAutomatedGates.length > 0) {
+    throw new Error(`RC checklist has unexpected automated gates: ${unexpectedAutomatedGates.join(", ")}.`);
   }
   const uncheckedAutomated = automatedItems.filter((line) => /^- \[ \] /u.test(line));
   if (uncheckedAutomated.length > 0) {

@@ -1651,6 +1651,28 @@ function App(): React.ReactNode {
     });
   }, [aiEngineSettings, handleSaveAiEngineSettings]);
 
+  const handleValidateAiEngineProvider = useCallback((): void => {
+    if (!desktopApi) {
+      setAiEngineStatus({ kind: "failed", message: "Provider validation requires the desktop runtime" });
+      return;
+    }
+
+    setAiEngineStatus({ kind: "running", message: "Validating provider credentials" });
+    desktopApi.validateAiEngineProvider()
+      .then((result) => {
+        setAiEngineStatus({
+          kind: result.ok ? "success" : "failed",
+          message: result.message
+        });
+      })
+      .catch((error: unknown) => {
+        setAiEngineStatus({
+          kind: "failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
+  }, [desktopApi]);
+
   const handleCompleteOnboarding = useCallback((): void => {
     if (!desktopApi) {
       setView("library");
@@ -2316,6 +2338,7 @@ function App(): React.ReactNode {
         onOpenProject={handleOpenProject}
         onRemoveProject={handleRemoveProject}
         onRefreshExternalAgents={handleRefreshExternalAgents}
+        onValidateProvider={handleValidateAiEngineProvider}
         onTestExternalAgent={handleTestExternalAgent}
         onInstallProjectAgentSkills={handleInstallProjectAgentSkills}
         onSaveAiEngineSettings={handleSaveAiEngineSettings}

@@ -78,6 +78,7 @@ interface ProjectLibraryProps {
   onRemoveOfficialSkill: (skillName: string, target: DesktopOfficialSkillInstallTarget) => void;
   onLibrarySectionChange: (section: LibrarySection) => void;
   onRefreshExternalAgents: () => void;
+  onValidateProvider: () => void;
   onTestExternalAgent: (agentId: ExternalAgentStatus["id"]) => void;
   onInstallProjectAgentSkills: (agentId: ExternalAgentStatus["id"]) => void;
   onSaveAiEngineSettings: (draft: AiEngineSettingsDraft) => Promise<boolean> | void;
@@ -185,6 +186,7 @@ export function ProjectLibrary({
   onRemoveOfficialSkill,
   onLibrarySectionChange,
   onRefreshExternalAgents,
+  onValidateProvider,
   onTestExternalAgent,
   onInstallProjectAgentSkills,
   onSaveAiEngineSettings,
@@ -247,6 +249,7 @@ export function ProjectLibrary({
           <AiEngineSettingsPanel
             connection={externalAgentConnection}
             onRefreshExternalAgents={onRefreshExternalAgents}
+            onValidateProvider={onValidateProvider}
             onTestExternalAgent={onTestExternalAgent}
             onInstallProjectAgentSkills={onInstallProjectAgentSkills}
             onSaveSettings={onSaveAiEngineSettings}
@@ -278,6 +281,7 @@ export function ProjectLibrary({
             <AiEngineSettingsPanel
               connection={externalAgentConnection}
               onRefreshExternalAgents={onRefreshExternalAgents}
+              onValidateProvider={onValidateProvider}
               onTestExternalAgent={onTestExternalAgent}
               onInstallProjectAgentSkills={onInstallProjectAgentSkills}
               onSaveSettings={onSaveAiEngineSettings}

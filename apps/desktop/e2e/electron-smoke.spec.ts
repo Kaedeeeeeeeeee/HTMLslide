@@ -1948,8 +1948,8 @@ fetch("${previewNetworkOrigin}/fetch");
     await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible({
       timeout: 30_000
     });
-    await expect(page.getByRole("button", { name: "Sort slides", exact: true })).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Fit preview", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Sort slides", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Fit preview", exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Open logs", exact: true })).toBeDisabled();
 
     await page.locator(".workspace-toolbar").getByRole("button", { name: "Check", exact: true }).click();
@@ -2002,7 +2002,7 @@ fetch("${previewNetworkOrigin}/fetch");
       { timeout: 30_000 }
     ).toBe(true);
 
-    const presenter = page.getByLabel("Presenter rehearsal mode");
+    const presenter = page.locator(".presenter-mode");
     const currentSlideHeading = presenter.locator(".presenter-current .hs-panel-header h2");
     const currentSlideFrame = presenter.frameLocator(".presenter-current .presenter-slide-preview__frame");
     const screenCover = presenter.locator(".presenter-screen-cover");
@@ -2160,7 +2160,7 @@ fetch("${previewNetworkOrigin}/fetch");
     });
 
     await page.locator(".workspace-toolbar").getByRole("button", { name: "Present", exact: true }).click();
-    const presenter = page.getByLabel("Presenter rehearsal mode");
+    const presenter = page.locator(".presenter-mode");
     const currentSlideHeading = presenter.locator(".presenter-current .hs-panel-header h2");
     await expect(presenter).toBeVisible({ timeout: 30_000 });
     await expect(presenter.getByText("Windowed Presenter / Rehearsal Mode")).toBeVisible();
@@ -2222,7 +2222,7 @@ fetch("${previewNetworkOrigin}/fetch");
     const page = await electronApp.firstWindow();
     const browserErrors = collectBrowserErrors(page);
     await page.waitForLoadState("domcontentloaded");
-    const presenter = page.getByLabel("Presenter rehearsal mode");
+    const presenter = page.locator(".presenter-mode");
     const currentSlideHeading = presenter.locator(".presenter-current .hs-panel-header h2");
     const currentSlideFrame = presenter.frameLocator(".presenter-current .presenter-slide-preview__frame");
     await expect(presenter).toBeVisible({ timeout: 30_000 });
@@ -2299,7 +2299,7 @@ fetch("${previewNetworkOrigin}/fetch");
       deckpkgPath
     );
 
-    const presenter = page.getByLabel("Presenter rehearsal mode");
+    const presenter = page.locator(".presenter-mode");
     const currentSlideHeading = presenter.locator(".presenter-current .hs-panel-header h2");
     const currentSlideFrame = presenter.frameLocator(".presenter-current .presenter-slide-preview__frame");
     await expect(presenter).toBeVisible({ timeout: 30_000 });
@@ -2346,7 +2346,7 @@ fetch("${previewNetworkOrigin}/fetch");
     await expect(page.locator(".workspace-toolbar .workspace-title strong", { hasText: "Valid Full Deck" })).toBeVisible({
       timeout: 30_000
     });
-    await expect(page.getByLabel("Presenter rehearsal mode")).toBeHidden();
+    await expect(page.locator(".presenter-mode")).toBeHidden();
 
     const library = JSON.parse(await readFile(path.join(userDataDir, "library.json"), "utf8")) as {
       recentProjects: Array<{ path: string }>;

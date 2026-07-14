@@ -31,6 +31,7 @@ interface AiEngineSettingsPanelProps {
   connection?: DesktopExternalAgentConnectionState;
   projectSkills?: DesktopProjectAgentSkillsState;
   onRefreshExternalAgents: () => void;
+  onValidateProvider: () => void;
   onTestExternalAgent: (agentId: ExternalAgentId) => void;
   onInstallProjectAgentSkills: (agentId: ExternalAgentId) => void;
   onSaveSettings: (draft: AiEngineSettingsDraft) => Promise<boolean> | void;
@@ -46,7 +47,8 @@ export function AiEngineSettingsPanel({
   connection,
   projectSkills,
   settings,
-  statuses
+  statuses,
+  onValidateProvider
 }: AiEngineSettingsPanelProps): ReactNode {
   const [mode, setMode] = useState<AiEngineMode>(settings.mode);
   const [provider, setProvider] = useState<ApiKeyProvider>(settings.apiKey.provider);
@@ -216,6 +218,13 @@ export function AiEngineSettingsPanel({
                 variant="primary"
               >
                 {apiKeyInput.trim().length > 0 ? "Save Key" : "Save Settings"}
+              </Button>
+              <Button
+                disabled={busy || !settings.apiKey.hasKey}
+                icon={<ShieldCheck />}
+                onClick={onValidateProvider}
+              >
+                Validate provider
               </Button>
               <Button
                 disabled={busy || !settings.apiKey.hasKey}

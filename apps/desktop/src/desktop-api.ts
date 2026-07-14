@@ -557,6 +557,15 @@ export type DesktopAiEngineSettingsSaveRequest = {
   clearKey?: boolean;
 };
 
+export type DesktopAiEngineProviderValidationResult = {
+  ok: boolean;
+  provider: AiEngineSettings["apiKey"]["provider"];
+  model: string;
+  baseUrl?: string;
+  message: string;
+  cancelled?: boolean;
+};
+
 export type DesktopProjectAgentSkillsState = {
   status: "passed" | "warning" | "failed";
   projectPath: string;
@@ -622,6 +631,7 @@ export type HtmlslideDesktopApi = {
   ): Promise<DesktopPresenterPreferences>;
   getAiEngineSettings(): Promise<AiEngineSettings>;
   saveAiEngineSettings(request: DesktopAiEngineSettingsSaveRequest): Promise<AiEngineSettings>;
+  validateAiEngineProvider(): Promise<DesktopAiEngineProviderValidationResult>;
   detectExternalAgents(): Promise<ExternalAgentStatus[]>;
   testExternalAgent(request: {
     projectPath: string;

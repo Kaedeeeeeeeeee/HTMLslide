@@ -2,11 +2,13 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import type { ModelProvider } from "@htmlslide/agent";
 import {
   detectExternalAgentStatuses,
   readAiEngineSettings,
   readAiEngineCredentialStatus,
   saveAiEngineSettings,
+  validateDesktopAiEngineProvider,
   writeAiEngineSettings,
   type DesktopCredentialStore,
   type ExternalAgentDetectorRunner
@@ -283,6 +285,88 @@ describe("AI engine settings persistence", () => {
     });
     expect(credentialStore.entries.has("app.htmlslide.ai-key:provider:openai")).toBe(false);
     expect(credentialStore.entries.has("app.htmlslide.ai-key:provider:anthropic")).toBe(false);
+  });
+
+  it("validates the stored provider credential without starting a generation run", async () => {
+    const root = await tempDir();
+    const settingsPath = path.join(root, "ai-engine-settings.json");
+    const credentialStore = createFakeCredentialStore();
+    const secret = "provider-validation-secret";
+    await saveAiEngineSettings(
+      settingsPath,
+      {
+        apiKeyInput: secret,
+        settings: {
+          apiKey: {
+            hasKey: true,
+            model: "gpt-test-htmlslide",
+            provider: "openai"
+          },
+          mode: "htmlslide-agent"
+        }
+      },
+      credentialStore
+    );
+
+    let validatedKey = "";
+    let completeCalled = false;
+    const result = await validateDesktopAiEngineProvider({
+      credentialStore,
+      settingsPath,
+      providerFactory: ({ apiKey, model, provider }) => {
+        validatedKey = apiKey;
+        expect(model).toBe("gpt-test-htmlslide");
+        expect(provider).toBe("openai");
+        return {
+          complete: async () => {
+            completeCalled = true;
+            throw new Error("complete should not run during provider validation");
+          },
+          id: "test-provider",
+          label: "Test provider",
+          validateCredentials: async () => ({
+            message: "Test provider credentials can access gpt-test-htmlslide.",
+            ok: true as const,
+            providerId: "test-provider"
+          })
+        } satisfies ModelProvider;
+      }
+    });
+
+    expect(result).toMatchObject({
+      message: "Test provider credentials can access gpt-test-htmlslide.",
+      model: "gpt-test-htmlslide",
+      ok: true,
+      provider: "openai"
+    });
+    expect(validatedKey).toBe(secret);
+    expect(completeCalled).toBe(false);
+    expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  it("reports missing stored credentials without exposing key material", async () => {
+    const root = await tempDir();
+    const settingsPath = path.join(root, "ai-engine-settings.json");
+    const result = await validateDesktopAiEngineProvider({
+      credentialStore: createFakeCredentialStore(),
+      settings: {
+        apiKey: {
+          hasKey: true,
+          model: "gpt-test-htmlslide",
+          provider: "openai"
+        },
+        externalAgent: {
+          customCommand: "",
+          selectedId: "codex-cli"
+        },
+        mode: "htmlslide-agent",
+        version: 1
+      },
+      settingsPath
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("Stored openai API key was not found");
   });
 });
 

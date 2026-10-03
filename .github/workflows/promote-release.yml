@@ -42,7 +42,7 @@ jobs:
       actions: read
       contents: write
     environment: macos-release
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","linux","x64","ubuntu-zhang","ci-ubuntu-24"]' || '["ubuntu-24.04"]') }}
     timeout-minutes: 30
 
     steps:
@@ -147,6 +147,7 @@ jobs:
         with:
           node-version: 22
 
+          package-manager-cache: ${{ runner.environment == 'github-hosted' }}
       - name: Verify candidate bundle and RC checklist
         shell: bash
         env:

@@ -393,7 +393,7 @@ jobs:
     permissions:
       actions: read
       contents: write
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","linux","x64","ubuntu-zhang","ci-ubuntu-24"]' || '["ubuntu-24.04"]') }}
     timeout-minutes: 15
 
     steps:

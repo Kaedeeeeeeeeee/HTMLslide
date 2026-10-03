@@ -20,7 +20,7 @@ concurrency:
 jobs:
   publish:
     name: Publish documentation site
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","linux","x64","ubuntu-zhang","ci-ubuntu-24"]' || '["ubuntu-24.04"]') }}
     timeout-minutes: 15
 
     environment:
@@ -73,8 +73,9 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: 22
-          cache: pnpm
+          cache: ${{ runner.environment == 'github-hosted' && 'pnpm' || '' }}
 
+          package-manager-cache: ${{ runner.environment == 'github-hosted' }}
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
